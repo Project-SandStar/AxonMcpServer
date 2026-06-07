@@ -1,0 +1,1433 @@
+{
+  "id": "page-sensor",
+  "name": "sensor",
+  "kind": "free",
+  "canvasWidth": 1920,
+  "canvasHeight": 1080,
+  "widgets": [
+    {
+      "id": "w-title",
+      "type": "widgets/Label",
+      "label": "Title",
+      "x": 40,
+      "y": 28,
+      "w": 900,
+      "h": 40,
+      "zIndex": 50,
+      "props": {
+        "text": "School Biosensor",
+        "fontSize": "24pt",
+        "fontColor": "#e2e8f0"
+      }
+    },
+    {
+      "id": "w-sub",
+      "type": "widgets/Label",
+      "label": "Subtitle",
+      "x": 40,
+      "y": 72,
+      "w": 1200,
+      "h": 24,
+      "zIndex": 50,
+      "props": {
+        "text": "Bioaerosol panel · 31 points · concentration in gc/m³",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-cap-0",
+      "type": "widgets/Label",
+      "label": "GEM Flow Rate",
+      "x": 40,
+      "y": 120,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "GEM Flow Rate",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-0",
+      "type": "widgets/Label",
+      "label": "GEM Flow Rate value",
+      "x": 40,
+      "y": 144,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-bed7bf09",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "GEM Flow Rate",
+            "unit": "L/min"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-1",
+      "type": "widgets/Label",
+      "label": "Ambient Humidity",
+      "x": 500,
+      "y": 120,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Ambient Humidity",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-1",
+      "type": "widgets/Label",
+      "label": "Ambient Humidity value",
+      "x": 500,
+      "y": 144,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-17dccc89",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Ambient Humidity",
+            "unit": "%RH"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-2",
+      "type": "widgets/Label",
+      "label": "Ambient Temperature",
+      "x": 960,
+      "y": 120,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Ambient Temperature",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-2",
+      "type": "widgets/Label",
+      "label": "Ambient Temperature value",
+      "x": 960,
+      "y": 144,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-b374138e",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Ambient Temperature",
+            "unit": "°C"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-3",
+      "type": "widgets/Label",
+      "label": "Equipment State",
+      "x": 1420,
+      "y": 120,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Equipment State",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-3",
+      "type": "widgets/Label",
+      "label": "Equipment State value",
+      "x": 1420,
+      "y": 144,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:316c1360-e68f780f",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Equipment State"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-4",
+      "type": "widgets/Label",
+      "label": "Live demo",
+      "x": 40,
+      "y": 232,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Live demo",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-4",
+      "type": "widgets/Label",
+      "label": "Live demo value",
+      "x": 40,
+      "y": 256,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31b05d0a-6b9df68c",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Live demo",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-5",
+      "type": "widgets/Label",
+      "label": "Alternaria alternata Alt a 1",
+      "x": 500,
+      "y": 232,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Alternaria alternata Alt a 1",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-5",
+      "type": "widgets/Label",
+      "label": "Alternaria alternata Alt a 1 value",
+      "x": 500,
+      "y": 256,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-569c732e",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Alternaria alternata Alt a 1",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-6",
+      "type": "widgets/Label",
+      "label": "Aspergillus fumigatus Asp f 1",
+      "x": 960,
+      "y": 232,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Aspergillus fumigatus Asp f 1",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-6",
+      "type": "widgets/Label",
+      "label": "Aspergillus fumigatus Asp f 1 value",
+      "x": 960,
+      "y": 256,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-5878eb9c",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Aspergillus fumigatus Asp f 1",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-7",
+      "type": "widgets/Label",
+      "label": "Aspergillus santarpium",
+      "x": 1420,
+      "y": 232,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Aspergillus santarpium",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-7",
+      "type": "widgets/Label",
+      "label": "Aspergillus santarpium value",
+      "x": 1420,
+      "y": 256,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31b05d0a-dd3b4879",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Aspergillus santarpium",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-8",
+      "type": "widgets/Label",
+      "label": "Aureobasidium pullulans β-tubulin",
+      "x": 40,
+      "y": 344,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Aureobasidium pullulans β-tubulin",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-8",
+      "type": "widgets/Label",
+      "label": "Aureobasidium pullulans β-tubulin value",
+      "x": 40,
+      "y": 368,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-21748ac6",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Aureobasidium pullulans β-tubulin",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-9",
+      "type": "widgets/Label",
+      "label": "Bordetella pertussis IS481",
+      "x": 500,
+      "y": 344,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Bordetella pertussis IS481",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-9",
+      "type": "widgets/Label",
+      "label": "Bordetella pertussis IS481 value",
+      "x": 500,
+      "y": 368,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-c213bd84",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Bordetella pertussis IS481",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-10",
+      "type": "widgets/Label",
+      "label": "Candida albicans HWP1",
+      "x": 960,
+      "y": 344,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Candida albicans HWP1",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-10",
+      "type": "widgets/Label",
+      "label": "Candida albicans HWP1 value",
+      "x": 960,
+      "y": 368,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-da307b14",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Candida albicans HWP1",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-11",
+      "type": "widgets/Label",
+      "label": "Chlamydia pneumoniae OmpA",
+      "x": 1420,
+      "y": 344,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Chlamydia pneumoniae OmpA",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-11",
+      "type": "widgets/Label",
+      "label": "Chlamydia pneumoniae OmpA value",
+      "x": 1420,
+      "y": 368,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-d6d19e74",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Chlamydia pneumoniae OmpA",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-12",
+      "type": "widgets/Label",
+      "label": "Cladosporium herbarum Cla h 8",
+      "x": 40,
+      "y": 456,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Cladosporium herbarum Cla h 8",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-12",
+      "type": "widgets/Label",
+      "label": "Cladosporium herbarum Cla h 8 value",
+      "x": 40,
+      "y": 480,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-5630fb57",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Cladosporium herbarum Cla h 8",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-13",
+      "type": "widgets/Label",
+      "label": "Coronavirus OC43 S gene",
+      "x": 500,
+      "y": 456,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Coronavirus OC43 S gene",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-13",
+      "type": "widgets/Label",
+      "label": "Coronavirus OC43 S gene value",
+      "x": 500,
+      "y": 480,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-a57123cc",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Coronavirus OC43 S gene",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-14",
+      "type": "widgets/Label",
+      "label": "Cytomegalovirus UL83",
+      "x": 960,
+      "y": 456,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Cytomegalovirus UL83",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-14",
+      "type": "widgets/Label",
+      "label": "Cytomegalovirus UL83 value",
+      "x": 960,
+      "y": 480,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-a346ef59",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Cytomegalovirus UL83",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-15",
+      "type": "widgets/Label",
+      "label": "Epstein-Barr virus EBER1",
+      "x": 1420,
+      "y": 456,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Epstein-Barr virus EBER1",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-15",
+      "type": "widgets/Label",
+      "label": "Epstein-Barr virus EBER1 value",
+      "x": 1420,
+      "y": 480,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-77349cf0",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Epstein-Barr virus EBER1",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-16",
+      "type": "widgets/Label",
+      "label": "Haemophilus influenzae NTHi P2",
+      "x": 40,
+      "y": 568,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Haemophilus influenzae NTHi P2",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-16",
+      "type": "widgets/Label",
+      "label": "Haemophilus influenzae NTHi P2 value",
+      "x": 40,
+      "y": 592,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-1a11e1be",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Haemophilus influenzae NTHi P2",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-17",
+      "type": "widgets/Label",
+      "label": "Human herpesvirus 6 U37",
+      "x": 500,
+      "y": 568,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Human herpesvirus 6 U37",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-17",
+      "type": "widgets/Label",
+      "label": "Human herpesvirus 6 U37 value",
+      "x": 500,
+      "y": 592,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-ea9e5c24",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Human herpesvirus 6 U37",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-18",
+      "type": "widgets/Label",
+      "label": "Human metapneumovirus F gene",
+      "x": 960,
+      "y": 568,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Human metapneumovirus F gene",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-18",
+      "type": "widgets/Label",
+      "label": "Human metapneumovirus F gene value",
+      "x": 960,
+      "y": 592,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-5ba52e85",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Human metapneumovirus F gene",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-19",
+      "type": "widgets/Label",
+      "label": "Human rhinovirus VP1",
+      "x": 1420,
+      "y": 568,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Human rhinovirus VP1",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-19",
+      "type": "widgets/Label",
+      "label": "Human rhinovirus VP1 value",
+      "x": 1420,
+      "y": 592,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-f8ebc4c9",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Human rhinovirus VP1",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-20",
+      "type": "widgets/Label",
+      "label": "Influenza A M gene",
+      "x": 40,
+      "y": 680,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Influenza A M gene",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-20",
+      "type": "widgets/Label",
+      "label": "Influenza A M gene value",
+      "x": 40,
+      "y": 704,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-149256c6",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Influenza A M gene",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-21",
+      "type": "widgets/Label",
+      "label": "Mycobacterium tuberculosis IS6110",
+      "x": 500,
+      "y": 680,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Mycobacterium tuberculosis IS6110",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-21",
+      "type": "widgets/Label",
+      "label": "Mycobacterium tuberculosis IS6110 value",
+      "x": 500,
+      "y": 704,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-91b89450",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Mycobacterium tuberculosis IS6110",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-22",
+      "type": "widgets/Label",
+      "label": "Mycoplasma pneumoniae P1",
+      "x": 960,
+      "y": 680,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Mycoplasma pneumoniae P1",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-22",
+      "type": "widgets/Label",
+      "label": "Mycoplasma pneumoniae P1 value",
+      "x": 960,
+      "y": 704,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-7ecefef1",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Mycoplasma pneumoniae P1",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-23",
+      "type": "widgets/Label",
+      "label": "Penicillium chrysogenum Pen ch 18",
+      "x": 1420,
+      "y": 680,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Penicillium chrysogenum Pen ch 18",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-23",
+      "type": "widgets/Label",
+      "label": "Penicillium chrysogenum Pen ch 18 value",
+      "x": 1420,
+      "y": 704,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-898eeec7",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Penicillium chrysogenum Pen ch 18",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-24",
+      "type": "widgets/Label",
+      "label": "Pseudomonas aeruginosa oprL",
+      "x": 40,
+      "y": 792,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Pseudomonas aeruginosa oprL",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-24",
+      "type": "widgets/Label",
+      "label": "Pseudomonas aeruginosa oprL value",
+      "x": 40,
+      "y": 816,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-21ee8fc1",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Pseudomonas aeruginosa oprL",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-25",
+      "type": "widgets/Label",
+      "label": "RSV F gene",
+      "x": 500,
+      "y": 792,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "RSV F gene",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-25",
+      "type": "widgets/Label",
+      "label": "RSV F gene value",
+      "x": 500,
+      "y": 816,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-a1f85acb",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "RSV F gene",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-26",
+      "type": "widgets/Label",
+      "label": "SARS-CoV-2 N gene",
+      "x": 960,
+      "y": 792,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "SARS-CoV-2 N gene",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-26",
+      "type": "widgets/Label",
+      "label": "SARS-CoV-2 N gene value",
+      "x": 960,
+      "y": 816,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-49d38f34",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "SARS-CoV-2 N gene",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-27",
+      "type": "widgets/Label",
+      "label": "Stachybotrys chartarum tri5",
+      "x": 1420,
+      "y": 792,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Stachybotrys chartarum tri5",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-27",
+      "type": "widgets/Label",
+      "label": "Stachybotrys chartarum tri5 value",
+      "x": 1420,
+      "y": 816,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-92c03744",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Stachybotrys chartarum tri5",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-28",
+      "type": "widgets/Label",
+      "label": "Staphylococcus aureus nuc",
+      "x": 40,
+      "y": 904,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Staphylococcus aureus nuc",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-28",
+      "type": "widgets/Label",
+      "label": "Staphylococcus aureus nuc value",
+      "x": 40,
+      "y": 928,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-13fe9402",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Staphylococcus aureus nuc",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-29",
+      "type": "widgets/Label",
+      "label": "Streptococcus pneumoniae lytA",
+      "x": 500,
+      "y": 904,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Streptococcus pneumoniae lytA",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-29",
+      "type": "widgets/Label",
+      "label": "Streptococcus pneumoniae lytA value",
+      "x": 500,
+      "y": 928,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-f82cdf8e",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Streptococcus pneumoniae lytA",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": "w-cap-30",
+      "type": "widgets/Label",
+      "label": "Streptococcus pyogenes speB",
+      "x": 960,
+      "y": 904,
+      "w": 440,
+      "h": 22,
+      "zIndex": 40,
+      "props": {
+        "text": "Streptococcus pyogenes speB",
+        "fontSize": "11pt",
+        "fontColor": "#94a3b8"
+      }
+    },
+    {
+      "id": "w-val-30",
+      "type": "widgets/Label",
+      "label": "Streptococcus pyogenes speB value",
+      "x": 960,
+      "y": 928,
+      "w": 440,
+      "h": 40,
+      "zIndex": 40,
+      "props": {
+        "text": "—",
+        "fontSize": "20pt",
+        "fontColor": "#e2e8f0"
+      },
+      "slotBindings": [
+        {
+          "slot": "text",
+          "source": {
+            "kind": "point",
+            "connId": "local",
+            "project": "sensorRead",
+            "pointId": "p:sensorRead:r:31aac32c-32a19e15",
+            "mode": "cur",
+            "tagField": "curVal",
+            "dis": "Streptococcus pyogenes speB",
+            "unit": "gc/m³"
+          }
+        }
+      ]
+    }
+  ]
+}

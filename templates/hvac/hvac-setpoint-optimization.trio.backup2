@@ -1,0 +1,149 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @hvac-setpoint-optimization
+name: "Setpoint Optimization"
+category: "hvac"
+description: "Calculate optimal temperature and pressure setpoints based on load, weather, and efficiency"
+tags: ["hvac","setpoint","optimization","control","temperature","pressure"]
+
+parameters: [{name:"equipmentFilter",type:"string",description:"Filter expression for equipment to optimize",required:T,examples:["ahu","chiller","boiler","chilledWaterPlant"]},{name:"setpointType",type:"string",description:"Type of setpoint to optimize (temp, pressure, flow)",required:T,examples:["temp","pressure","flow"]},{name:"dateRange",type:"string",description:"Historical date range for optimization analysis",required:T,examples:["lastWeek","lastMonth","last3Months"]},{name:"weatherPoint",type:"string",description:"Reference to outdoor air temperature point",default:"site->weather->temp",examples:["site->weather->temp","site->outTemp"]},{name:"targetEfficiency",type:"number",description:"Target efficiency improvement percentage",default:10,examples:[5,10,15]},{name:"comfortBounds",type:"object",description:"Comfort constraint boundaries",default:{minTemp:68,maxTemp:76,maxHumidity:60}}]
+
+template:
+  (equipFilt, spType, dates, weatherPt: "site->weather->temp", targetEff: 10.0, comfortBnds: {minTemp: 68, maxTemp: 76, maxHumidity: 60}) => do
+    
+    // Read equipment
+    equipment: readAll({{equipmentFilter}})
+    
+    // Read weather data
+    weatherData: readAll({{weatherPoint}}).hisRead({{dateRange}})
+    
+    // Analyze setpoint opportunities
+    recommendations: equipment.map(equip => do
+      
+      // Read current setpoint
+      setpointTag: if ({{setpointType}} == "temp") "temp and sp"
+                   else if ({{setpointType}} == "pressure") "pressure and sp"
+                   else "flow and sp"  end
+      
+      currentSp: readAll(point and equipRef == equip->id and spType).toList
+      currentSpHis: if (currentSp.isEmpty.not) currentSp[0].hisRead({{dateRange}}) else [].toGrid end
+      
+      // Read actual value
+      actualTag: if ({{setpointType}} == "temp") "temp and sensor"
+                 else if ({{setpointType}} == "pressure") "pressure and sensor"
+                 else "flow and sensor"  end
+      
+      actual: readAll(point and equipRef == equip->id and actualTag).toList
+      actualHis: if (actual.isEmpty.not) actual[0].hisRead({{dateRange}}) else [].toGrid end
+      
+      // Read load or demand indicator
+      loadPoints: readAll(point and (power or valve or damper) and equipRef == equip->id)
+      loadHis: if (loadPoints.isEmpty.not) loadPoints[0].hisRead({{dateRange}}) else [].toGrid end
+      
+      // Correlate setpoint with load and weather
+      analysis: if (currentSpHis.isEmpty.not and actualHis.isEmpty.not and loadHis.isEmpty.not) do
+        
+        // Sample hourly data
+        hourlyData: currentSpHis.hisRollup(avg, 1hr).map(row => do
+          weather: (do found: weatherData.findAll(w => w->ts.date == row->ts.date and w->ts.hour == row->ts.hour); if(found.isEmpty.not) found[0]->v0 else na() end)
+          actualVal: actualHis.findAll(a => a->ts.date == row->ts.date and a->ts.hour == row->ts.hour).hisRollup(avg)->v0
+          loadVal: loadHis.findAll(l => l->ts.date == row->ts.date and l->ts.hour == row->ts.hour).hisRollup(avg)->v0
+          
+          if (weather != na() and actualVal != na() and loadVal != na()) do
+            {
+              ts: row->ts,
+              setpoint: row->v0,
+              actual: actualVal,
+              load: loadVal,
+              weather: weather,
+              error: (actualVal - row->v0).abs
+            }
+          else
+            na()
+  
+        end).findAll(v => v != na()).toGrid
+        
+        // Calculate correlation between weather and optimal setpoint
+        lowLoadPeriods: hourlyData.findAll(r => r->load < 50)
+        highLoadPeriods: hourlyData.findAll(r => r->load >= 50)
+        
+        // Recommend reset schedule based on load and weather
+        optimalSp: if ({{setpointType}} == "temp") do
+          
+          // For cooling: raise setpoint when load is low, weather is mild
+          // For heating: lower setpoint when load is low, weather is mild
+          isHeating: equip.has("heating") or equip.has("hotWater") or equip.has("boiler")
+          
+          coldWeather: hourlyData.findAll(r => r->weather < 55)
+          mildWeather: hourlyData.findAll(r => r->weather >= 55 and r->weather <= 75)
+          hotWeather: hourlyData.findAll(r => r->weather > 75)
+          
+          {
+            coldWeatherSp: if (coldWeather.isEmpty.not) coldWeather.hisRollup(avg, "setpoint")->v0 else na() ,
+            mildWeatherSp: if (mildWeather.isEmpty.not) mildWeather.hisRollup(avg, "setpoint")->v0 else na() ,
+            hotWeatherSp: if (hotWeather.isEmpty.not) hotWeather.hisRollup(avg, "setpoint")->v0 else na() ,
+            currentAvgSp: hourlyData.hisRollup(avg, "setpoint")->v0
+          }
+        else
+          // For pressure/flow, optimize based on load
+          {
+            lowLoadSp: if (lowLoadPeriods.isEmpty.not) lowLoadPeriods.hisRollup(avg, "setpoint")->v0 else na() ,
+            highLoadSp: if (highLoadPeriods.isEmpty.not) highLoadPeriods.hisRollup(avg, "setpoint")->v0 else na() ,
+            currentAvgSp: hourlyData.hisRollup(avg, "setpoint")->v0
+          }
+  
+        
+        optimalSp
+      else
+        {currentAvgSp: na()}
+  
+      
+      // Calculate potential savings
+      currentAvg: analysis->currentAvgSp
+      
+      recommendation: if (currentAvg != na()) do
+        if ({{setpointType}} == "temp") do
+          // Temperature setpoint recommendations
+          isHeating: equip.has("heating") or equip.has("hotWater") or equip.has("boiler")
+          
+          if (isHeating) do
+            // Lower heating setpoint for savings
+            suggested: (currentAvg - 2).max(comfortBnds->minTemp)
+            savings: ((currentAvg - suggested) / currentAvg) * 100
+            {suggestedSetpoint: suggested, estimatedSavings: savings.min({{targetEfficiency}})}
+          else
+            // Raise cooling setpoint for savings
+            suggested: (currentAvg + 2).min(comfortBnds->maxTemp)
+            savings: ((suggested - currentAvg) / currentAvg) * 100
+            {suggestedSetpoint: suggested, estimatedSavings: savings.min({{targetEfficiency}})}
+  
+        else
+          // Pressure/flow optimization
+          suggested: currentAvg * 0.9  // 10% reduction
+          savings: 10.0
+          {suggestedSetpoint: suggested, estimatedSavings: savings}
+  
+      else
+        {suggestedSetpoint: na(), estimatedSavings: 0}
+  
+      
+      {
+        equipmentId: equip->id,
+        equipmentName: equip->dis,
+        setpointType: {{setpointType}},
+        currentSetpoint: if(currentAvg != null) currentAvg.round(2) else null,
+        suggestedSetpoint: recommendation->if(suggestedSetpoint != null) suggestedSetpoint.round(2) else null,
+        estimatedSavings: recommendation->if(estimatedSavings != null) estimatedSavings.round(1) else null,
+        coldWeatherSp: analysis.has("coldWeatherSp") ? analysis->if(coldWeatherSp != null) coldWeatherSp.round(2) else null : na(),
+        mildWeatherSp: analysis.has("mildWeatherSp") ? analysis->if(mildWeatherSp != null) mildWeatherSp.round(2) else null : na(),
+        hotWeatherSp: analysis.has("hotWeatherSp") ? analysis->if(hotWeatherSp != null) hotWeatherSp.round(2) else null : na(),
+        action: if (recommendation->estimatedSavings > 2) "Implement Reset Schedule" else "No Change Needed" 
+      }
+    end).toGrid
+    
+    recommendations
+  
+  
+
+examples: [{name:"Optimize chilled water setpoint",description:"Calculate optimal chilled water supply temperature reset schedule",params:{equipmentFilter:"chilledWaterPlant",setpointType:"temp",dateRange:"lastMonth",weatherPoint:"site->weather->temp",targetEfficiency:10,comfortBounds:{minTemp:68,maxTemp:76,maxHumidity:60}}},{name:"Optimize AHU static pressure",description:"Find optimal static pressure setpoint based on load",params:{equipmentFilter:"ahu",setpointType:"pressure",dateRange:"lastWeek",weatherPoint:"site->outTemp",targetEfficiency:15,comfortBounds:{minTemp:70,maxTemp:74,maxHumidity:55}}},{name:"Optimize boiler supply temperature",description:"Calculate optimal hot water supply temperature reset",params:{equipmentFilter:"boiler",setpointType:"temp",dateRange:"last3Months",weatherPoint:"site->weather->temp",targetEfficiency:8,comfortBounds:{minTemp:68,maxTemp:75,maxHumidity:60}}}]

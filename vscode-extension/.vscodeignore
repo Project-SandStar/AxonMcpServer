@@ -1,0 +1,19 @@
+.vscode/**
+.vscode-test/**
+src/**
+tests/**
+.gitignore
+.yarnrc
+webpack.config.js
+tsconfig.json
+jest.config.js
+*.vsix
+node_modules/**
+.DS_Store
+*.log
+docs/**
+IMPLEMENTATION_PLAN.md
+CONTRIBUTING.md
+# Exclude user config files (they should be created by users)
+dist/mcp-server/config/*.json
+!dist/mcp-server/config/README.md

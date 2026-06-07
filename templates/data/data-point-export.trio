@@ -1,0 +1,98 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @data-point-export
+name: "Point Data Export"
+category: "data"
+description: "Export point historical data to structured format for analysis or reporting"
+tags: ["data","export","csv","json","history","reporting"]
+
+parameters: [{name:"pointFilter",type:"string",description:"Filter expression for points to export",required:T,examples:["point and sensor and temp","elecMeter","point and equipRef==@myAhu"]},{name:"dateRange",type:"string",description:"Date range for historical data export",required:T,examples:["today","yesterday","lastWeek","lastMonth","2024-01-01..2024-01-31"]},{name:"rollup",type:"string",description:"Data rollup interval (raw, 1min, 5min, 15min, 1hr, 1day)",default:"raw",examples:["raw","1min","5min","15min","1hr","1day"]},{name:"rollupFunc",type:"string",description:"Rollup function (avg, min, max, sum)",default:"avg",examples:["avg","min","max","sum"]},{name:"includeMetadata",type:"boolean",description:"Include point metadata in export",default:T},{name:"maxPointsPerQuery",type:"number",description:"Maximum number of points to query at once (performance limit)",default:50,examples:[20,50,100]}]
+
+template:
+  (pointFilt, dates, rollupInt: "raw", rollupFn: "avg", includeMeta: true, maxPts: 50.0) => do
+    
+    // Read points
+    points: readAll({{pointFilter}}).limit({{maxPointsPerQuery}}.toInt)
+    
+    if (points.isEmpty) do
+      [].toGrid.addMeta({
+        status: "No Points Found",
+        filter: {{pointFilter}},
+        message: "No points matched the filter expression"
+      })
+    else do
+      
+      // Export data for each point
+      exportData: points.map(point => do
+        
+        // Read historical data
+        rawHistory: point.hisRead({{dateRange}})
+        
+        // Apply rollup if specified
+        history: if ({{rollup}} != "raw" and {{rollup}} != "") do
+          // Parse rollup interval
+          rollupSpan: {{rollup}}.parseSpan
+          
+          // Apply rollup function
+          if ({{rollupFunc}} == "avg") rawHistory.hisRollup(avg, rollupSpan)
+          else if ({{rollupFunc}} == "min") rawHistory.hisRollup(min, rollupSpan)
+          else if ({{rollupFunc}} == "max") rawHistory.hisRollup(max, rollupSpan)
+          else if ({{rollupFunc}} == "sum") rawHistory.hisRollup(sum, rollupSpan)
+          else rawHistory.hisRollup(avg, rollupSpan)
+        end
+        else
+          rawHistory
+  
+  
+        
+        // Format data rows
+        dataRows: history.map(row => do
+          baseRow: {
+            pointId: point->id.toStr,
+            pointName: point->dis,
+            timestamp: row->ts.toStr,
+            value: row->v0
+          }
+          
+          // Add metadata if requested
+          if ({{includeMetadata}}) do
+            baseRow.add({
+              pointType: if (point.has("temp")) "Temperature" 
+                        else if (point.has("pressure")) "Pressure"
+                        else if (point.has("flow")) "Flow"
+                        else if (point.has("power")) "Power"
+                        else if (point.has("energy")) "Energy"
+                        else "Other" ,
+              unit: if (point.has("unit")) point->unit.toStr else "" ,
+              equipRef: if (point.has("equipRef")) point->equipRef.toStr else "" ,
+              siteRef: if (point.has("siteRef")) point->siteRef.toStr else "" ,
+              kind: if (point.has("kind")) point->kind.toStr else "" })
+          end
+          else
+            baseRow
+        end).toList
+        
+        dataRows
+      end).flatten.toGrid
+      
+      // Add export metadata
+      exportData.addMeta({
+        exportDate: now().toStr,
+        dateRange: {{dateRange}},
+        rollup: {{rollup}},
+        rollupFunction: {{rollupFunc}},
+        pointsExported: points.size,
+        totalRecords: exportData.size,
+        includesMetadata: {{includeMetadata}},
+        generatedBy: "axon-mcp-server"
+      })
+    end
+  end
+  
+  
+  
+  
+  
+
+examples: [{name:"Export temperature sensor data",description:"Export all temperature sensor readings for the past week",params:{pointFilter:"point and sensor and temp",dateRange:"lastWeek",rollup:"1hr",rollupFunc:"avg",includeMetadata:T,maxPointsPerQuery:50}},{name:"Export energy meter data",description:"Export daily energy consumption data",params:{pointFilter:"elecMeter",dateRange:"lastMonth",rollup:"1day",rollupFunc:"sum",includeMetadata:T,maxPointsPerQuery:20}},{name:"Raw data export",description:"Export raw unprocessed data for detailed analysis",params:{pointFilter:"point and equipRef==@ahu1",dateRange:"yesterday",rollup:"raw",rollupFunc:"avg",includeMetadata:F,maxPointsPerQuery:30}}]

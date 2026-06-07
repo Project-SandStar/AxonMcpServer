@@ -1,0 +1,150 @@
+{
+  "name": "axon-vscode",
+  "displayName": "Axon VSCode",
+  "description": "AI-powered SkySpark Axon development - connects to Axon MCP Server for code generation",
+  "version": "0.2.22",
+  "publisher": "axon",
+  "license": "AFL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/axon-mcp-server.git"
+  },
+  "engines": {
+    "vscode": "^1.84.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "axon-sidebar",
+          "title": "Axon",
+          "icon": "$(sparkle)"
+        }
+      ]
+    },
+    "views": {
+      "axon-sidebar": [
+        {
+          "type": "webview",
+          "id": "axon.sidebarView",
+          "name": "Axon Assistant",
+          "icon": "$(sparkle)",
+          "contextualTitle": "Axon AI Assistant"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "axon.checkStatus",
+        "title": "Axon: Check Connection Status"
+      },
+      {
+        "command": "axon.connectMcpServer",
+        "title": "Axon: Connect to MCP Server"
+      },
+      {
+        "command": "axon.searchExamples",
+        "title": "Axon: Search Code Examples"
+      },
+      {
+        "command": "axon.searchDocs",
+        "title": "Axon: Search Documentation"
+      },
+      {
+        "command": "axon.switchProject",
+        "title": "Axon: Switch Project"
+      },
+      {
+        "command": "axon.openMcpExplorer",
+        "title": "Axon: Open MCP Explorer",
+        "icon": "$(search)"
+      },
+      {
+        "command": "axon.viewLogs",
+        "title": "Axon: View MCP Server Logs"
+      },
+      {
+        "command": "axon.clearCaches",
+        "title": "Axon: Clear Server Caches"
+      },
+      {
+        "command": "axon.syncFunctions",
+        "title": "Axon: Sync Functions from SkySpark"
+      },
+      {
+        "command": "axon.openDashboard",
+        "title": "Axon: Open Dashboard",
+        "icon": "$(dashboard)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "axon.openMcpExplorer",
+          "group": "navigation",
+          "when": "view == axon.sidebarView"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Axon VSCode",
+      "properties": {
+        "axon.server.url": {
+          "type": "string",
+          "default": "http://localhost:3847",
+          "description": "URL of the Axon MCP Server"
+        },
+        "axon.server.username": {
+          "type": "string",
+          "default": "admin",
+          "description": "Username for MCP server authentication"
+        },
+        "axon.server.password": {
+          "type": "string",
+          "default": "admin",
+          "description": "Password for MCP server authentication"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run bump && npm run compile",
+    "bump": "node scripts/bump-version.js",
+    "compile": "webpack --mode production",
+    "watch": "webpack --mode development --watch",
+    "test": "jest",
+    "test:unit": "jest --testPathPattern=tests/unit",
+    "test:integration": "jest --testPathPattern=tests/integration",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.84.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "@vscode/test-electron": "^2.3.0",
+    "eslint": "^8.0.0",
+    "jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "ts-loader": "^9.4.0",
+    "typescript": "^5.2.0",
+    "webpack": "^5.88.0",
+    "webpack-cli": "^5.1.0"
+  },
+  "dependencies": {},
+  "buildInfo": {
+    "buildNumber": 23,
+    "buildDate": "2025-12-25T17:37:07.692Z",
+    "builtFrom": "0.2.21"
+  }
+}

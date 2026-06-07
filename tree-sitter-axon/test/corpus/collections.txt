@@ -1,0 +1,106 @@
+==================
+Empty list
+==================
+
+[]
+
+---
+
+(source_file
+  (list))
+
+==================
+List with items
+==================
+
+[1, 2, 3]
+
+---
+
+(source_file
+  (list (number) (number) (number)))
+
+==================
+List with trailing comma
+==================
+
+[1, 2,]
+
+---
+
+(source_file
+  (list (number) (number)))
+
+==================
+Empty dict
+==================
+
+{}
+
+---
+
+(source_file
+  (dict))
+
+==================
+Dict with pairs
+==================
+
+{dis: "Site", area: 100}
+
+---
+
+(source_file
+  (dict
+    (dict_item (dict_pair key: (identifier) value: (string)))
+    (dict_item (dict_pair key: (identifier) value: (number)))))
+
+==================
+Dict with marker
+==================
+
+{site, dis: "Main"}
+
+---
+
+(source_file
+  (dict
+    (dict_item (dict_marker key: (identifier)))
+    (dict_item (dict_pair key: (identifier) value: (string)))))
+
+==================
+Dict with remove
+==================
+
+{-oldTag}
+
+---
+
+(source_file
+  (dict
+    (dict_item (dict_remove key: (identifier)))))
+
+==================
+Dict with string key
+==================
+
+{"special key": 42}
+
+---
+
+(source_file
+  (dict
+    (dict_item (dict_pair key: (string) value: (number)))))
+
+==================
+Nested list
+==================
+
+[[1, 2], [3, 4]]
+
+---
+
+(source_file
+  (list
+    (list (number) (number))
+    (list (number) (number))))

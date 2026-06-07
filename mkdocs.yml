@@ -1,0 +1,71 @@
+site_name: Axon MCP Server
+site_description: MCP server providing AI assistants with access to Axon code examples
+site_url: https://axon-mcp-server.local
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: blue
+      accent: light blue
+  features:
+    - navigation.sections
+    - navigation.expand
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - tables
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Quick Start: getting-started/QUICK_START.md
+    - Configuration: getting-started/configuration.md
+    - Usage Guide: getting-started/usage.md
+    - Server Management: getting-started/server-management.md
+    - Daemon Mode: getting-started/daemon-mode.md
+    - Function Sync: getting-started/QUICK-START-SYNC.md
+    - Axon Usage: getting-started/AXON-USAGE-GUIDE.md
+    - Quick Reference: getting-started/QUICK-REFERENCE.md
+  - SkySpark Integration:
+    - Setup: skyspark/SKYSPARK_SETUP.md
+    - Quick Start: skyspark/SKYSPARK_QUICKSTART.md
+    - Implementation: skyspark/SKYSPARK_IMPLEMENTATION.md
+    - Auto-Discovery: skyspark/AUTO_DISCOVERY.md
+    - Multi-Instance: skyspark/MULTI_INSTANCE_SUPPORT.md
+    - Multi-Project: skyspark/MULTI_PROJECT_SETUP.md
+    - Function Sync: skyspark/FUNCTION-SYNC-GUIDE.md
+    - Remote Instances: skyspark/REMOTE_INSTANCES_GUIDE.md
+    - Instance Naming: skyspark/INSTANCE-NAMING.md
+    - Metadata Discovery: skyspark/METADATA-DISCOVERY.md
+  - Implementation:
+    - FlexSearch: implementation/flexsearch.md
+    - Haystack Core: implementation/HAYSTACK_CORE_IMPLEMENTATION.md
+    - Caching: implementation/CACHING_ARCHITECTURE.md
+    - Session Caching: implementation/SESSION-CACHING.md
+    - Function Tracking: implementation/FUNCTION_USAGE_TRACKING.md
+    - DefComp: implementation/DEFCOMP_ENHANCEMENT.md
+    - Background Workers: implementation/BACKGROUND-WORKERS.md
+    - Project Functions: implementation/PROJ-FUNCTIONS-SUMMARY.md
+  - API Reference:
+    - MCP Tools: api/PATTERNS.md
+    - Operators: api/OPERATORS.md
+    - Regex Search: api/REGEX-SEARCH.md
+    - Library Patterns: api/axon-library-patterns.md
+    - Templates: api/README_TEMPLATES.md
+  - Development:
+    - Roadmap: development/roadmap.md
+    - Implementation Summary: development/IMPLEMENTATION_SUMMARY.md
+    - Phase 1: development/PHASE1-IMPLEMENTATION.md
+    - Phase 2: development/PHASE2-IMPLEMENTATION.md
+    - Progress Report: development/PROGRESS_REPORT.md

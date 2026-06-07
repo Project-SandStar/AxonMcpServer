@@ -1,0 +1,155 @@
+==================
+If then
+==================
+
+if (x > 0) "positive"
+
+---
+
+(source_file
+  (if_expr
+    condition: (compare_expr
+      left: (var (identifier))
+      right: (number))
+    then: (string)))
+
+==================
+If then else
+==================
+
+if (x > 0) "positive" else "negative"
+
+---
+
+(source_file
+  (if_expr
+    condition: (compare_expr
+      left: (var (identifier))
+      right: (number))
+    then: (string)
+    else: (string)))
+
+==================
+If do else
+==================
+
+if (x > 0) do
+  "positive"
+else
+  "negative"
+
+---
+
+(source_file
+  (if_expr
+    condition: (compare_expr
+      left: (var (identifier))
+      right: (number))
+    (string)
+    else: (string)))
+
+==================
+Do block
+==================
+
+do
+  x: 1
+  y: 2
+  x + y
+end
+
+---
+
+(source_file
+  (do_block
+    (define_var name: (identifier) value: (number))
+    (define_var name: (identifier) value: (number))
+    (add_expr
+      left: (var (identifier))
+      right: (var (identifier)))))
+
+==================
+Return expression
+==================
+
+return 42
+
+---
+
+(source_file
+  (return_expr (number)))
+
+==================
+Bare return in do block
+==================
+
+do
+  return
+end
+
+---
+
+(source_file
+  (do_block
+    (return_expr)))
+
+==================
+Throw expression
+==================
+
+throw "error"
+
+---
+
+(source_file
+  (throw_expr (string)))
+
+==================
+Try catch
+==================
+
+try doSomething() catch "fallback"
+
+---
+
+(source_file
+  (try_catch_expr
+    body: (call_expr function: (var (identifier)))
+    handler: (string)))
+
+==================
+Try catch with error var
+==================
+
+try doSomething() catch (err) err.toStr
+
+---
+
+(source_file
+  (try_catch_expr
+    body: (call_expr function: (var (identifier)))
+    error_var: (identifier)
+    handler: (dot_call
+      target: (var (identifier))
+      method: (identifier))))
+
+==================
+Try do catch
+==================
+
+try do
+  step1()
+  step2()
+catch (e)
+  logErr(e)
+
+---
+
+(source_file
+  (try_catch_expr
+    (call_expr function: (var (identifier)))
+    (call_expr function: (var (identifier)))
+    error_var: (identifier)
+    handler: (call_expr
+      function: (var (identifier))
+      args: (arg_list (var (identifier))))))

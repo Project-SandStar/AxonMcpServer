@@ -1,0 +1,68 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @energy-demand-peak
+name: "Peak Demand Analysis"
+category: "energy"
+description: "Calculate peak demand and identify when it occurred, useful for demand charge optimization"
+tags: ["energy","demand","peak","kw","optimization","billing"]
+
+parameters: [{name:"equipmentFilter",type:"string",description:"Filter expression for demand meters (e.g., 'demand and equipRef->siteMeter')",required:T,examples:["demand and equipRef->siteMeter","elecDemand","power and equipRef->mainMeter"]},{name:"dateRange",type:"string",description:"Date range for peak demand analysis",required:T,examples:["lastMonth","lastYear","2024-01-01..2024-12-31","thisMonth"]},{name:"rollupInterval",type:"string",description:"Interval for demand calculation (typically 15min or 1h for billing)",default:"15min",examples:["15min","1h","30min"]},{name:"topN",type:"number",description:"Number of top peak demand instances to return",default:10,examples:[5,10,20]}]
+
+template:
+  (equipFilter, dates, interval: "15min", topCount: 10) => do
+    
+    // Read demand points
+    points: readAll({{equipmentFilter}})
+    
+    // Read historical demand data with specified interval
+    demandData: points.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}})
+    
+    // Find peak demand for each meter
+    peaksByMeter: demandData.map(point => do
+      // Get all values for this point
+      pointData: demandData.findAll(row => row.id == point.id)
+      
+      // Find maximum demand
+      maxDemand: pointData.reduce(null, (acc, row) => do
+        val: row["v0"]
+        if (acc == null or val > acc["demand"])
+          {ts: row["ts"], demand: val, pointId: row.id}
+        else
+          acc
+      end)
+      
+      maxDemand
+    end).unique
+    
+    // Get equipment metadata
+    result: peaksByMeter.map(peak => do
+      point: read(peak["pointId"])
+      equip: read(point->equipRef)
+      site: read(equip->siteRef)
+      
+      {
+        ts: peak["ts"],
+        peakDemand: peak["demand"].round,
+        unit: "kW",
+        equipName: equip->dis,
+        siteName: site->dis,
+        pointName: point->dis
+      }
+    end).toGrid
+    
+    // Sort by demand descending and take top N
+    result = result.sortr(row => row["peakDemand"]).limit(topCount)
+    
+    // Add column metadata
+    result = result
+      .addColMeta("ts", {dis: "Peak Time"})
+      .addColMeta("peakDemand", {dis: "Peak Demand (kW)"})
+      .addColMeta("equipName", {dis: "Equipment"})
+      .addColMeta("siteName", {dis: "Site"})
+    
+    result
+  end
+  
+
+examples: [{name:"Monthly peak demand top 10",description:"Find top 10 peak demand instances for last month with 15-minute intervals",params:{equipmentFilter:"demand and equipRef->siteMeter",dateRange:"lastMonth",rollupInterval:"15min",topN:10}},{name:"Yearly peak demand top 5",description:"Identify top 5 peak demand occurrences for the year",params:{equipmentFilter:"elecDemand",dateRange:"lastYear",rollupInterval:"1h",topN:5}},{name:"Current month peak analysis",description:"Track peak demand for current billing cycle",params:{equipmentFilter:"demand and equipRef->mainMeter",dateRange:"thisMonth",rollupInterval:"15min",topN:20}}]

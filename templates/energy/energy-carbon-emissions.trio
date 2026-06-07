@@ -1,0 +1,121 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @energy-carbon-emissions
+name: "Carbon Emissions Calculation"
+category: "energy"
+description: "Calculate carbon dioxide (CO2) emissions from energy consumption using emission factors"
+tags: ["energy","carbon","co2","emissions","sustainability","environmental","greenhouse-gas"]
+
+parameters: [{name:"equipmentFilter",type:"string",description:"Filter expression for energy meters",required:T,examples:["elecMeter","energy and equipRef->siteMeter","energy"]},{name:"dateRange",type:"string",description:"Date range for emissions calculation",required:T,examples:["lastMonth","lastYear","2024-01-01..2024-12-31"]},{name:"emissionFactor",type:"number",description:"CO2 emission factor in lbs/kWh or kg/kWh (US avg ~0.92 lbs/kWh, varies by region)",default:0.92,examples:[0.92,0.85,1.05,0.42]},{name:"outputUnit",type:"string",description:"Output unit for emissions (lbs, kg, tons, metric-tons)",default:"lbs",examples:["lbs","kg","tons","metric-tons"]},{name:"rollupInterval",type:"string",description:"Interval for emissions aggregation",default:"1mo",examples:["1day","1wk","1mo","1yr"]},{name:"includeEquivalents",type:"boolean",description:"Include CO2 equivalents (trees, cars, homes) for context",default:T}]
+
+template:
+  (equipFilter, dates, factor: 0.92, unit: "lbs", interval: "1mo", showEquiv: true) => do
+    
+    // Read energy consumption
+    points: readAll({{equipmentFilter}})
+    consumption: points
+      .hisRead({{dateRange}})
+      .hisRollup(sum, {{rollupInterval}})
+    
+    // Calculate emissions with unit conversion
+    emissions: consumption.map(row => do
+      kwh: row["v0"]
+      
+      // Calculate base emissions in specified unit
+      co2: if ({{outputUnit}} == "lbs")
+        kwh * {{emissionFactor}}
+      else if ({{outputUnit}} == "kg")
+        // Convert lbs to kg if needed
+        (kwh * {{emissionFactor}}) * 0.453592
+      else if ({{outputUnit}} == "tons")
+        // US short tons (2000 lbs)
+        (kwh * {{emissionFactor}}) / 2000
+      else if ({{outputUnit}} == "metric-tons")
+        // Metric tonnes (1000 kg)
+        (kwh * {{emissionFactor}}) * 0.453592 / 1000
+      else
+        kwh * {{emissionFactor}}
+      
+      output: {
+        period: row["ts"].format("MMM YYYY"),
+        consumption: kwh.round,
+        emissions: co2.round(2),
+        unit: {{outputUnit}}
+      }
+      
+      // Add equivalents if requested
+      if ({{includeEquivalents}}) do
+        // Standard EPA equivalents (based on lbs CO2)
+        co2Lbs: if ({{outputUnit}} != "lbs")
+          if ({{outputUnit}} == "kg") co2 / 0.453592
+          else if ({{outputUnit}} == "tons") co2 * 2000
+          else if ({{outputUnit}} == "metric-tons") co2 * 2204.62 else co2
+        else
+          co2
+        
+        // EPA equivalents
+        // 1 tree absorbs ~48 lbs CO2/year
+        trees: (co2Lbs / 48).round(1)
+        // Average car emits ~10,000 lbs CO2/year  
+        cars: (co2Lbs / 10000 * 12).round(2)  // Monthly equivalent
+        // Average home uses ~7.5 tons CO2/year
+        homes: (co2Lbs / 15000 * 12).round(2)  // Monthly equivalent
+        
+        output = output
+          .set("treesEquiv", trees)
+          .set("carsEquiv", cars)
+          .set("homesEquiv", homes)
+      end
+      
+      output
+    end).toGrid
+    
+    // Calculate totals
+    totalKwh: consumption.reduce(0, (sum, row) => sum + row["v0"])
+    totalEmissions: emissions.reduce(0, (sum, row) => sum + row["emissions"])
+    
+    // Add summary row
+    summaryRow: {
+      period: "TOTAL",
+      consumption: totalKwh.round,
+      emissions: totalEmissions.round(2),
+      unit: {{outputUnit}}
+    }
+    
+    if ({{includeEquivalents}}) do
+      totalTrees: emissions.reduce(0, (sum, row) => sum + row["treesEquiv"])
+      totalCars: emissions.reduce(0, (sum, row) => sum + row["carsEquiv"])
+      totalHomes: emissions.reduce(0, (sum, row) => sum + row["homesEquiv"])
+      
+      summaryRow = summaryRow
+        .set("treesEquiv", totalTrees.round(1))
+        .set("carsEquiv", totalCars.round(2))
+        .set("homesEquiv", totalHomes.round(2))
+    end
+    
+    result: emissions.addRow(summaryRow)
+    
+    // Add column metadata
+    result = result
+      .addColMeta("consumption", {dis: "Energy (kWh)"})
+      .addColMeta("emissions", {dis: "CO2 Emissions (" + {{outputUnit}} + ")"})
+    
+    if ({{includeEquivalents}}) do
+      result = result
+        .addColMeta("treesEquiv", {dis: "Trees (1 yr)"})
+        .addColMeta("carsEquiv", {dis: "Cars (annual)"})
+        .addColMeta("homesEquiv", {dis: "Homes (annual)"})
+    end
+    
+    // Add metadata with emission factor info
+    result.addMeta({
+      emissionFactor: {{emissionFactor}},
+      factorUnit: "lbs/kWh",
+      period: {{dateRange}},
+      note: "EPA equivalents: 1 tree=48lbs CO2/yr, 1 car=10,000lbs/yr, 1 home=15,000lbs/yr"
+    })
+  end
+  
+
+examples: [{name:"Annual carbon footprint with equivalents",description:"Calculate annual CO2 emissions with tree/car/home equivalents",params:{equipmentFilter:"energy and equipRef->siteMeter",dateRange:"lastYear",emissionFactor:0.92,outputUnit:"tons",rollupInterval:"1mo",includeEquivalents:T}},{name:"Monthly emissions in kg",description:"Track monthly emissions in kilograms",params:{equipmentFilter:"elecMeter",dateRange:"lastMonth",emissionFactor:0.42,outputUnit:"kg",rollupInterval:"1day",includeEquivalents:F}},{name:"Quarterly sustainability report",description:"Generate quarterly CO2 report with context equivalents",params:{equipmentFilter:"energy and siteRef->geoState==\"CA\"",dateRange:"2024-01-01..2024-03-31",emissionFactor:0.65,outputUnit:"metric-tons",rollupInterval:"1mo",includeEquivalents:T}}]

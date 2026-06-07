@@ -1,0 +1,211 @@
+==================
+Simple function call
+==================
+
+readAll(site)
+
+---
+
+(source_file
+  (call_expr
+    function: (var (identifier))
+    args: (arg_list (var (identifier)))))
+
+==================
+Call with multiple args
+==================
+
+add(1, 2, 3)
+
+---
+
+(source_file
+  (call_expr
+    function: (var (identifier))
+    args: (arg_list (number) (number) (number))))
+
+==================
+Call no args
+==================
+
+now()
+
+---
+
+(source_file
+  (call_expr
+    function: (var (identifier))))
+
+==================
+Chained calls
+==================
+
+readAll(site).sort("name")
+
+---
+
+(source_file
+  (call_expr
+    function: (dot_call
+      target: (call_expr
+        function: (var (identifier))
+        args: (arg_list (var (identifier))))
+      method: (identifier))
+    args: (arg_list (string))))
+
+==================
+Dot call no parens
+==================
+
+data.size
+
+---
+
+(source_file
+  (dot_call
+    target: (var (identifier))
+    method: (identifier)))
+
+==================
+Dot call with parens
+==================
+
+data.get("key")
+
+---
+
+(source_file
+  (call_expr
+    function: (dot_call
+      target: (var (identifier))
+      method: (identifier))
+    args: (arg_list (string))))
+
+==================
+Index access
+==================
+
+list[0]
+
+---
+
+(source_file
+  (index_expr
+    target: (var (identifier))
+    index: (number)))
+
+==================
+Trap call
+==================
+
+rec->dis
+
+---
+
+(source_file
+  (trap_call
+    target: (var (identifier))
+    tag: (identifier)))
+
+==================
+Partial application
+==================
+
+add(1, _)
+
+---
+
+(source_file
+  (call_expr
+    function: (var (identifier))
+    args: (arg_list (number) (partial_arg))))
+
+==================
+Dot call with keyword method
+==================
+
+list.or
+
+---
+
+(source_file
+  (dot_call
+    target: (var (identifier))))
+
+==================
+Qualified name
+==================
+
+core::readAll
+
+---
+
+(source_file
+  (qname
+    lib: (qname_lib (identifier))
+    name: (identifier)))
+
+==================
+Newline-separated list is not index access
+==================
+
+do
+  someFunc()
+  [1, 2]
+end
+
+---
+
+(source_file
+  (do_block
+    (call_expr
+      function: (var (identifier)))
+    (list (number) (number))))
+
+==================
+Trailing lambda with if-return and list
+==================
+
+hisRewrite(hisId) (val, ts) => do
+  if (val == nan()) return null
+  [ts, val]
+end
+
+---
+
+(source_file
+  (trailing_lambda_call
+    function: (var (identifier))
+    args: (arg_list (var (identifier)))
+    trailing_lambda: (lambda
+      params: (param_list
+        (param name: (identifier))
+        (param name: (identifier)))
+      body: (do_block
+        (if_expr
+          condition: (compare_expr
+            left: (var (identifier))
+            right: (call_expr
+              function: (var (identifier))))
+          then: (return_expr (null)))
+        (list
+          (var (identifier))
+          (var (identifier)))))))
+
+==================
+Trailing lambda call
+==================
+
+hisRewrite(rec) (val, ts) => [ts, val]
+
+---
+
+(source_file
+  (trailing_lambda_call
+    function: (var (identifier))
+    args: (arg_list (var (identifier)))
+    trailing_lambda: (lambda
+      params: (param_list
+        (param name: (identifier))
+        (param name: (identifier)))
+      body: (list (var (identifier)) (var (identifier))))))

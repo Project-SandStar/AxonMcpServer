@@ -1,0 +1,54 @@
+site_name: Axon VSCode Extension
+site_description: AI-powered VSCode extension for Axon development
+site_url: https://axon-vscode.local
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: purple
+  features:
+    - navigation.sections
+    - navigation.expand
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - tables
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - API Key Setup: getting-started/API_KEY_SETUP.md
+    - Adding SkySpark Instances: getting-started/ADDING_SKYSPARK_INSTANCES.md
+    - Configuration Editor: getting-started/CONFIG_EDITOR.md
+    - Quick Reference: getting-started/QUICK_REFERENCE.md
+  - Features:
+    - Chat Panel: features/PHASE6_CHAT_PANEL.md
+    - Code Generation: features/INTERACTIVE_GENERATION_WORKFLOW.md
+    - DefComp Templates: features/DEFCOMP_TEMPLATE_WORKFLOW.md
+    - Caching: features/CACHE_CONFIGURATION.md
+    - Performance Monitor: features/PERFORMANCE_MONITOR.md
+  - Guides:
+    - User Guide: guides/USER_GUIDE.md
+    - AI Models: guides/AI_MODELS_GUIDE.md
+    - Sidebar: guides/SIDEBAR_GUIDE.md
+  - Troubleshooting:
+    - Auto-Discovery: troubleshooting/AUTO_DISCOVERY_TROUBLESHOOTING.md
+    - MCP Server: troubleshooting/MCP_TROUBLESHOOTING.md
+    - Node Detection: troubleshooting/NODE_DETECTION.md
+    - Sidebar Diagnostics: troubleshooting/SIDEBAR_DIAGNOSTICS.md
+  - Development:
+    - Architecture: development/UNIFIED_ARCHITECTURE.md
+    - Changelog: development/CHANGELOG.md
+    - Release Notes: development/RELEASE_NOTES.md

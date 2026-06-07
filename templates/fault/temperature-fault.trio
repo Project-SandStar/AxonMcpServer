@@ -1,0 +1,49 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @fault-temperature-deviation
+name: "Temperature Deviation Faults"
+category: "fault"
+description: "Detect temperature sensors that are outside of expected ranges or deviating from setpoint"
+tags: ["fault","temperature","sensor","diagnostic","alarm"]
+
+parameters: [{name:"pointFilter",type:"string",description:"Filter for temperature points to check",required:T,default:"temp and sensor",examples:["temp and sensor","zone and air and temp and sensor","discharge and air and temp and sensor"]},{name:"minTemp",type:"number",description:"Minimum acceptable temperature (°F)",required:F,default:40,validation:{min:-50,max:150}},{name:"maxTemp",type:"number",description:"Maximum acceptable temperature (°F)",required:F,default:90,validation:{min:-50,max:150}},{name:"spDeviation",type:"number",description:"Maximum allowed deviation from setpoint (°F)",required:F,default:5,validation:{min:0,max:50}}]
+
+template:
+  // Temperature Fault Detection
+  readAll({{pointFilter}} and curVal)
+    .map(sensor => do
+      temp: sensor->curVal
+      tempF: temp.as("°F")
+      
+      // Find associated setpoint
+      equip: sensor->equipRef
+      sp: readAll(temp and sp and equipRef==equip).first(false)
+      spVal: if(sp) sp->curVal.as("°F") else na()
+      
+      // Check fault conditions
+      tooLow: tempF < {{minTemp}}
+      tooHigh: tempF > {{maxTemp}}
+      deviating: if(sp) abs(tempF - spVal) > {{spDeviation}} else false
+      
+      {
+        point: sensor->dis,
+        navName: sensor->navName,
+        equipRef: equip,
+        currentTemp: tempF.toLocale("0.1") + "°F",
+        setpoint: if(sp) spVal.toLocale("0.1") + "°F" else "N/A",
+        deviation: if(sp) abs(tempF - spVal).toLocale("0.1") + "°F" else "N/A",
+        status: if(tooLow) "❄️ Too Low" 
+                else if(tooHigh) "🔥 Too High"
+                else if(deviating) "⚠️ Deviating from SP"
+                else "✓ Normal",
+        fault: tooLow or tooHigh or deviating
+      }
+    end)
+    .findAll(r => r->fault)
+    .sort("point")
+  
+
+validation: ["readAll({{pointFilter}}).size > 0  // Verify points exist"]
+
+examples: [{name:"Check all zone temperatures",params:{pointFilter:"zone and air and temp and sensor",minTemp:65,maxTemp:78,spDeviation:3}},{name:"Check discharge air temperatures",params:{pointFilter:"discharge and air and temp and sensor",minTemp:45,maxTemp:65,spDeviation:5}}]

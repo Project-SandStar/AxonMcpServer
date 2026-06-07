@@ -1,0 +1,5 @@
+// Simple function
+(meter, dates) => do
+  occupied: toOccupied(meter).hisRead(dates)
+  meter.hisRead(dates).foldCol("v0", sum)
+end

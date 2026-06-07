@@ -1,0 +1,124 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @energy-load-profile
+name: "Energy Load Profile Analysis"
+category: "energy"
+description: "Generate energy load profiles showing typical consumption patterns by hour of day or day of week"
+tags: ["energy","load","profile","pattern","hourly","daily","analysis"]
+
+parameters: [{name:"equipmentFilter",type:"string",description:"Filter expression for energy or demand points",required:T,examples:["elecMeter","demand and equipRef->siteMeter","energy and siteRef==@siteId"]},{name:"dateRange",type:"string",description:"Date range for profile analysis",required:T,examples:["lastMonth","lastWeek","2024-01-01..2024-12-31"]},{name:"profileType",type:"string",description:"Type of profile to generate (hourly or daily)",default:"hourly",examples:["hourly","daily","weekday"]},{name:"aggregation",type:"string",description:"Aggregation method (avg, max, min, sum)",default:"avg",examples:["avg","max","min","sum"]}]
+
+template:
+  (equipFilter, dates, profile: "hourly", agg: "avg") => do
+    
+    // Read points
+    points: readAll({{equipmentFilter}})
+    
+    // Read historical data at 15-minute intervals for accuracy
+    rawData: points.hisRead({{dateRange}})
+    
+    // Generate profile based on type
+    result: if ({{profileType}} == "hourly") do
+      // Hourly profile - average by hour of day (0-23)
+      rawData.map(row => do
+        hour: row["ts"].hour
+        value: row["v0"]
+        {hour: hour, value: value}
+      end).toGrid
+      .groupBy("hour")
+      .map(group => do
+        hour: group["hour"]
+        
+        // Calculate aggregate based on method
+        values: group["value"]
+        aggValue: if ({{aggregation}} == "avg") do
+          values.reduce(0, (sum, v) => sum + v) / values.size
+        else if ({{aggregation}} == "max") do
+          values.reduce(values.first, (max, v) => if (v > max) v else max end)
+        else if ({{aggregation}} == "min") do
+          values.reduce(values.first, (min, v) => if (v < min) v else min end)
+        else do
+          values.reduce(0, (sum, v) => sum + v)
+        end end end
+        
+        {
+          hour: hour,
+          value: aggValue.round(2),
+          hourLabel: hour.toStr + ":00"
+        }
+      end).toGrid.sort("hour")
+      
+    else if ({{profileType}} == "daily") do
+      // Daily profile - average by day of week (Mon-Sun)
+      rawData.map(row => do
+        dayOfWeek: row["ts"].date.weekday
+        value: row["v0"]
+        {day: dayOfWeek, value: value}
+      end).toGrid
+      .groupBy("day")
+      .map(group => do
+        day: group["day"]
+        values: group["value"]
+        
+        // Calculate aggregate
+        aggValue: if ({{aggregation}} == "avg") do
+          values.reduce(0, (sum, v) => sum + v) / values.size
+        else if ({{aggregation}} == "max") do
+          values.reduce(values.first, (max, v) => if (v > max) v else max end)
+        else if ({{aggregation}} == "min") do
+          values.reduce(values.first, (min, v) => if (v < min) v else min end)
+        else do
+          values.reduce(0, (sum, v) => sum + v)
+         end end
+        
+        dayNames: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        {
+          day: day,
+          value: aggValue.round(2),
+          dayName: dayNames[day]
+        }
+      end).toGrid.sort("day")
+      
+    else if ({{profileType}} == "weekday") do
+      // Weekday vs weekend comparison
+      rawData.map(row => do
+        isWeekend: row["ts"].date.weekday >= 5
+        category: if (isWeekend) "Weekend" else "Weekday" end
+        value: row["v0"]
+        {category: category, value: value}
+      end).toGrid
+      .groupBy("category")
+      .map(group => do
+        cat: group["category"]
+        values: group["value"]
+        
+        aggValue: if ({{aggregation}} == "avg") do
+          values.reduce(0, (sum, v) => sum + v) / values.size
+        else do
+          values.reduce(0, (sum, v) => sum + v)
+         end
+        
+        {
+          category: cat,
+          value: aggValue.round(2)
+        }
+      end).toGrid
+    else
+      // Default to hourly
+      rawData
+      end
+    
+    // Add column metadata
+    result = result.addColMeta("value", {
+      dis: if ({{aggregation}} == "avg") "Average Load" 
+           else if ({{aggregation}} == "max") "Peak Load"
+           else if ({{aggregation}} == "min") "Minimum Load"
+           else "Total Load"   end
+    })
+    
+    result
+  end
+  
+
+examples: [{name:"Hourly average load profile",description:"Generate average hourly load profile for last month",params:{equipmentFilter:"demand and equipRef->siteMeter",dateRange:"lastMonth",profileType:"hourly",aggregation:"avg"}},{name:"Daily consumption pattern",description:"Show average consumption by day of week",params:{equipmentFilter:"energy and siteRef==@mainSite",dateRange:"lastMonth",profileType:"daily",aggregation:"avg"}},{name:"Weekday vs weekend comparison",description:"Compare average weekday and weekend energy usage",params:{equipmentFilter:"elecMeter",dateRange:"lastMonth",profileType:"weekday",aggregation:"avg"}},{name:"Peak hourly demand profile",description:"Show maximum demand for each hour of day",params:{equipmentFilter:"demand and equipRef->mainMeter",dateRange:"lastYear",profileType:"hourly",aggregation:"max"}}]

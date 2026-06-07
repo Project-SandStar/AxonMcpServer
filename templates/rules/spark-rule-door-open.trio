@@ -1,0 +1,93 @@
+id:@spark-rule-door-open
+name:"Spark Rule - Door Open Detection"
+category:"rules"
+description:"Detects when a door has been open longer than a specified threshold. This creates a Spark rule that monitors door sensors and generates alerts."
+tags:["spark", "rule", "door", "sensor", "alert", "defcomp"]
+
+parameters:[
+  {
+    name:"ruleName"
+    type:"string"
+    description:"Name for the spark rule function"
+    required:true
+    examples:["doorOpenTooLong", "entranceDoorAlert", "coldStorageDoorMonitor"]
+  }
+  {
+    name:"doorPointFilter"
+    type:"string"
+    description:"Haystack filter to identify the door sensor point"
+    required:true
+    default:"point and door and sensor"
+    examples:["point and door and sensor", "point and door and equipRef==@main-entrance"]
+  }
+  {
+    name:"thresholdDuration"
+    type:"string"
+    description:"Maximum allowed duration for door to be open before alerting"
+    required:false
+    default:"15min"
+    examples:["15min", "30min", "5min", "1hr"]
+  }
+  {
+    name:"helpText"
+    type:"string"
+    description:"Help text describing what this rule does"
+    required:false
+    default:"Detects when door has been open too long"
+    examples:["Detects when door has been open too long", "Monitors entrance door for security"]
+  }
+]
+
+template:
+  // {{ruleName}} - Spark Rule
+  // Help: {{helpText}}
+  // Target: Equipment with door sensor
+  defcomp
+    dis: "{{ruleName}}"
+    help: "{{helpText}}"
+    ruleOn
+    sparkRule
+    target: {}
+    date:   {}
+    out:    {readonly}
+    door:   {bind:"{{doorPointFilter}} and equipRef=={{target->id}}"}
+    doorOpen: {bindTuning: "doorOpen", defVal: {{thresholdDuration}}}
+    do
+      his: door
+              .hisRead(date)
+                .hisFindPeriods(x=> x=="open")
+                  .hisFindAll(x=> x > doorOpen)
+      out = his
+    end
+  end
+
+examples:[
+  {
+    name:"Entrance Door Monitor"
+    description:"Monitor entrance door for extended open periods"
+    params:{
+      ruleName:"entranceDoorOpenAlert"
+      doorPointFilter:"point and door and sensor and entrance"
+      thresholdDuration:"10min"
+      helpText:"Alerts when entrance door is open longer than 10 minutes"
+    }
+  }
+  {
+    name:"Cold Storage Door"
+    description:"Monitor cold storage room door"
+    params:{
+      ruleName:"coldStorageDoorAlert"
+      doorPointFilter:"point and door and sensor and coldStorage"
+      thresholdDuration:"5min"
+      helpText:"Alerts when cold storage door is open longer than 5 minutes to prevent temperature loss"
+    }
+  }
+]
+
+notes:[
+  "This creates a Spark rule component that can be bound to equipment"
+  "The rule will generate alerts when the condition is met"
+  "Use readAll(func and sparkRule) to find all spark rules"
+  "The target slot specifies which equipment this rule monitors"
+  "The bindTuning allows site-specific threshold configuration"
+]

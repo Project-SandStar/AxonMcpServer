@@ -1,0 +1,152 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @energy-efficiency-metrics
+name: "Energy Efficiency Metrics"
+category: "energy"
+description: "Calculate energy efficiency KPIs including EUI, load factor, cost per unit, and performance metrics"
+tags: ["energy","efficiency","kpi","eui","metrics","performance","load-factor"]
+
+parameters: [{name:"equipmentFilter",type:"string",description:"Filter expression for energy meters",required:T,examples:["elecMeter","energy and equipRef->siteMeter","energy and siteRef==@siteId"]},{name:"dateRange",type:"string",description:"Date range for efficiency calculation",required:T,examples:["lastMonth","lastYear","2024-01-01..2024-12-31"]},{name:"buildingArea",type:"number",description:"Building area in square feet (optional, will try to read from site if not provided)",required:F,examples:[50000,100000,250000]},{name:"energyRate",type:"number",description:"Energy rate in $/kWh for cost efficiency calculation",default:0.12,examples:[0.1,0.12,0.15,0.18]},{name:"demandRate",type:"number",description:"Demand rate in $/kW (set to 0 if not applicable)",default:0,examples:[0,15,20]}]
+
+template:
+  (equipFilter, dates, area: null, rate: 0.12, demandCharge: 0) => do
+    
+    // Read energy points
+    energyPoints: readAll({{equipmentFilter}})
+    
+    // Get site information
+    site: read(energyPoints.first->siteRef)
+    buildingArea: if ({{buildingArea}} != null) {{buildingArea}} else site->area
+    
+    // Read consumption data
+    consumptionData: energyPoints
+      .hisRead({{dateRange}})
+      .hisRollup(sum, 1mo)
+    
+    totalKwh: consumptionData.reduce(0, (sum, row) => sum + row["v0"])
+    
+    // Read demand data if available
+    demandPoints: readAll({{equipmentFilter}}.replace("energy", "demand"))
+    peakDemand: if (demandPoints.isEmpty)
+      0
+    else
+      demandPoints
+        .hisRead({{dateRange}})
+        .hisRollup(max, 1mo)
+        .reduce(0, (max, row) => if (row["v0"] > max) row["v0"] else max)
+  
+    
+    // Calculate date range in days
+    startDate: {{dateRange}}.toDateSpan.start
+    endDate: {{dateRange}}.toDateSpan.end
+    days: (endDate - startDate).toDays
+    months: days / 30.0
+    
+    // Calculate KPIs
+    avgMonthlyKwh: totalKwh / months
+    
+    // Energy Use Intensity (EUI) - kWh per sqft per year
+    eui: if (buildingArea != null and buildingArea > 0)
+      (totalKwh / buildingArea) * (12 / months)
+    else
+      na()
+  
+    
+    // Load Factor - ratio of average to peak demand
+    loadFactor: if (peakDemand > 0) do
+      avgDemand: totalKwh / (days * 24)  // Average kW
+      (avgDemand / peakDemand) * 100  // Percentage
+    end
+    else
+      na()
+  
+    
+    // Cost efficiency metrics
+    energyCost: totalKwh * {{energyRate}}
+    demandCost: peakDemand * {{demandRate}} * months
+    totalCost: energyCost + demandCost
+    costPerKwh: totalCost / totalKwh
+    costPerSqft: if (buildingArea != null and buildingArea > 0)
+      totalCost / buildingArea
+    else
+      na()
+  
+    
+    // Create results grid
+    metrics: [
+      {
+        metric: "Total Consumption",
+        value: totalKwh.round,
+        unit: "kWh",
+        description: "Total energy consumed in period"
+      },
+      {
+        metric: "Average Monthly Consumption", 
+        value: avgMonthlyKwh.round,
+        unit: "kWh/month",
+        description: "Average monthly consumption"
+      },
+      {
+        metric: "Peak Demand",
+        value: peakDemand.round(1),
+        unit: "kW",
+        description: "Maximum demand in period"
+      },
+      {
+        metric: "Load Factor",
+        value: if (loadFactor != na()) loadFactor.round(1) else na() ,
+        unit: "%",
+        description: "Ratio of average to peak demand (higher is better)"
+      },
+      {
+        metric: "Energy Use Intensity (EUI)",
+        value: if (eui != na()) eui.round(1) else na() ,
+        unit: "kWh/sqft/yr",
+        description: "Annual energy per square foot"
+      },
+      {
+        metric: "Total Energy Cost",
+        value: energyCost.round(2),
+        unit: "$",
+        description: "Total cost for energy charges"
+      },
+      {
+        metric: "Total Demand Cost",
+        value: demandCost.round(2),
+        unit: "$",
+        description: "Total cost for demand charges"
+      },
+      {
+        metric: "Blended Cost per kWh",
+        value: costPerKwh.round(4),
+        unit: "$/kWh",
+        description: "Average cost including all charges"
+      },
+      {
+        metric: "Cost per Square Foot",
+        value: if (costPerSqft != na()) costPerSqft.round(3) else na() ,
+        unit: "$/sqft",
+        description: "Total cost per building area"
+      }
+    ].toGrid
+    
+    // Add metadata
+    metrics = metrics
+      .addColMeta("metric", {dis: "Metric"})
+      .addColMeta("value", {dis: "Value"})
+      .addColMeta("unit", {dis: "Unit"})
+      .addColMeta("description", {dis: "Description"})
+    
+    // Add summary header row
+    metrics.addMeta({
+      site: site->dis,
+      period: {{dateRange}},
+      area: buildingArea,
+      generatedAt: now()
+    })
+  end
+  
+  
+
+examples: [{name:"Annual efficiency metrics",description:"Calculate comprehensive efficiency metrics for the year",params:{equipmentFilter:"energy and equipRef->siteMeter",dateRange:"lastYear",buildingArea:75000,energyRate:0.14,demandRate:18}},{name:"Monthly efficiency tracking",description:"Track monthly efficiency KPIs",params:{equipmentFilter:"elecMeter",dateRange:"lastMonth",energyRate:0.12,demandRate:0}},{name:"Multi-building comparison",description:"Calculate efficiency metrics for building comparison",params:{equipmentFilter:"energy and siteRef->geoCity==\"Boston\"",dateRange:"lastYear",buildingArea:120000,energyRate:0.16,demandRate:22}}]

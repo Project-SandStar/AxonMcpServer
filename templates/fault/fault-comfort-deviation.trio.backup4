@@ -1,0 +1,212 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @fault-comfort-deviation
+name: "Comfort Deviation Detection"
+category: "fault"
+description: "Detect when zone temperatures and humidity levels violate comfort thresholds"
+tags: ["fault","comfort","zone","temperature","humidity","occupancy","iaq"]
+
+parameters: [{name:"zoneFilter",type:"string",description:"Filter expression for zones to monitor",required:T,examples:["zone","space and hvac","zone and occupied"]},{name:"dateRange",type:"string",description:"Date range for analysis",required:T,examples:["today","yesterday","lastWeek"]},{name:"minTemp",type:"number",description:"Minimum acceptable temperature (°F)",default:68,examples:[65,68,70]},{name:"maxTemp",type:"number",description:"Maximum acceptable temperature (°F)",default:76,examples:[74,76,78]},{name:"maxHumidity",type:"number",description:"Maximum acceptable relative humidity (%)",default:60,examples:[55,60,65]},{name:"minHumidity",type:"number",description:"Minimum acceptable relative humidity (%)",default:30,examples:[25,30,35]},{name:"occupiedOnly",type:"boolean",description:"Only flag violations during occupied hours",default:T}]
+
+template:
+  (zoneFilt, dates, minT: 68.0, maxT: 76.0, maxHum: 60.0, minHum: 30.0, occOnly: true) => do
+    
+    // Read zones
+    zones: readAll({{zoneFilter}})
+    
+    // Analyze each zone
+    results: zones.map(zone => do
+      
+      // Find zone temperature
+      zoneTemp: readAll(point and zone and temp and sensor and equipRef == zone->id)
+      
+      // Find zone humidity
+      zoneHumidity: readAll(point and zone and humidity and sensor and equipRef == zone->id)
+      
+      // Find occupancy sensor or schedule
+      occupancy: readAll(point and occupied and sensor and equipRef == zone->id)
+      schedule: if (zone.has("scheduleRef")) readById(zone->scheduleRef) else na() 
+      
+      // Read temperature history
+      tempHis: if (zoneTemp.isEmpty.not) zoneTemp[0].hisRead({{dateRange}}) else [].toGrid
+      humHis: if (zoneHumidity.isEmpty.not) zoneHumidity[0].hisRead({{dateRange}}) else [].toGrid
+      occHis: if (occupancy.isEmpty.not) occupancy[0].hisRead({{dateRange}}) else [].toGrid
+      
+      if (tempHis.isEmpty) do
+        // No temperature data
+        {
+          zoneId: zone->id,
+          zoneName: zone->dis,
+          status: "No Data",
+          severity: "Info",
+          issues: ["No temperature sensor data"],
+          recommendation: "Verify temperature sensor configuration"
+        }
+      else do
+        
+        // Filter to occupied periods if requested
+        analysisData: if ({{occupiedOnly}} and occHis.isEmpty.not) do
+          tempHis.findAll(row => do
+            occ: occHis.findAll(o => o->ts == row->ts)[0]
+            occ != na() and (occ->v0 == true or occ->v0 == 1)
+          end)
+        else
+          tempHis
+  
+        
+        totalReadings: analysisData.size
+        
+        if (totalReadings == 0) do
+          {
+            zoneId: zone->id,
+            zoneName: zone->dis,
+            status: "No Occupied Data",
+            severity: "Info",
+            issues: ["No temperature data during occupied hours"],
+            recommendation: "Check occupancy schedule"
+          }
+        else do
+          
+          // Check temperature violations
+          tooHot: analysisData.findAll(r => r->v0 > {{maxTemp}})
+          tooCold: analysisData.findAll(r => r->v0 < {{minTemp}})
+          tempViolations: tooHot.size + tooCold.size
+          tempViolationRate: (tempViolations.to(1f) / totalReadings) * 100
+          
+          // Calculate temperature statistics
+          avgTemp: analysisData.hisRollup(avg)->v0
+          minTemp: analysisData.hisRollup(min)->v0
+          maxTemp: analysisData.hisRollup(max)->v0
+          
+          // Check humidity violations if available
+          if (humHis.isEmpty.not) do
+            humAnalysis: if ({{occupiedOnly}} and occHis.isEmpty.not) do
+              humHis.findAll(row => do
+                occ: occHis.findAll(o => o->ts == row->ts)[0]
+                occ != na() and (occ->v0 == true or occ->v0 == 1)
+              end)
+            else
+              humHis
+  
+            
+            tooHumid: humAnalysis.findAll(r => r->v0 > {{maxHumidity}})
+            tooDry: humAnalysis.findAll(r => r->v0 < {{minHumidity}})
+            humViolations: tooHumid.size + tooDry.size
+            humViolationRate: if (humAnalysis.size > 0) (humViolations.to(1f) / humAnalysis.size) * 100 else 0 
+            
+            avgHumidity: if (humAnalysis.isEmpty.not) humAnalysis.hisRollup(avg)->v0 else na() 
+            minHumidity: if (humAnalysis.isEmpty.not) humAnalysis.hisRollup(min)->v0 else na() 
+            maxHumidity: if (humAnalysis.isEmpty.not) humAnalysis.hisRollup(max)->v0 else na() 
+          else do
+            humViolations: 0
+            humViolationRate: 0
+            avgHumidity: na()
+            minHumidity: na()
+            maxHumidity: na()
+  
+          
+          // Find longest violation periods
+          tempViolationPeriods: if (tempViolations > 0) do
+            // Group consecutive violations
+            events: analysisData.toList.reduce([], (list, row, idx, all) => do
+              isViolation: row->v0 > {{maxTemp}} or row->v0 < {{minTemp}}
+              
+              if (isViolation) do
+                if (list.isEmpty or list.last->ended) do
+                  // Start new violation event
+                  list.add({start: row->ts, end: row->ts, count: 1, maxDev: (row->v0 - {{maxTemp}}).abs.max((row->v0 - {{minTemp}}).abs), ended: false})
+                else do
+                  // Continue current event
+                  last: list.last
+                  deviation: (row->v0 - {{maxTemp}}).abs.max((row->v0 - {{minTemp}}).abs)
+                  updated: {start: last->start, end: row->ts, count: last->count + 1, maxDev: deviation.max(last->maxDev), ended: false}
+                  list.removeAt(-1).add(updated)
+  
+              else do
+                // End current event if one exists
+                if (list.isEmpty.not and list.last->ended.not) do
+                  last: list.last
+                  updated: {start: last->start, : last->end, count: last->count, maxDev: last->maxDev, ended: true}
+                  list.removeAt(-1).add(updated)
+                else
+                  list
+  
+  
+            end)
+            
+            // Sort by duration
+            events.sort((a, b) => ((b-> - b->start).to(1min)).compare((a->end - a->start).to(1min)))
+          else
+            []
+  
+          
+          longestViolation: if (tempViolationPeriods.isEmpty.not) do
+            evt: tempViolationPeriods[0]
+            duration: (evt->end - evt->start).to(1min)
+            {duration: duration, maxDeviation: evt->maxDev, startTime: evt->start}
+          else
+            na()
+  
+          
+          // Compile issues
+          issues: [
+            if (tempViolationRate > 20.0) "Temperature violations > 20% of time" 
+            else if (tempViolationRate > 10.0) "Temperature violations > 10% of time"
+            else if (tempViolationRate > 5.0) "Temperature violations > 5% of time"
+            else na()   end,
+            if (tooHot.size > tooCold.size * 2) "Predominantly too hot"
+            else if (tooCold.size > tooHot.size * 2) "Predominantly too cold"
+            else na()  end,
+            if (humViolationRate > 10.0) "Humidity violations > 10% of time" else na() ,
+            if (longestViolation != na() and longestViolation->duration > 120) "Violation lasted " + longestViolation->duration.round(0).toStr + " minutes" else na() 
+          ].findAll(v => v != na())
+          
+          // Determine severity
+          hasViolation: tempViolationRate > 5.0 or humViolationRate > 10.0
+          
+          severity: if (tempViolationRate > 30.0 or humViolationRate > 30.0) "Critical"
+                   else if (tempViolationRate > 15.0 or humViolationRate > 20.0) "High"
+                   else if (tempViolationRate > 5.0 or humViolationRate > 10.0) "Medium" else "Normal"
+          
+          status: if (hasViolation) "Comfort Violation" else "Comfortable" 
+          
+          {
+            zoneId: zone->id,
+            zoneName: zone->dis,
+            status: status,
+            severity: severity,
+            avgTemp: avgTemp.round(1),
+            minTemp: minTemp.round(1),
+            maxTemp: maxTemp.round(1),
+            tempViolations: tempViolations,
+            tempViolationRate: tempViolationRate.round(1),
+            tooHotCount: tooHot.size,
+            tooColdCount: tooCold.size,
+            avgHumidity: if(avgHumidity != null) avgHumidity.round(1) else null,
+            humViolations: humViolations,
+            humViolationRate: humViolationRate.round(1),
+            longestViolationMinutes: if(longestViolation != null) longestViolation.i else nullf(duration != null) duration.round(0) else null,
+            maxDeviationDegrees: if(longestViolation != null) longestViolation.i else nullf(maxDeviation != null) maxDeviation.round(1) else null,
+            dataPoints: totalReadings,
+            issues: issues.join("; "),
+            recommendation: if (tooHot.size > tooCold.size * 2) "Increase cooling capacity or lower setpoint"
+                           else if (tooCold.size > tooHot.size * 2) "Increase heating or raise setpoint"
+                           else if (tempViolationRate > 15.0) "Review HVAC equipment serving this zone"
+                           else if (humViolationRate > 15.0) "Check humidification/dehumidification systems" else "Continue monitoring"
+          }
+  
+  
+    end).toGrid
+    
+    results.addMeta({
+      analysisRange: {{dateRange}},
+      tempRange: {{minTemp}}.toStr + "°F - " + {{maxTemp}}.toStr + "°F",
+      humidityRange: {{minHumidity}}.toStr + "% - " + {{maxHumidity}}.toStr + "%",
+      zonesChecked: zones.size,
+      violationsFound: results.findAll(r => r->status == "Comfort Violation").size
+    })
+  
+  
+
+examples: [{name:"Check zone comfort today",description:"Monitor all zones for comfort violations during occupied hours today",params:{zoneFilter:"zone",dateRange:"today",minTemp:68,maxTemp:76,maxHumidity:60,minHumidity:30,occupiedOnly:T}},{name:"Weekly comfort analysis",description:"Analyze comfort conditions across all zones for the past week",params:{zoneFilter:"space and hvac",dateRange:"lastWeek",minTemp:70,maxTemp:74,maxHumidity:55,minHumidity:35,occupiedOnly:T}},{name:"Critical space monitoring",description:"24/7 monitoring of critical spaces with strict comfort requirements",params:{zoneFilter:"zone and critical",dateRange:"yesterday",minTemp:69,maxTemp:73,maxHumidity:50,minHumidity:40,occupiedOnly:F}}]

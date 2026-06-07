@@ -1,0 +1,39 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @hvac-ahu-status
+name: "AHU Status Overview"
+category: "hvac"
+description: "Get current status of Air Handling Units including temperature, fan status, and setpoints"
+tags: ["hvac","ahu","status","temperature","fan","realtime"]
+
+parameters: [{name:"ahuFilter",type:"string",description:"Filter expression to select AHUs",required:T,default:"ahu",examples:["ahu","ahu and siteRef==@siteId","ahu and area==\"Floor1\""]}]
+
+template:
+  // AHU Status Overview
+  readAll({{ahuFilter}}).map(ahu => do
+    // Read current values for common AHU points
+    discharge: readAll(discharge and air and temp and sensor and equipRef==ahu->id).first(false)
+    returnAir: readAll("return" and air and temp and sensor and equipRef==ahu->id).first(false)
+    outside: readAll(outside and air and temp and sensor and equipRef==ahu->id).first(false)
+    fan: readAll(discharge and air and fan and cmd and equipRef==ahu->id).first(false)
+    sp: readAll(discharge and air and temp and sp and equipRef==ahu->id).first(false)
+    faults: readAll(alarm and equipRef==ahu->id and not ack).size
+    
+    {
+      name: ahu->dis,
+      navName: ahu->navName,
+      status: if(fan) if(fan->curVal) "Running" else "Off" else "Unknown",
+      dischargeTemp: if(discharge) discharge->curVal.as("°F").toLocale("0.0") else "N/A",
+      returnTemp: if(returnAir) returnAir->curVal.as("°F").toLocale("0.0") else "N/A",
+      outsideTemp: if(outside) outside->curVal.as("°F").toLocale("0.0") else "N/A",
+      setpoint: if(sp) sp->curVal.as("°F").toLocale("0.0") else "N/A",
+      activeFaults: faults,
+      faultStatus: if(faults > 0) "⚠️ " + faults + " active" else "✓ OK"
+    }
+  end)
+  
+
+validation: ["readAll({{ahuFilter}}).size > 0  // Verify AHUs exist"]
+
+examples: [{name:"All AHUs status",params:{ahuFilter:"ahu"}},{name:"Specific site AHUs status",params:{ahuFilter:"ahu and siteRef==@abc123"}}]

@@ -1,0 +1,93 @@
+id:@kpi-rule-energy-stats
+name:"KPI Rule - Energy Statistics"
+category:"rules"
+description:"Calculates KPI statistics (min, max, avg) for energy consumption points. This creates a KPI rule that computes summary statistics over a date range."
+tags:["kpi", "rule", "energy", "statistics", "defcomp"]
+
+parameters:[
+  {
+    name:"ruleName"
+    type:"string"
+    description:"Name for the KPI rule function"
+    required:true
+    examples:["energyKpiStats", "powerConsumptionKpi", "energyUsageMetrics"]
+  }
+  {
+    name:"pointFilter"
+    type:"string"
+    description:"Haystack filter to identify the point for KPI calculation"
+    required:true
+    default:"point and sensor and energy and total"
+    examples:["point and sensor and energy and total", "point and power and sensor", "point and kwh and meter"]
+  }
+  {
+    name:"columnName"
+    type:"string"
+    description:"Column name to analyze in history data"
+    required:false
+    default:"v0"
+    examples:["v0", "val", "power"]
+  }
+  {
+    name:"helpText"
+    type:"string"
+    description:"Help text describing what this KPI rule does"
+    required:false
+    default:"Calculates min, max, and average energy statistics"
+    examples:["Calculates min, max, and average energy statistics", "Computes daily power consumption metrics"]
+  }
+]
+
+template:
+  // {{ruleName}} - KPI Rule
+  // Help: {{helpText}}
+  // Target: Equipment with energy monitoring
+  defcomp
+    dis: "{{ruleName}}"
+    help: "{{helpText}}"
+    ruleOn
+    kpiRule
+    target: {}
+    date:   {}
+    out:    {readonly}
+    pt:   {bind:"{{pointFilter}} and equipRef=={{target->id}}"}
+    do
+      his: pt.hisRead(date)
+      max: his.foldCol("{{columnName}}",max)
+      min: his.foldCol("{{columnName}}",min)
+      avg: his.foldCol("{{columnName}}",avg)
+      out = toGrid([{max:max,min:min,avg:avg}])
+    end
+  end
+
+examples:[
+  {
+    name:"Daily Energy Stats"
+    description:"Calculate daily energy consumption statistics"
+    params:{
+      ruleName:"dailyEnergyKpi"
+      pointFilter:"point and sensor and energy and total and kwh"
+      columnName:"v0"
+      helpText:"Calculates daily min, max, and average kWh consumption"
+    }
+  }
+  {
+    name:"Power Demand KPI"
+    description:"Track power demand statistics"
+    params:{
+      ruleName:"powerDemandKpi"
+      pointFilter:"point and power and demand and kw"
+      columnName:"v0"
+      helpText:"Computes peak, minimum, and average power demand"
+    }
+  }
+]
+
+notes:[
+  "This creates a KPI rule component that calculates statistics"
+  "The rule returns a grid with max, min, and avg values"
+  "Use readAll(func and kpiRule) to find all KPI rules"
+  "The target slot specifies which equipment this rule analyzes"
+  "Results can be used for dashboards and reporting"
+  "Changed inline dict to toGrid() call for parser compatibility"
+]

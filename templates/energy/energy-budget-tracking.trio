@@ -1,0 +1,127 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @energy-budget-tracking
+name: "Energy Budget Tracking"
+category: "energy"
+description: "Track energy consumption and costs against budget targets, showing variance and forecast"
+tags: ["energy","budget","tracking","variance","forecast","financial"]
+
+parameters: [{name:"equipmentFilter",type:"string",description:"Filter expression for energy meters",required:T,examples:["elecMeter","energy and equipRef->siteMeter"]},{name:"dateRange",type:"string",description:"Date range for budget tracking",required:T,examples:["thisYear","thisMonth","2024-01-01..2024-12-31"]},{name:"budgetKwh",type:"number",description:"Budgeted energy consumption in kWh for the period",required:T,examples:[1000000,500000,2500000]},{name:"budgetCost",type:"number",description:"Budgeted cost in dollars for the period",required:T,examples:[120000,50000,300000]},{name:"rollupInterval",type:"string",description:"Interval for tracking (typically monthly)",default:"1mo",examples:["1wk","1mo"]},{name:"includeForecast",type:"boolean",description:"Include forecast to end of period based on current trends",default:T}]
+
+template:
+  (equipFilter, dates, budgetKwh, budgetCost, interval: "1mo", forecast: true) => do
+    
+    // Read consumption data
+    points: readAll({{equipmentFilter}})
+    consumption: points
+      .hisRead({{dateRange}})
+      .hisRollup(sum, {{rollupInterval}})
+    
+    // Calculate period metrics
+    startDate: {{dateRange}}.toDateSpan.start
+    endDate: {{dateRange}}.toDateSpan.end
+    totalDays: (endDate - startDate).toDays
+    elapsedDays: (now() - startDate).toDays
+    remainingDays: (endDate - now()).toDays
+    
+    // Current actuals
+    totalKwh: consumption.reduce(0, (sum, row) => sum + row["v0"])
+    avgRate: {{budgetCost}} / {{budgetKwh}}
+    totalCost: totalKwh * avgRate
+    
+    // Calculate budget per period
+    periods: consumption.size
+    budgetKwhPerPeriod: {{budgetKwh}} / periods
+    budgetCostPerPeriod: {{budgetCost}} / periods
+    
+    // Build tracking grid
+    tracking: consumption.map(row => do
+      actualKwh: row["v0"]
+      actualCost: actualKwh * avgRate
+      varianceKwh: actualKwh - budgetKwhPerPeriod
+      varianceCost: actualCost - budgetCostPerPeriod
+      variancePct: ((varianceKwh / budgetKwhPerPeriod) * 100).round(1)
+      
+      {
+        period: row["ts"].format("MMM YYYY"),
+        budgetKwh: budgetKwhPerPeriod.round,
+        actualKwh: actualKwh.round,
+        varianceKwh: varianceKwh.round,
+        budgetCost: budgetCostPerPeriod.round(2),
+        actualCost: actualCost.round(2),
+        varianceCost: varianceCost.round(2),
+        variancePct: variancePct,
+        status: if (varianceKwh > 0) "Over" else "Under" 
+      }
+    end).toGrid
+    
+    // Calculate cumulative totals
+    cumulativeKwh: totalKwh
+    cumulativeCost: totalCost
+    cumulativeBudgetKwh: budgetKwhPerPeriod * periods
+    cumulativeBudgetCost: budgetCostPerPeriod * periods
+    cumulativeVarianceKwh: cumulativeKwh - cumulativeBudgetKwh
+    cumulativeVarianceCost: cumulativeCost - cumulativeBudgetCost
+    
+    // Forecast remaining period if requested
+    forecastKwh: if ({{includeForecast}} and remainingDays > 0) do
+      avgDailyKwh: totalKwh / elapsedDays
+      avgDailyKwh * remainingDays
+    else
+      0
+    end
+  
+    
+    projectedTotal: cumulativeKwh + forecastKwh
+    projectedCost: projectedTotal * avgRate
+    projectedVariance: projectedTotal - {{budgetKwh}}
+    projectedVariancePct: ((projectedVariance / {{budgetKwh}}) * 100).round(1)
+    
+    // Add summary rows
+    summary: tracking.addRow({
+      period: "ACTUAL TOTAL",
+      budgetKwh: cumulativeBudgetKwh.round,
+      actualKwh: cumulativeKwh.round,
+      varianceKwh: cumulativeVarianceKwh.round,
+      budgetCost: cumulativeBudgetCost.round(2),
+      actualCost: cumulativeCost.round(2),
+      varianceCost: cumulativeVarianceCost.round(2),
+      variancePct: ((cumulativeVarianceKwh / cumulativeBudgetKwh) * 100).round(1),
+      status: if (cumulativeVarianceKwh > 0) "Over Budget" else "Under Budget" 
+    })
+    
+    // Add forecast row if enabled
+    result: if ({{includeForecast}} and remainingDays > 0) do
+      summary.addRow({
+        period: "PROJECTED TOTAL",
+        budgetKwh: {{budgetKwh}}.round,
+        actualKwh: projectedTotal.round,
+        varianceKwh: projectedVariance.round,
+        budgetCost: {{budgetCost}}.round(2),
+        actualCost: projectedCost.round(2),
+        varianceCost: (projectedCost - {{budgetCost}}).round(2),
+        variancePct: projectedVariancePct,
+        status: if (projectedVariance > 0) "Projected Over" else "Projected Under" 
+      })
+    else
+      summary
+    end
+  
+    
+    // Add column metadata
+    result = result
+      .addColMeta("budgetKwh", {dis: "Budget (kWh)"})
+      .addColMeta("actualKwh", {dis: "Actual (kWh)"})
+      .addColMeta("varianceKwh", {dis: "Variance (kWh)"})
+      .addColMeta("budgetCost", {dis: "Budget ($)"})
+      .addColMeta("actualCost", {dis: "Actual ($)"})
+      .addColMeta("varianceCost", {dis: "Variance ($)"})
+      .addColMeta("variancePct", {dis: "Variance (%)"})
+    
+    result
+  end
+  
+  
+
+examples: [{name:"Annual budget tracking with forecast",description:"Track annual energy budget with end-of-year forecast",params:{equipmentFilter:"energy and equipRef->siteMeter",dateRange:"thisYear",budgetKwh:1200000,budgetCost:168000,rollupInterval:"1mo",includeForecast:T}},{name:"Monthly budget tracking",description:"Track monthly budget without forecast",params:{equipmentFilter:"elecMeter",dateRange:"thisMonth",budgetKwh:100000,budgetCost:14000,rollupInterval:"1day",includeForecast:F}},{name:"Quarterly budget review",description:"Track quarterly budget with weekly breakdown",params:{equipmentFilter:"energy and siteRef==@building",dateRange:"2024-01-01..2024-03-31",budgetKwh:300000,budgetCost:42000,rollupInterval:"1wk",includeForecast:T}}]

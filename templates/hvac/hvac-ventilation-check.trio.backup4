@@ -1,0 +1,187 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @hvac-ventilation-check
+name: "Ventilation Rate Verification"
+category: "hvac"
+description: "Verify outdoor air ventilation rates meet code requirements (ASHRAE 62.1) and check CO2 levels"
+tags: ["hvac","ventilation","outdoor-air","co2","ashrae","iaq","compliance"]
+
+parameters: [{name:"ahuFilter",type:"string",description:"Filter expression for air handling units",required:T,examples:["ahu","airHandler","ahu and outside"]},{name:"dateRange",type:"string",description:"Date range for verification",required:T,examples:["today","yesterday","lastWeek"]},{name:"requiredCfmPerPerson",type:"number",description:"Required CFM per person per code (ASHRAE 62.1)",default:15,examples:[10,15,20]},{name:"designOccupancy",type:"number",description:"Design occupancy for the space(s)",default:100,examples:[50,100,200]},{name:"maxCO2",type:"number",description:"Maximum acceptable CO2 level (ppm)",default:1000,examples:[800,1000,1200]},{name:"minDamperPosition",type:"number",description:"Minimum outdoor air damper position (%) per design",default:15,examples:[10,15,20]}]
+
+template:
+  (ahuFilt, dates, cfmPerPerson: 15.0, designOcc: 100.0, maxCO2: 1000.0, minDamperPos: 15.0) => do
+    
+    // Read AHU equipment
+    ahus: readAll({{ahuFilter}})
+    
+    // Calculate required minimum outdoor air
+    requiredOaCfm: {{requiredCfmPerPerson}} * {{designOccupancy}}
+    
+    // Analyze each AHU
+    results: ahus.map(ahu => do
+      
+      // Read key points
+      oaDamper: readAll(point and outside and damper and cmd and equipRef == ahu->id)
+      airflow: readAll(point and air and flow and sensor and equipRef == ahu->id)
+      oaFlow: readAll(point and outside and air and flow and equipRef == ahu->id)
+      co2: readAll(point and co2 and sensor and equipRef == ahu->id)
+      occupancy: readAll(point and occupied and sensor and equipRef == ahu->id)
+      fanStatus: readAll(point and fan and run and sensor and equipRef == ahu->id)
+      
+      // Read historical data
+      damperHis: if (oaDamper.isEmpty.not) oaDamper[0].hisRead({{dateRange}}) else [].toGrid
+      flowHis: if (airflow.isEmpty.not) airflow[0].hisRead({{dateRange}}) else [].toGrid
+      oaFlowHis: if (oaFlow.isEmpty.not) oaFlow[0].hisRead({{dateRange}}) else [].toGrid
+      co2His: if (co2.isEmpty.not) co2[0].hisRead({{dateRange}}) else [].toGrid
+      occHis: if (occupancy.isEmpty.not) occupancy[0].hisRead({{dateRange}}) else [].toGrid
+      fanHis: if (fanStatus.isEmpty.not) fanStatus[0].hisRead({{dateRange}}) else [].toGrid
+      
+      // Filter to occupied hours when fan is running
+      occupiedPeriods: if (fanHis.isEmpty.not) do
+        if (occHis.isEmpty.not) do
+          fanHis.findAll(r => r->v0 == true).map(row => do
+            isOccupied: (do found: occHis.findAll(o => o->ts == row->ts); if(found.isEmpty.not) found[0]->v0 else na() end)
+            if (isOccupied == true) row else na() 
+          end).findAll(v => v != na()).toGrid
+        else
+          fanHis.findAll(r => r->v0 == true)
+  
+      else
+        [].toGrid
+  
+      
+      // Calculate actual outdoor airflow
+      actualOaFlow: if (oaFlowHis.isEmpty.not and occupiedPeriods.isEmpty.not) do
+        // Use direct OA flow measurement if available
+        oaFlowHis.findAll(row => do
+          occupiedPeriods.findAll(o => o->ts == row->ts).isEmpty.not
+        end)
+      else if (damperHis.isEmpty.not and flowHis.isEmpty.not and occupiedPeriods.isEmpty.not) do
+        // Calculate from damper position and total airflow
+        flowHis.map(row => do
+          damperPos: (do found: damperHis.findAll(d => d->ts == row->ts); if(found.isEmpty.not) found[0]->v0 else na() end)
+          isOccupied: occupiedPeriods.findAll(o => o->ts == row->ts).isEmpty.not
+          
+          if (damperPos != na() and isOccupied) do
+            oaCfm: row->v0 * (damperPos / 100.0)
+            {ts: row->ts, oaFlow: oaCfm, totalFlow: row->v0, damperPos: damperPos}
+          else
+            na()
+  
+        end).findAll(v => v != na()).toGrid
+      else
+        [].toGrid
+  
+      
+      // Calculate ventilation statistics
+      avgOaFlow: if (actualOaFlow.isEmpty.not) do
+        if (actualOaFlow[0].has("oaFlow")) do
+          actualOaFlow.hisRollup(avg, "oaFlow")->v0
+        else
+          actualOaFlow.hisRollup(avg)->v0
+  
+      else
+        na()
+  
+      
+      minOaFlow: if (actualOaFlow.isEmpty.not) do
+        if (actualOaFlow[0].has("oaFlow")) do
+          actualOaFlow.hisRollup(min, "oaFlow")->v0
+        else
+          actualOaFlow.hisRollup(min)->v0
+  
+      else
+        na()
+  
+      
+      // Check damper position compliance
+      damperCompliance: if (damperHis.isEmpty.not and occupiedPeriods.isEmpty.not) do
+        occupiedDamper: damperHis.findAll(row => do
+          occupiedPeriods.findAll(o => o->ts == row->ts).isEmpty.not
+        end)
+        
+        totalReadings: occupiedDamper.size.to(1f)
+        compliantReadings: occupiedDamper.findAll(r => r->v0 >= {{minDamperPosition}}).size.to(1f)
+        
+        if (totalReadings > 0) (compliantReadings / totalReadings) * 100 else 0 
+      else
+        na()
+  
+      
+      // Check CO2 levels
+      co2Analysis: if (co2His.isEmpty.not and occupiedPeriods.isEmpty.not) do
+        occupiedCO2: co2His.findAll(row => do
+          occupiedPeriods.findAll(o => o->ts == row->ts).isEmpty.not
+        end)
+        
+        avgCO2: if (occupiedCO2.isEmpty.not) occupiedCO2.hisRollup(avg)->v0 else na() 
+        maxCO2: if (occupiedCO2.isEmpty.not) occupiedCO2.hisRollup(max)->v0 else na() 
+        
+        exceedances: if (occupiedCO2.isEmpty.not) do
+          total: occupiedCO2.size.to(1f)
+          exceeded: occupiedCO2.findAll(r => r->v0 > {{maxCO2}}).size.to(1f)
+          if (total > 0) (exceeded / total) * 100 else 0 
+        else
+          0
+  
+        
+        {
+          avgCO2: if(avgCO2 != null) avgCO2.round(0) else null,
+          maxCO2: if(maxCO2 != null) maxCO2.round(0) else null,
+          exceedanceRate: exceedances.round(1)
+        }
+      else
+        {avgCO2: na(), maxCO2: na(), exceedanceRate: 0}
+  
+      
+      // Compliance assessment
+      flowCompliant: avgOaFlow != na() and avgOaFlow >= requiredOaCfm * 0.9  // Allow 10% tolerance
+      damperCompliant: damperCompliance != na() and damperCompliance >= 90.0
+      co2Compliant: co2Analysis->exceedanceRate < 10.0
+      
+      overallCompliant: flowCompliant and damperCompliant and co2Compliant
+      
+      // Identify issues
+      issues: [
+        if (avgOaFlow != na() and avgOaFlow < requiredOaCfm) "Insufficient outdoor airflow" else na() end,
+        if (damperCompliance != na() and damperCompliance < 90.0) "Damper below minimum position" else na() ,
+        if (co2Analysis->exceedanceRate > 10.0) "Frequent CO2 exceedances" else na() ,
+        if (oaFlow.isEmpty and (damperHis.isEmpty or flowHis.isEmpty)) "Missing airflow measurements" else na() 
+      ].findAll(v => v != na())
+      
+      {
+        ahuId: ahu->id,
+        ahuName: ahu->dis,
+        requiredOaCfm: requiredOaCfm.round(0),
+        avgOaCfm: if(avgOaFlow != null) avgOaFlow.round(0) else null,
+        minOaCfm: if(minOaFlow != null) minOaFlow.round(0) else null,
+        flowCompliant: flowCompliant,
+        damperCompliance: if(damperCompliance != null) damperCompliance.round(1) else null,
+        damperCompliant: damperCompliant,
+        avgCO2: co2Analysis->avgCO2,
+        maxCO2: co2Analysis->maxCO2,
+        co2ExceedanceRate: co2Analysis->exceedanceRate,
+        co2Compliant: co2Compliant,
+        overallCompliant: overallCompliant,
+        complianceStatus: if (overallCompliant) "Compliant" 
+                         else if (flowCompliant.not) "Non-Compliant - Airflow"
+                         else if (co2Compliant.not) "Non-Compliant - IAQ"
+                         else "Needs Attention"   end,
+        issues: issues.join("; "),
+        recommendation: if (overallCompliant) "Continue monitoring"
+                       else if (avgOaFlow != na() and avgOaFlow < requiredOaCfm) "Increase outdoor air damper minimum"
+                       else if (co2Analysis->exceedanceRate > 20.0) "Review ventilation strategy and occupancy" else "Verify sensors and calibration"
+      }
+    end).toGrid
+    
+    results.addMeta({
+      analysisRange: {{dateRange}},
+      requiredCfmPerPerson: {{requiredCfmPerPerson}},
+      designOccupancy: {{designOccupancy}},
+      maxCO2Threshold: {{maxCO2}}
+    })
+  
+  
+
+examples: [{name:"Daily ventilation check",description:"Verify ventilation compliance for today's operation",params:{ahuFilter:"ahu",dateRange:"today",requiredCfmPerPerson:15,designOccupancy:100,maxCO2:1000,minDamperPosition:15}},{name:"Weekly IAQ assessment",description:"Assess indoor air quality and ventilation rates for the past week",params:{ahuFilter:"ahu and outside",dateRange:"lastWeek",requiredCfmPerPerson:20,designOccupancy:150,maxCO2:800,minDamperPosition:20}},{name:"Code compliance check",description:"Verify ASHRAE 62.1 compliance for all AHUs",params:{ahuFilter:"airHandler",dateRange:"yesterday",requiredCfmPerPerson:15,designOccupancy:100,maxCO2:1000,minDamperPosition:15}}]

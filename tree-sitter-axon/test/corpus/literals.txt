@@ -1,0 +1,199 @@
+==================
+Integer
+==================
+
+42
+
+---
+
+(source_file
+  (number))
+
+==================
+Float
+==================
+
+3.14
+
+---
+
+(source_file
+  (number))
+
+==================
+Number with unit
+==================
+
+100kW
+
+---
+
+(source_file
+  (number))
+
+==================
+Number with complex unit
+==================
+
+0.25inH₂O
+
+---
+
+(source_file
+  (number))
+
+==================
+Hex number
+==================
+
+0xFF
+
+---
+
+(source_file
+  (number))
+
+==================
+Scientific notation
+==================
+
+1.5e10
+
+---
+
+(source_file
+  (number))
+
+==================
+String literal
+==================
+
+"hello world"
+
+---
+
+(source_file
+  (string))
+
+==================
+String with escape
+==================
+
+"line1\nline2"
+
+---
+
+(source_file
+  (string))
+
+==================
+Raw string
+==================
+
+r"no\escapes"
+
+---
+
+(source_file
+  (raw_string))
+
+==================
+Triple-quoted string
+==================
+
+"""multi
+line
+string"""
+
+---
+
+(source_file
+  (triple_string))
+
+==================
+True literal
+==================
+
+true
+
+---
+
+(source_file
+  (true))
+
+==================
+False literal
+==================
+
+false
+
+---
+
+(source_file
+  (false))
+
+==================
+Null literal
+==================
+
+null
+
+---
+
+(source_file
+  (null))
+
+==================
+Date literal
+==================
+
+2024-01-15
+
+---
+
+(source_file
+  (date))
+
+==================
+Time literal
+==================
+
+14:30:00
+
+---
+
+(source_file
+  (time))
+
+==================
+URI literal
+==================
+
+`/api/data`
+
+---
+
+(source_file
+  (uri))
+
+==================
+Ref literal
+==================
+
+@site-123
+
+---
+
+(source_file
+  (ref))
+
+==================
+Symbol literal
+==================
+
+^hot-water
+
+---
+
+(source_file
+  (symbol))

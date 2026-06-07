@@ -1,0 +1,243 @@
+==================
+Variable reference
+==================
+
+myVar
+
+---
+
+(source_file
+  (var (identifier)))
+
+==================
+Typename reference
+==================
+
+Str
+
+---
+
+(source_file
+  (typename))
+
+==================
+Addition
+==================
+
+a + b
+
+---
+
+(source_file
+  (add_expr
+    left: (var (identifier))
+    right: (var (identifier))))
+
+==================
+Subtraction
+==================
+
+a - b
+
+---
+
+(source_file
+  (add_expr
+    left: (var (identifier))
+    right: (var (identifier))))
+
+==================
+Multiplication
+==================
+
+a * b
+
+---
+
+(source_file
+  (mult_expr
+    left: (var (identifier))
+    right: (var (identifier))))
+
+==================
+Division
+==================
+
+a / b
+
+---
+
+(source_file
+  (mult_expr
+    left: (var (identifier))
+    right: (var (identifier))))
+
+==================
+Negation
+==================
+
+-x
+
+---
+
+(source_file
+  (neg_expr
+    operand: (var (identifier))))
+
+==================
+Not expression
+==================
+
+not x
+
+---
+
+(source_file
+  (not_expr
+    operand: (var (identifier))))
+
+==================
+Comparison equals
+==================
+
+a == b
+
+---
+
+(source_file
+  (compare_expr
+    left: (var (identifier))
+    right: (var (identifier))))
+
+==================
+Comparison not equals
+==================
+
+a != b
+
+---
+
+(source_file
+  (compare_expr
+    left: (var (identifier))
+    right: (var (identifier))))
+
+==================
+Comparison less than
+==================
+
+a < b
+
+---
+
+(source_file
+  (compare_expr
+    left: (var (identifier))
+    right: (var (identifier))))
+
+==================
+Spaceship operator
+==================
+
+a <=> b
+
+---
+
+(source_file
+  (compare_expr
+    left: (var (identifier))
+    right: (var (identifier))))
+
+==================
+Logical and
+==================
+
+a and b
+
+---
+
+(source_file
+  (and_expr
+    left: (var (identifier))
+    right: (var (identifier))))
+
+==================
+Logical or
+==================
+
+a or b
+
+---
+
+(source_file
+  (or_expr
+    left: (var (identifier))
+    right: (var (identifier))))
+
+==================
+Range expression
+==================
+
+1..10
+
+---
+
+(source_file
+  (range_expr
+    start: (number)
+    end: (number)))
+
+==================
+Assignment
+==================
+
+x = 42
+
+---
+
+(source_file
+  (assignment
+    target: (var (identifier))
+    value: (number)))
+
+==================
+Define variable
+==================
+
+name: "hello"
+
+---
+
+(source_file
+  (define_var
+    name: (identifier)
+    value: (string)))
+
+==================
+Paren expression
+==================
+
+(a + b)
+
+---
+
+(source_file
+  (paren_expr
+    (add_expr
+      left: (var (identifier))
+      right: (var (identifier)))))
+
+==================
+Operator precedence
+==================
+
+a + b * c
+
+---
+
+(source_file
+  (add_expr
+    left: (var (identifier))
+    right: (mult_expr
+      left: (var (identifier))
+      right: (var (identifier)))))

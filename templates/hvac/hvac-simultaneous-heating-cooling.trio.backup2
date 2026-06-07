@@ -1,0 +1,188 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @hvac-simultaneous-heating-cooling
+name: "Simultaneous Heating/Cooling Detection"
+category: "hvac"
+description: "Detect energy waste from simultaneous heating and cooling operations in HVAC systems"
+tags: ["hvac","fault","energy-waste","heating","cooling","valve","coil","efficiency"]
+
+parameters: [{name:"equipmentFilter",type:"string",description:"Filter expression for equipment to analyze (AHU, VAV, zones)",required:T,examples:["ahu","vav","zone and hvac","airHandler or vav"]},{name:"dateRange",type:"string",description:"Date range for detection",required:T,examples:["today","yesterday","lastWeek","lastMonth"]},{name:"heatingThreshold",type:"number",description:"Minimum heating valve/output position to consider heating active (%)",default:5,examples:[5,10,15]},{name:"coolingThreshold",type:"number",description:"Minimum cooling valve/output position to consider cooling active (%)",default:5,examples:[5,10,15]},{name:"minDuration",type:"number",description:"Minimum duration in minutes to flag as significant waste",default:15,examples:[10,15,30]},{name:"estimatedCostPerHour",type:"number",description:"Estimated cost per hour of simultaneous operation ($)",default:10,examples:[5,10,15]}]
+
+template:
+  (equipFilt, dates, heatThresh: 5.0, coolThresh: 5.0, minDur: 15.0, costPerHr: 10.0) => do
+    
+    // Read equipment
+    equipment: readAll({{equipmentFilter}})
+    
+    // Analyze each piece of equipment
+    results: equipment.map(equip => do
+      
+      // Read heating and cooling points
+      heatingValve: readAll(point and heating and (valve or cmd or output) and equipRef == equip->id)
+      coolingValve: readAll(point and cooling and (valve or cmd or output) and equipRef == equip->id)
+      reheat: readAll(point and reheat and (valve or cmd) and equipRef == equip->id)
+      
+      // Use reheat if no separate heating valve found
+      heatPoint: if (heatingValve.isEmpty.not) heatingValve[0] 
+                 else if (reheat.isEmpty.not) reheat[0] 
+                 else na()  end
+      
+      coolPoint: if (coolingValve.isEmpty.not) coolingValve[0] else na() 
+      
+      // Read historical data
+      heatHis: if (heatPoint != na()) heatPoint.hisRead({{dateRange}}) else [].toGrid end
+      coolHis: if (coolPoint != na()) coolPoint.hisRead({{dateRange}}) else [].toGrid end
+      
+      // Detect simultaneous operation
+      simultaneous: if (heatHis.isEmpty.not and coolHis.isEmpty.not) do
+        
+        // Align timestamps and check for overlap
+        conflicts: heatHis.map(row => do
+          coolVal: (do found: coolHis.findAll(c => c->ts == row->ts); if(found.isEmpty.not) found[0]->v0 else na() end)
+          
+          if (coolVal != na()) do
+            heatingActive: row->v0 >= {{heatingThreshold}}
+            coolingActive: coolVal >= {{coolingThreshold}}
+            isConflict: heatingActive and coolingActive
+            
+            {
+              ts: row->ts,
+              heatingVal: row->v0,
+              coolingVal: coolVal,
+              isConflict: isConflict,
+              wasteIntensity: if (isConflict) row->v0.min(coolVal) else 0 
+            }
+          else
+            na()
+  
+        end).findAll(v => v != na()).toGrid
+        
+        // Find conflict periods
+        conflictPeriods: conflicts.findAll(r => r->isConflict)
+        
+        // Group consecutive conflicts into events
+        events: if (conflictPeriods.isEmpty.not) do
+          conflictPeriods.toList.reduce([], (eventList, row, idx, list) => do
+            if (idx == 0) do
+              // Start first event
+              [{start: row->ts, end: row->ts, count: 1, totalWaste: row->wasteIntensity}]
+            else do
+              prevRow: list[idx - 1]
+              timeDiff: (row->ts - prevRow->ts).to(1min)
+              
+              if (timeDiff <= 5) do
+                // Continue current event
+                lastEvent: eventList.last
+                updatedEvent: {
+                  start: lastEvent->start,
+                  end: row->ts,
+                  count: lastEvent->count + 1,
+                  totalWaste: lastEvent->totalWaste + row->wasteIntensity
+                }
+                eventList.removeAt(-1).add(updatedEvent)
+              else do
+                // Start new event
+                eventList.add({start: row->ts, end: row->ts, count: 1, totalWaste: row->wasteIntensity})
+  
+  
+          end)
+        else
+          []
+  
+        
+        // Filter events by minimum duration
+        significantEvents: events.findAll(e => do
+          duration: (e->end - e->start).to(1min)
+          duration >= {{minDuration}}
+        end)
+        
+        {
+          totalConflicts: conflictPeriods.size,
+          significantEvents: significantEvents,
+          eventCount: significantEvents.size
+        }
+      else
+        {totalConflicts: 0, significantEvents: [], eventCount: 0}
+  
+      
+      // Calculate waste metrics
+      totalConflictMinutes: simultaneous->significantEvents.reduce(0, (sum, event) => do
+        duration: (event->end - event->start).to(1min)
+        sum + duration
+      end)
+      
+      totalConflictHours: totalConflictMinutes / 60.0
+      estimatedCost: totalConflictHours * {{estimatedCostPerHour}}
+      
+      // Calculate percentage of time in conflict
+      totalPeriodHours: (({{dateRange}}.parseSpan.to(1hr))).to(1f)
+      conflictPercentage: if (totalPeriodHours > 0) (totalConflictHours / totalPeriodHours) * 100 else 0 
+      
+      // Severity assessment
+      severity: if (conflictPercentage >= 20) "Critical"
+               else if (conflictPercentage >= 10) "High"
+               else if (conflictPercentage >= 5) "Medium"
+               else if (conflictPercentage > 0) "Low"
+               else "None"    end
+      
+      // Generate event summary
+      eventSummary: if (simultaneous->significantEvents.isEmpty.not) do
+        simultaneous->significantEvents.map(e => do
+          duration: ((e->end - e->start).to(1min)).round(0)
+          avgWaste: (e->totalWaste / e->count).round(1)
+          e->start.toStr + " (" + duration.toStr + " min, avg " + avgWaste.toStr + "%)"
+        end).join("; ")
+      else
+        "None"
+  
+      
+      // Root cause hints
+      possibleCauses: if (severity != "None") do
+        [
+          if (equip.has("vav") or equip.has("zone")) "Improper zone control sequence" else na() ,
+          if (equip.has("ahu")) "Terminal reheat conflict with central cooling" else na() ,
+          "Stuck or failed heating/cooling valve",
+          "Control logic error or misconfiguration",
+          "Setpoint conflict or deadband too narrow"
+        ].findAll(v => v != na())
+      else
+        []
+  
+      
+      {
+        equipmentId: equip->id,
+        equipmentName: equip->dis,
+        equipmentType: if (equip.has("ahu")) "AHU" 
+                      else if (equip.has("vav")) "VAV"
+                      else if (equip.has("zone")) "Zone"
+                      else "Other"   end,
+        hasHeatingPoint: heatPoint != na(),
+        hasCoolingPoint: coolPoint != na(),
+        conflictCount: simultaneous->eventCount,
+        conflictHours: totalConflictHours.round(2),
+        conflictPercentage: conflictPercentage.round(1),
+        estimatedWasteCost: estimatedCost.round(2),
+        severity: severity,
+        eventSummary: eventSummary,
+        possibleCauses: possibleCauses.join("; "),
+        recommendation: if (severity == "Critical" or severity == "High") "Immediate investigation required"
+                       else if (severity == "Medium") "Schedule controls review"
+                       else if (severity == "Low") "Monitor for trend"
+                       else "No action needed"   end
+      }
+    end).toGrid
+    
+    // Add summary metadata
+    results.addMeta({
+      analysisRange: {{dateRange}},
+      heatingThreshold: {{heatingThreshold}},
+      coolingThreshold: {{coolingThreshold}},
+      minDuration: {{minDuration}},
+      totalEquipment: equipment.size,
+      equipmentWithIssues: results.findAll(r => r->severity != "None").size
+    })
+  
+  
+
+examples: [{name:"Daily conflict check",description:"Check for simultaneous heating and cooling today",params:{equipmentFilter:"ahu or vav",dateRange:"today",heatingThreshold:5,coolingThreshold:5,minDuration:15,estimatedCostPerHour:10}},{name:"Weekly zone analysis",description:"Analyze zones for reheat conflicts over the past week",params:{equipmentFilter:"zone and hvac",dateRange:"lastWeek",heatingThreshold:10,coolingThreshold:10,minDuration:30,estimatedCostPerHour:8}},{name:"AHU waste detection",description:"Find energy waste in air handlers last month",params:{equipmentFilter:"ahu",dateRange:"lastMonth",heatingThreshold:5,coolingThreshold:5,minDuration:20,estimatedCostPerHour:15}}]

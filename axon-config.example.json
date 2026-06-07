@@ -1,0 +1,18 @@
+{
+  "codePath": "/path/to/your/axon-library",
+  "docsPath": "/path/to/your/docs",
+  "filePatterns": {
+    "code": ["**/*.axon", "**/*.trio"],
+    "docs": ["**/*.html", "**/*.md", "**/docHaxall/*.html"]
+  },
+  "excludeDirs": ["node_modules", ".git", "dist", "build", ".cache", "temp"],
+  "cache": {
+    "enabled": true,
+    "maxAge": 86400000,
+    "directory": ".cache"
+  },
+  "search": {
+    "minTokenLength": 2,
+    "maxResults": 20
+  }
+}

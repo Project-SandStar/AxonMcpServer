@@ -1,0 +1,178 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @hvac-chiller-efficiency
+name: "Chiller Efficiency Analysis"
+category: "hvac"
+description: "Calculate chiller plant efficiency including COP, kW/ton, and load analysis"
+tags: ["hvac","chiller","efficiency","cop","kw-per-ton","cooling","performance"]
+
+parameters: [{name:"equipmentFilter",type:"string",description:"Filter expression for chiller equipment",required:T,examples:["chiller","chiller and plant","equip and chiller and siteRef==@site"]},{name:"dateRange",type:"string",description:"Date range for efficiency analysis",required:T,examples:["today","lastWeek","lastMonth"]},{name:"rollupInterval",type:"string",description:"Data aggregation interval",default:"1h",examples:["15min","1h","1day"]}]
+
+template:
+  (equipFilter, dates, interval: "1h") => do
+    
+    // Read chillers
+    chillers: readAll({{equipmentFilter}})
+    
+    if (chillers.isEmpty) do
+      [{error: "No chiller equipment found"}].toGrid
+    else do
+      
+      results: chillers.map(chiller => do
+        chillerName: chiller->dis
+        chillerId: chiller->id
+        
+        // Get chiller points
+        points: readAll(point and equipRef==chillerId)
+        
+        // Find key performance points
+        powerPoint: do
+          p: points.findAll(p => p.has("power and sensor")).first(false)
+          if (p != null) do
+            p
+          else
+            points.findAll(p => p.has("elec and sensor")).first(false)
+          end
+        end
+        coolingPoint: do
+          p: points.findAll(p => p.has("cooling and sensor")).first(false)
+          if (p != null) do
+            p
+          else
+            points.findAll(p => p.has("load and sensor")).first(false)
+          end
+        end
+        chwSupplyTemp: points.findAll(p => p.has("chilled and water and supply and temp")).first(false)
+        chwReturnTemp: points.findAll(p => p.has("chilled and water and return and temp")).first(false)
+        flowPoint: points.findAll(p => p.has("chilled and water and flow")).first(false)
+        statusPoint: do
+          p: points.findAll(p => p.has("run and status")).first(false)
+          if (p != null) do
+            p
+          else
+            points.findAll(p => p.has("enable and status")).first(false)
+          end
+        end
+        
+        result: {chiller: chillerName}
+        
+        // Calculate efficiency metrics
+        if (powerPoint != null and coolingPoint != null) do
+          try
+            powerData: powerPoint.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}})
+            coolingData: coolingPoint.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}})
+            
+            // Calculate average power and cooling
+            avgPower: powerData.reduce(0, (sum, row) => sum + row["v0"]) / powerData.size
+            avgCooling: coolingData.reduce(0, (sum, row) => sum + row["v0"]) / coolingData.size
+            
+            // Calculate kW/ton (lower is better)
+            kwPerTon: if (avgCooling > 0) do
+              (avgPower / avgCooling).round(3)
+            else
+              na()
+            end
+            
+            // Calculate COP (higher is better)
+            // COP = Cooling Output (tons * 12,000 BTU/ton * 0.293 Wh/BTU) / Power Input (kW)
+            cop: if (avgPower > 0) do
+              ((avgCooling * 12000 * 0.000293) / avgPower).round(2)
+            else
+              na()
+            end
+            
+            // Calculate total energy consumption
+            totalEnergy: powerData.reduce(0, (sum, row) => sum + row["v0"]) * ({{rollupInterval}}.to(1h))
+            
+            // Calculate total cooling provided
+            totalCooling: coolingData.reduce(0, (sum, row) => sum + row["v0"]) * ({{rollupInterval}}.to(1h))
+            
+            result = result
+              .set("avgPower", avgPower.round(1))
+              .set("avgCooling", avgCooling.round(1))
+              .set("kwPerTon", kwPerTon)
+              .set("cop", cop)
+              .set("totalEnergy", totalEnergy.round)
+              .set("totalCoolingTonHrs", totalCooling.round)
+            
+            // Efficiency rating
+            efficiencyRating: if (kwPerTon != na()) do
+              if (kwPerTon < 0.55) "Excellent"
+              else if (kwPerTon < 0.70) "Good"
+              else if (kwPerTon < 0.85) "Fair" else "Poor"
+            else
+              "Unknown"
+            end
+            
+            result = result.set("efficiencyRating", efficiencyRating)
+          catch
+            result = result.set("effError", "Power/cooling data unavailable")
+          end
+        end
+        
+        // Calculate temperature differential
+        if (chwSupplyTemp != null and chwReturnTemp != null) do
+          try
+            supplyData: chwSupplyTemp.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}})
+            returnData: chwReturnTemp.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}})
+            
+            avgSupply: supplyData.reduce(0, (sum, row) => sum + row["v0"]) / supplyData.size
+            avgReturn: returnData.reduce(0, (sum, row) => sum + row["v0"]) / returnData.size
+            deltaT: avgReturn - avgSupply
+            
+            result = result
+              .set("avgSupplyTemp", avgSupply.round(1))
+              .set("avgReturnTemp", avgReturn.round(1))
+              .set("deltaT", deltaT.round(1))
+          catch
+            result = result.set("tempError", "Temperature data unavailable")
+          end
+        end
+        
+        // Calculate runtime and load factor
+        if (statusPoint != null) do
+          try
+            statusData: statusPoint.hisRead({{dateRange}})
+            runtimePeriods: statusData.hisFindPeriods(v => v == true or v > 0)
+            
+            totalRuntime: runtimePeriods.reduce(0, (sum, row) => sum + row["v0"].to(1h))
+            
+            // Calculate load factor if we have cooling data
+            loadFactor: if (result.has("avgCooling") and chiller.has("coolingCapacity")) do
+              capacity: chiller->coolingCapacity
+              ((result["avgCooling"] / capacity) * 100).round(1)
+            else
+              na()
+            end
+            
+            result = result
+              .set("runtimeHours", totalRuntime.round(1))
+              .set("loadFactor", loadFactor)
+          catch
+            result = result.set("runtimeError", "Status data unavailable")
+          end
+        end
+  
+  
+        
+        result
+      end).toGrid
+      
+      // Add column metadata
+      results
+        .addColMeta("chiller", {dis: "Chiller"})
+        .addColMeta("avgPower", {dis: "Avg Power (kW)"})
+        .addColMeta("avgCooling", {dis: "Avg Cooling (tons)"})
+        .addColMeta("kwPerTon", {dis: "kW/ton"})
+        .addColMeta("cop", {dis: "COP"})
+        .addColMeta("efficiencyRating", {dis: "Efficiency"})
+        .addColMeta("deltaT", {dis: "ΔT (°F)"})
+        .addColMeta("runtimeHours", {dis: "Runtime (hrs)"})
+    end
+  end
+  
+  
+  
+
+examples: [{name:"Daily chiller efficiency",description:"Analyze chiller efficiency for today",params:{equipmentFilter:"chiller",dateRange:"today",rollupInterval:"1h"}},{name:"Weekly plant efficiency",description:"Review chiller plant efficiency for the week",params:{equipmentFilter:"chiller and plant",dateRange:"lastWeek",rollupInterval:"1h"}},{name:"Monthly efficiency trending",description:"Monthly chiller efficiency with daily rollup",params:{equipmentFilter:"equip and chiller",dateRange:"lastMonth",rollupInterval:"1day"}}]

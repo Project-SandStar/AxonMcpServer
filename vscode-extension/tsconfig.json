@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "module": "Node16",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "sourceMap": true,
+    "rootDir": "src",
+    "outDir": "out",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "node16",
+    "baseUrl": ".",
+    "paths": {
+      "@core/*": ["src/core/*"],
+      "@providers/*": ["src/providers/*"],
+      "@mcp/*": ["src/mcp/*"],
+      "@cache/*": ["src/cache/*"],
+      "@language/*": ["src/language/*"],
+      "@commands/*": ["src/commands/*"],
+      "@utils/*": ["src/utils/*"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "out", "dist", "tests"]
+}

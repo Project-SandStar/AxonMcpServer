@@ -1,0 +1,186 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @fault-equipment-offline
+name: "Equipment Offline Detection"
+category: "fault"
+description: "Identify equipment that should be running but appears offline or not responding"
+tags: ["fault","equipment","offline","availability","uptime","status"]
+
+parameters: [{name:"equipmentFilter",type:"string",description:"Filter expression for equipment to monitor",required:T,examples:["ahu","chiller or boiler","equip and hvac","equip"]},{name:"dateRange",type:"string",description:"Date range for analysis",required:T,examples:["today","yesterday","lastWeek"]},{name:"expectedUptime",type:"number",description:"Expected uptime percentage during analysis period",default:90,examples:[80,90,95]},{name:"minDataPoints",type:"number",description:"Minimum data points expected per hour",default:12,examples:[6,12,24]},{name:"checkSchedule",type:"boolean",description:"Check equipment schedule to determine expected operation",default:T}]
+
+template:
+  (equipFilt, dates, expectedUp: 90.0, minDataPts: 12.0, checkSched: true) => do
+    
+    // Read equipment
+    equipment: readAll({{equipmentFilter}})
+    
+    // Analyze each piece of equipment
+    results: equipment.map(equip => do
+      
+      // Find run status point
+      runStatus: readAll(point and run and status and equipRef == equip->id)
+      runCmd: if (runStatus.isEmpty) readAll(point and run and cmd and equipRef == equip->id) else [].toGrid 
+      statusPoint: if (runStatus.isEmpty.not) runStatus[0] else if (runCmd.isEmpty.not) runCmd[0] else na()  
+      
+      // Find enable point
+      enablePoint: readAll(point and enable and equipRef == equip->id)
+      
+      // Check if equipment has schedule
+      schedule: if ({{checkSchedule}} and equip.has("scheduleRef")) do
+        readById(equip->scheduleRef)
+      else
+        na()
+  
+      
+      if (statusPoint == na()) do
+        // No status point found
+        {
+          equipmentId: equip->id,
+          equipmentName: equip->dis,
+          equipmentType: if (equip.has("ahu")) "AHU" 
+                        else if (equip.has("chiller")) "Chiller"
+                        else if (equip.has("boiler")) "Boiler"
+                        else if (equip.has("fan")) "Fan"
+                        else if (equip.has("pump")) "Pump"
+                        else "Other"     end,
+          status: "No Status Point",
+          severity: "Info",
+          issues: ["No run status or command point found"],
+          recommendation: "Configure status feedback point"
+        }
+      else do
+        
+        // Read status history
+        statusHis: statusPoint.hisRead({{dateRange}})
+        dataCount: statusHis.size
+        
+        // Calculate expected data points
+        totalHours: (({{dateRange}}.parseSpan.to(1hr))).to(1f)
+        expectedDataPoints: totalHours * {{minDataPoints}}
+        dataCoverage: if (expectedDataPoints > 0) (dataCount.to(1f) / expectedDataPoints) * 100 else 0 
+        
+        // Check if equipment is enabled
+        isEnabled: if (enablePoint.isEmpty.not) do
+          enableVal: enablePoint[0].curVal
+          enableVal != false and enableVal != 0
+        else
+          true  // Assume enabled if no enable point
+  
+        
+        // Check schedule (if available)
+        shouldBeRunning: if (schedule != na() and {{checkSchedule}}) do
+          // Simplified schedule check - in real implementation would check actual schedule
+          // For now, assume occupied hours (6 AM - 6 PM weekdays)
+          true  // Default to true for analysis
+        else
+          true
+  
+        
+        // Calculate uptime
+        if (dataCount > 0) do
+          runTime: statusHis.findAll(r => r->v0 == true or r->v0 == 1).size
+          uptime: (runTime.to(1f) / dataCount) * 100
+        else do
+          uptime: 0
+  
+        
+        // Check for communication gaps
+        if (dataCount > 1) do
+          avgInterval: (statusHis.last->ts - statusHis.first->ts).to(1min) / (dataCount - 1)
+          expectedInterval: 60.0 / {{minDataPoints}}
+          
+          gaps: statusHis.toList.reduce([], (list, row, idx, all) => do
+            if (idx > 0) do
+              prev: all[idx - 1]
+              gap: (row->ts - prev->ts).to(1min)
+              if (gap > expectedInterval * 3) do
+                list.add({start: prev->ts, end: row->ts, duration: gap.round(0)})
+              else
+                list
+  
+            else
+              list
+  
+          end)
+          
+          gapCount: gaps.size
+          totalGapTime: gaps.reduce(0, (sum, gap) => sum + gap->duration)
+        else do
+          gapCount: 0
+          totalGapTime: 0
+  
+        
+        // Identify issues
+        lowUptime: uptime < {{expectedUptime}} and shouldBeRunning and isEnabled
+        poorCoverage: dataCoverage < 80.0
+        hasGaps: gapCount > 3
+        notEnabled: isEnabled.not
+        noData: dataCount == 0
+        
+        // Compile issues list
+        issues: [
+          if (noData) "No data received" else na() ,
+          if (notEnabled) "Equipment disabled" else na() ,
+          if (lowUptime) "Low uptime: " + uptime.round(1).toStr + "%" else na() ,
+          if (poorCoverage) "Poor data coverage: " + dataCoverage.round(1).toStr + "%" else na() ,
+          if (hasGaps) gapCount.toStr + " communication gaps (" + totalGapTime.toStr + " min total)" else na() 
+        ].findAll(v => v != na())
+        
+        // Determine status and severity
+        isOffline: noData or (poorCoverage and lowUptime)
+        
+        severity: if (noData) "Critical"
+                 else if (isOffline and shouldBeRunning and isEnabled) "High"
+                 else if (lowUptime and shouldBeRunning and isEnabled) "Medium"
+                 else if (hasGaps or poorCoverage) "Low"
+                 else if (notEnabled) "Info" else "Normal"
+        
+        status: if (noData) "Offline - No Data"
+               else if (notEnabled) "Disabled"
+               else if (isOffline) "Offline"
+               else if (lowUptime) "Low Availability"
+               else if (hasGaps) "Intermittent Communication" else "Online"
+        
+        // Calculate last seen time
+        lastSeen: if (statusHis.isEmpty.not) statusHis.last->ts else na() 
+        timeSinceData: if (lastSeen != na()) (now() - lastSeen).to(1min).round(0) else na() 
+        
+        {
+          equipmentId: equip->id,
+          equipmentName: equip->dis,
+          equipmentType: if (equip.has("ahu")) "AHU" 
+                        else if (equip.has("chiller")) "Chiller"
+                        else if (equip.has("boiler")) "Boiler"
+                        else if (equip.has("fan")) "Fan"
+                        else if (equip.has("pump")) "Pump"
+                        else "Other"     end,
+          status: status,
+          severity: severity,
+          isEnabled: isEnabled,
+          uptime: uptime.round(1),
+          dataCoverage: dataCoverage.round(1),
+          dataPoints: dataCount,
+          expectedDataPoints: expectedDataPoints.round(0),
+          communicationGaps: gapCount,
+          lastSeenMinutesAgo: timeSinceData,
+          issues: issues.join("; "),
+          recommendation: if (noData) "Check network connectivity and BACnet configuration"
+                         else if (isOffline) "Verify equipment is powered and communication is working"
+                         else if (lowUptime and isEnabled) "Investigate why equipment is not running as expected"
+                         else if (hasGaps) "Check network stability and point polling configuration"
+                         else if (notEnabled) "Enable equipment if operation is required" else "Continue monitoring"
+        }
+  
+    end).toGrid
+    
+    results.addMeta({
+      analysisRange: {{dateRange}},
+      equipmentChecked: equipment.size,
+      offlineCount: results.findAll(r => r->status.contains("Offline")).size,
+      criticalCount: results.findAll(r => r->severity == "Critical").size
+    })
+  
+  
+
+examples: [{name:"Check all HVAC equipment today",description:"Identify any HVAC equipment that is offline today",params:{equipmentFilter:"equip and hvac",dateRange:"today",expectedUptime:90,minDataPoints:12,checkSchedule:T}},{name:"Weekly availability check",description:"Monitor equipment availability over the past week",params:{equipmentFilter:"ahu or chiller or boiler",dateRange:"lastWeek",expectedUptime:85,minDataPoints:6,checkSchedule:T}},{name:"Critical equipment status",description:"Check critical equipment for any communication issues",params:{equipmentFilter:"equip and critical",dateRange:"yesterday",expectedUptime:95,minDataPoints:12,checkSchedule:F}}]

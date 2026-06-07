@@ -1,0 +1,128 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @hvac-zone-comfort
+name: "Zone Comfort Analysis"
+category: "hvac"
+description: "Analyze zone temperature and humidity comfort levels against setpoints and comfort ranges"
+tags: ["hvac","comfort","zone","temperature","humidity","setpoint","occupancy"]
+
+parameters: [{name:"zoneFilter",type:"string",description:"Filter expression for zones or VAV boxes",required:T,examples:["vav","zone","equip and vav","zone and floor==3"]},{name:"dateRange",type:"string",description:"Date range for comfort analysis",required:T,examples:["today","lastWeek","yesterday"]},{name:"comfortTempMin",type:"number",description:"Minimum comfortable temperature in °F",default:68,examples:[68,70,72]},{name:"comfortTempMax",type:"number",description:"Maximum comfortable temperature in °F",default:76,examples:[74,76,78]},{name:"comfortHumidityMin",type:"number",description:"Minimum comfortable humidity in %RH (optional)",default:30,examples:[30,35,40]},{name:"comfortHumidityMax",type:"number",description:"Maximum comfortable humidity in %RH (optional)",default:60,examples:[55,60,65]}]
+
+template:
+  (zoneFilter, dates, tempMin: 68, tempMax: 76, humidMin: 30, humidMax: 60) => do
+    
+    // Read zones
+    zones: readAll({{zoneFilter}})
+    
+    if (zones.isEmpty) do
+      [{error: "No zones found matching filter"}].toGrid
+    else do
+      
+      results: zones.map(zone => do
+        zoneName: zone->dis
+        zoneId: zone->id
+        
+        // Get zone points
+        points: readAll(point and equipRef==zoneId)
+        
+        // Find temperature and humidity points
+        tempSensor: points.has("zone and temp and sensor").first(false)
+        tempSp: points.has("zone and temp and sp").first(false)
+        humiditySensor: points.has("zone and humidity and sensor").first(false)
+        
+        result: {zone: zoneName}
+        
+        // Temperature analysis
+        if (tempSensor != null) do
+          try do
+            tempData: tempSensor.hisRead({{dateRange}})
+            
+            // Calculate average and range
+            avgTemp: tempData.reduce(0, (sum, row) => sum + row["v0"]) / tempData.size
+            minTemp: tempData.reduce(999, (min, row) => if (row["v0"] < min) row["v0"] else min)
+            maxTemp: tempData.reduce(-999, (max, row) => if (row["v0"] > max) row["v0"] else max)
+            
+            // Count comfort violations
+            tooHot: tempData.findAll(row => row["v0"] > {{comfortTempMax}}).size
+            tooCold: tempData.findAll(row => row["v0"] < {{comfortTempMin}}).size
+            totalReadings: tempData.size
+            
+            // Calculate comfort percentage
+            comfortReadings: totalReadings - tooHot - tooCold
+            comfortPct: ((comfortReadings.toFloat / totalReadings) * 100).round(1)
+            
+            result = result
+              .set("avgTemp", avgTemp.round(1))
+              .set("minTemp", minTemp.round(1))
+              .set("maxTemp", maxTemp.round(1))
+              .set("comfortPercent", comfortPct)
+              .set("hoursTooCold", (tooCold * 0.25).round(1))
+              .set("hoursTooHot", (tooHot * 0.25).round(1))
+            
+            // Get setpoint if available
+            if (tempSp != null) do
+              spData: tempSp.hisRead({{dateRange}})
+              avgSp: spData.reduce(0, (sum, row) => sum + row["v0"]) / spData.size
+              
+              // Calculate deviation from setpoint
+              deviation: avgTemp - avgSp
+              result = result
+                .set("avgSetpoint", avgSp.round(1))
+                .set("spDeviation", deviation.round(1))
+            end
+          end catch
+            result = result.set("tempError", "Temperature data unavailable")
+          end
+        end
+        
+        // Humidity analysis  
+        if (humiditySensor != null) do
+          try do
+            humidData: humiditySensor.hisRead({{dateRange}})
+            
+            avgHumid: humidData.reduce(0, (sum, row) => sum + row["v0"]) / humidData.size
+            
+            // Count humidity violations
+            tooHumid: humidData.findAll(row => row["v0"] > {{comfortHumidityMax}}).size
+            tooDry: humidData.findAll(row => row["v0"] < {{comfortHumidityMin}}).size
+            totalHumidReadings: humidData.size
+            
+            humidComfort: totalHumidReadings - tooHumid - tooDry
+            humidComfortPct: ((humidComfort.toFloat / totalHumidReadings) * 100).round(1)
+            
+            result = result
+              .set("avgHumidity", avgHumid.round(1))
+              .set("humidityComfort", humidComfortPct)
+          end catch
+            result = result.set("humidError", "Humidity data unavailable")
+          end
+        end
+        
+        // Overall comfort status
+        overallComfort: if (result.has("comfortPercent"))
+          if (result["comfortPercent"] >= 95) "Excellent"
+          else if (result["comfortPercent"] >= 85) "Good"
+          else if (result["comfortPercent"] >= 70) "Fair"
+          else "Poor"
+        else
+          "Unknown"
+  
+        
+        result.set("comfortRating", overallComfort)
+      end).toGrid
+      
+      // Add metadata
+      results
+        .addColMeta("zone", {dis: "Zone"})
+        .addColMeta("avgTemp", {dis: "Avg Temp (°F)"})
+        .addColMeta("comfortPercent", {dis: "Comfort %"})
+        .addColMeta("comfortRating", {dis: "Rating"})
+        .addColMeta("hoursTooCold", {dis: "Too Cold (hrs)"})
+        .addColMeta("hoursTooHot", {dis: "Too Hot (hrs)"})
+    end
+  
+  
+  
+
+examples: [{name:"VAV comfort analysis",description:"Analyze comfort for all VAV zones today",params:{zoneFilter:"vav",dateRange:"today",comfortTempMin:70,comfortTempMax:76}},{name:"Weekly zone comfort review",description:"Review zone comfort for the past week",params:{zoneFilter:"zone and floor==2",dateRange:"lastWeek",comfortTempMin:68,comfortTempMax:76,comfortHumidityMin:30,comfortHumidityMax:60}}]

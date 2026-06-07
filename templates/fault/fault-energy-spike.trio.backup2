@@ -1,0 +1,233 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @fault-energy-spike
+name: "Energy Spike Detection"
+category: "fault"
+description: "Detect abnormal spikes in energy consumption that may indicate equipment faults or operational issues"
+tags: ["fault","energy","spike","anomaly","power","consumption"]
+
+parameters: [{name:"meterFilter",type:"string",description:"Filter expression for energy meters to monitor",required:T,examples:["elecMeter","meter and energy","power and meter"]},{name:"dateRange",type:"string",description:"Date range for spike detection",required:T,examples:["today","yesterday","lastWeek"]},{name:"baselineRange",type:"string",description:"Historical baseline period for comparison",default:"lastMonth",examples:["lastWeek","lastMonth","last3Months"]},{name:"spikeThreshold",type:"number",description:"Percentage above baseline to flag as spike",default:50,examples:[30,50,75]},{name:"minSpikeDuration",type:"number",description:"Minimum duration in minutes for spike to be significant",default:15,examples:[10,15,30]},{name:"checkAfterHours",type:"boolean",description:"Flag spikes during unoccupied hours as higher priority",default:T}]
+
+template:
+  (meterFilt, dates, baselineDates: "lastMonth", spikeThresh: 50.0, minDur: 15.0, checkAH: true) => do
+    
+    // Read energy meters
+    meters: readAll({{meterFilter}})
+    
+    // Analyze each meter
+    results: meters.map(meter => do
+      
+      // Read current period energy data
+      currentData: meter.hisRead({{dateRange}})
+      
+      // Read baseline period energy data
+      baselineData: meter.hisRead({{baselineRange}})
+      
+      if (currentData.isEmpty or baselineData.isEmpty) do
+        {
+          meterId: meter->id,
+          meterName: meter->dis,
+          status: "Insufficient Data",
+          severity: "Info",
+          issues: ["Missing current or baseline energy data"],
+          recommendation: "Verify meter is collecting data"
+        }
+      else do
+        
+        // Calculate baseline statistics (hourly averages by hour of day and day of week)
+        baselineHourly: baselineData.hisRollup(avg, 1hr)
+        
+        // Group baseline by hour of day and day of week
+        baselineByHourDow: baselineHourly.toList.reduce({}, (map, row) => do
+          hour: row->ts.hour
+          dow: row->ts.dayOfWeek
+          key: dow.toStr + "_" + hour.toStr
+          
+          if (map.has(key)) do
+            existing: map.get(key)
+            map.set(key, {
+              sum: existing->sum + row->v0,
+              count: existing->count + 1,
+              avg: (existing->sum + row->v0) / (existing->count + 1)
+            })
+          else do
+            map.set(key, {sum: row->v0, count: 1, avg: row->v0})
+  
+        end)
+        
+        // Roll up current data to hourly
+        currentHourly: currentData.hisRollup(avg, 1hr)
+        
+        // Find spikes
+        spikes: currentHourly.toList.reduce([], (list, row) => do
+          hour: row->ts.hour
+          dow: row->ts.dayOfWeek
+          key: dow.toStr + "_" + hour.toStr
+          
+          // Get baseline for this hour/day combination
+          baseline: if (baselineByHourDow.has(key)) do
+            baselineByHourDow.get(key)->avg
+          else do
+            // Fallback to overall average if no specific baseline
+            baselineHourly.hisRollup(avg)->v0
+  
+          
+          // Calculate deviation
+          deviation: if (baseline > 0) ((row->v0 - baseline) / baseline) * 100 else 0 
+          
+          // Check if spike threshold exceeded
+          isSpike: deviation > {{spikeThreshold}}
+          
+          if (isSpike) do
+            // Check if after hours (6 PM - 6 AM or weekend)
+            isAfterHours: hour < 6 or hour >= 18 or dow == 1 or dow == 7
+            
+            list.add({
+              ts: row->ts,
+              value: row->v0,
+              baseline: baseline,
+              deviation: deviation,
+              isAfterHours: isAfterHours
+            })
+          else
+            list
+  
+        end)
+        
+        // Group consecutive spikes into events
+        spikeEvents: if (spikes.isEmpty.not) do
+          spikes.reduce([], (events, spike, idx) => do
+            if (idx == 0) do
+              // Start first event
+              [{
+                start: spike->ts,
+                end: spike->ts,
+                count: 1,
+                maxDeviation: spike->deviation,
+                maxValue: spike->value,
+                avgBaseline: spike->baseline,
+                isAfterHours: spike->isAfterHours
+              }]
+            else do
+              prevSpike: spikes[idx - 1]
+              timeDiff: (spike->ts - prevSpike->ts).to(1hr)
+              
+              if (timeDiff <= 2) do
+                // Continue current event (within 2 hours)
+                lastEvent: events.last
+                updated: {
+                  start: lastEvent->start,
+                  end: spike->ts,
+                  count: lastEvent->count + 1,
+                  maxDeviation: spike->deviation.max(lastEvent->maxDeviation),
+                  maxValue: spike->value.max(lastEvent->maxValue),
+                  avgBaseline: (lastEvent->avgBaseline * lastEvent->count + spike->baseline) / (lastEvent->count + 1),
+                  isAfterHours: lastEvent->isAfterHours or spike->isAfterHours
+                }
+                events.removeAt(-1).add(updated)
+              else do
+                // Start new event
+                events.add({
+                  start: spike->ts,
+                  end: spike->ts,
+                  count: 1,
+                  maxDeviation: spike->deviation,
+                  maxValue: spike->value,
+                  avgBaseline: spike->baseline,
+                  isAfterHours: spike->isAfterHours
+                })
+  
+  
+          end)
+        else
+          []
+  
+        
+        // Filter by minimum duration
+        significantEvents: spikeEvents.findAll(e => do
+          duration: (e->end - e->start).to(1min)
+          duration >= {{minSpikeDuration}} or e->count >= 1  // At least 1 hour or min duration
+        end)
+        
+        // Sort by severity (after-hours and high deviation first)
+        sortedEvents: significantEvents.sort((a, b) => do
+          scoreA: (if (a->isAfterHours) 100 else 0 ) + a->maxDeviation
+          scoreB: (if (b->isAfterHours) 100 else 0 ) + b->maxDeviation
+          scoreB.compare(scoreA)
+        end)
+        
+        // Calculate statistics
+        totalSpikes: spikes.size
+        afterHoursSpikes: spikes.findAll(s => s->isAfterHours).size
+        significantEventCount: significantEvents.size
+        
+        maxDeviation: if (spikes.isEmpty.not) spikes.reduce(0, (max, s) => s->deviation.max(max)) else 0 
+        
+        // Estimate excess energy cost
+        avgBaseline: if (baselineHourly.isEmpty.not) baselineHourly.hisRollup(avg)->v0 else 0 
+        avgCurrent: if (currentHourly.isEmpty.not) currentHourly.hisRollup(avg)->v0 else 0 
+        excessEnergy: if (avgCurrent > avgBaseline) (avgCurrent - avgBaseline) * currentHourly.size else 0 
+        
+        // Compile issues
+        issues: [
+          if (significantEventCount > 0) significantEventCount.toStr + " significant spike events detected" else na() ,
+          if (afterHoursSpikes > totalSpikes * 0.5) "Majority of spikes during unoccupied hours" else na() ,
+          if (maxDeviation > {{spikeThreshold}} * 2) "Peak deviation: " + maxDeviation.round(0).toStr + "% above baseline" else na() ,
+          if (excessEnergy > avgBaseline * 10) "Significant excess energy consumption" else na() 
+        ].findAll(v => v != na())
+        
+        // Determine severity
+        hasFault: significantEventCount > 0
+        
+        severity: if (afterHoursSpikes > 3 and maxDeviation > {{spikeThreshold}} * 1.5) "Critical"
+                 else if (significantEventCount > 2 or maxDeviation > {{spikeThreshold}} * 2) "High"
+                 else if (significantEventCount > 0) "Medium"
+                 else "Normal"   end
+        
+        status: if (hasFault) "Spikes Detected" else "Normal" 
+        
+        // Format top events for summary
+        topEvents: if (sortedEvents.isEmpty.not) do
+          sortedEvents.slice(0, 3.min(sortedEvents.size)).map(e => do
+            duration: ((e->end - e->start).to(1min)).round(0)
+            e->start.toStr + " (" + e->maxDeviation.round(0).toStr + "% spike, " + duration.toStr + " min)"
+          end).join("; ")
+        else
+          "None"
+  
+        
+        {
+          meterId: meter->id,
+          meterName: meter->dis,
+          status: status,
+          severity: severity,
+          totalSpikes: totalSpikes,
+          significantEvents: significantEventCount,
+          afterHoursSpikes: afterHoursSpikes,
+          maxDeviation: maxDeviation.round(1),
+          avgBaselineKw: avgBaseline.round(2),
+          avgCurrentKw: avgCurrent.round(2),
+          excessEnergyKwh: excessEnergy.round(0),
+          topEvents: topEvents,
+          issues: issues.join("; "),
+          recommendation: if (afterHoursSpikes > 3) "Investigate after-hours equipment operation and schedules"
+                         else if (maxDeviation > 100) "Check for equipment malfunction or stuck on condition"
+                         else if (significantEventCount > 2) "Review equipment startup sequences and demand management"
+                         else if (hasFault) "Monitor for recurring pattern"
+                         else "Continue monitoring"    end
+        }
+  
+    end).toGrid
+    
+    results.addMeta({
+      analysisRange: {{dateRange}},
+      baselineRange: {{baselineRange}},
+      spikeThreshold: {{spikeThreshold}},
+      metersChecked: meters.size,
+      metersWithSpikes: results.findAll(r => r->status == "Spikes Detected").size
+    })
+  
+  
+
+examples: [{name:"Daily spike detection",description:"Check for abnormal energy spikes today",params:{meterFilter:"elecMeter",dateRange:"today",baselineRange:"lastMonth",spikeThreshold:50,minSpikeDuration:15,checkAfterHours:T}},{name:"Weekly anomaly analysis",description:"Analyze energy anomalies over the past week",params:{meterFilter:"meter and energy",dateRange:"lastWeek",baselineRange:"last3Months",spikeThreshold:40,minSpikeDuration:30,checkAfterHours:T}},{name:"Sensitive spike detection",description:"Detect even minor energy anomalies for critical loads",params:{meterFilter:"elecMeter and critical",dateRange:"yesterday",baselineRange:"lastMonth",spikeThreshold:25,minSpikeDuration:10,checkAfterHours:F}}]

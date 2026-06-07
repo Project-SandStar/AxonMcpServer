@@ -1,0 +1,98 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @hvac-vav-analysis
+name: "VAV Box Performance Analysis"
+category: "hvac"
+description: "Analyze VAV box performance including airflow, damper position, temperature control, and reheat usage"
+tags: ["hvac","vav","airflow","damper","reheat","zone","performance"]
+
+parameters: [{name:"equipmentFilter",type:"string",description:"Filter expression for VAV boxes",required:T,examples:["vav","vav and floor==2","equip and vav"]},{name:"dateRange",type:"string",description:"Date range for VAV analysis",required:T,examples:["today","lastWeek","yesterday"]},{name:"rollupInterval",type:"string",description:"Data aggregation interval",default:"15min",examples:["5min","15min","1h"]}]
+
+template:
+  (equipFilter, dates, interval: "15min") => do
+    
+    vavs: readAll({{equipmentFilter}})
+    
+    if (vavs.isEmpty) do
+      [{error: "No VAV boxes found"}].toGrid
+    else do
+      vavs.map(vav => do
+        vavName: vav->dis
+        points: readAll(point and equipRef==vav->id)
+        
+        result: {vav: vavName}
+        
+        // Airflow analysis
+        flowSensor: points.has("air and flow and sensor").first(false)
+        flowSp: points.has("air and flow and sp").first(false)
+        damperCmd: points.has("damper and cmd").first(false)
+        
+        if (flowSensor != null) do
+          flowData: flowSensor.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}})
+          avgFlow: flowData.reduce(0, (sum, row) => sum + row["v0"]) / flowData.size
+          maxFlow: flowData.reduce(0, (max, row) => if (row["v0"] > max) row["v0"] else max end)
+          minFlow: flowData.reduce(9999, (min, row) => if (row["v0"] < min) row["v0"] else min end)
+          
+          result = result
+            .set("avgFlow", avgFlow.round)
+            .set("maxFlow", maxFlow.round)
+            .set("minFlow", minFlow.round)
+        end
+        
+        if (damperCmd != null) do
+          damperData: damperCmd.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}})
+          avgDamper: damperData.reduce(0, (sum, row) => sum + row["v0"]) / damperData.size
+          result = result.set("avgDamper", avgDamper.round(1))
+        end
+        
+        // Temperature control
+        zoneTempSensor: points.has("zone and temp and sensor").first(false)
+        zoneTempSp: points.has("zone and temp and sp").first(false)
+        
+        if (zoneTempSensor != null and zoneTempSp != null) do
+          tempData: zoneTempSensor.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}})
+          spData: zoneTempSp.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}})
+          
+          avgTemp: tempData.reduce(0, (sum, row) => sum + row["v0"]) / tempData.size
+          avgSp: spData.reduce(0, (sum, row) => sum + row["v0"]) / spData.size
+          deviation: avgTemp - avgSp
+          
+          result = result
+            .set("avgZoneTemp", avgTemp.round(1))
+            .set("avgSetpoint", avgSp.round(1))
+            .set("tempDeviation", deviation.round(1))
+        end
+        
+        // Reheat usage
+        reheatValve: do
+          p: points.findAll(p => p.has("reheat and valve")).first(false)
+          if(p != null) p else points.findAll(p => p.has("heat and valve")).first(false)
+        end
+        
+        if (reheatValve != null) do
+          reheatData: reheatValve.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}})
+          avgReheat: reheatData.reduce(0, (sum, row) => sum + row["v0"]) / reheatData.size
+          
+          // Count hours with reheat active (>10%)
+          reheatActive: reheatData.findAll(row => row["v0"] > 10).size
+          reheatHours: (reheatActive * {{rollupInterval}}.to(1h)).round(1)
+          
+          result = result
+            .set("avgReheat", avgReheat.round(1))
+            .set("reheatHours", reheatHours)
+        end
+        
+        result
+      end).toGrid
+      .addColMeta("vav", {dis: "VAV Box"})
+      .addColMeta("avgFlow", {dis: "Avg Flow (CFM)"})
+      .addColMeta("avgDamper", {dis: "Avg Damper (%)"})
+      .addColMeta("avgZoneTemp", {dis: "Avg Temp (°F)"})
+      .addColMeta("tempDeviation", {dis: "SP Deviation (°F)"})
+      .addColMeta("avgReheat", {dis: "Avg Reheat (%)"})
+     end
+  
+  
+
+examples: [{name:"Daily VAV performance",description:"Analyze VAV boxes for today",params:{equipmentFilter:"vav",dateRange:"today",rollupInterval:"15min"}},{name:"Floor 2 VAV analysis",description:"Analyze VAVs on specific floor",params:{equipmentFilter:"vav and floor==2",dateRange:"lastWeek",rollupInterval:"1h"}}]

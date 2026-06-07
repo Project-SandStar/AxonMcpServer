@@ -1,0 +1,53 @@
+==================
+Line comment
+==================
+
+// this is a comment
+42
+
+---
+
+(source_file
+  (line_comment)
+  (number))
+
+==================
+Block comment
+==================
+
+/* block comment */
+42
+
+---
+
+(source_file
+  (block_comment)
+  (number))
+
+==================
+Unclosed block comment at EOF
+==================
+
+x: 1
+/* unclosed comment
+
+---
+
+(source_file
+  (define_var name: (identifier) value: (number))
+  (block_comment))
+
+==================
+Multiple expressions with semicolons
+==================
+
+a: 1; b: 2; a + b
+
+---
+
+(source_file
+  (define_var name: (identifier) value: (number))
+  (define_var name: (identifier) value: (number))
+  (add_expr
+    left: (var (identifier))
+    right: (var (identifier))))

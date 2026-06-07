@@ -1,0 +1,153 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @energy-normalization
+name: "Energy Normalization"
+category: "energy"
+description: "Normalize energy consumption by weather (HDD/CDD) or occupancy to enable fair comparisons across different conditions"
+tags: ["energy","normalization","weather","occupancy","hdd","cdd","comparison"]
+
+parameters: [{name:"equipmentFilter",type:"string",description:"Filter expression for energy meters",required:T,examples:["elecMeter","energy and equipRef->siteMeter","energy and siteRef==@siteId"]},{name:"dateRange",type:"string",description:"Date range for normalization analysis",required:T,examples:["lastMonth","lastYear","2024-01-01..2024-12-31"]},{name:"normalizationType",type:"string",description:"Type of normalization (weather, occupancy, area)",default:"weather",examples:["weather","occupancy","area"]},{name:"weatherPoint",type:"string",description:"Weather point reference for temperature normalization (required if type=weather)",required:F,examples:["@outsideTempPoint","weather and siteRef==@site"]},{name:"baseTemp",type:"number",description:"Base temperature for HDD/CDD calculation (typically 65°F or 18°C)",default:65,examples:[65,18,70]},{name:"rollupInterval",type:"string",description:"Interval for data aggregation",default:"1day",examples:["1day","1wk","1mo"]}]
+
+template:
+  (equipFilter, dates, normType: "weather", weatherRef: null, baseT: 65, interval: "1day") => do
+    
+    // Read energy consumption
+    energyPoints: readAll({{equipmentFilter}})
+    consumption: energyPoints
+      .hisRead({{dateRange}})
+      .hisRollup(sum, {{rollupInterval}})
+    
+    // Normalize based on type
+    result: if ({{normalizationType}} == "weather") do
+      // Weather normalization using HDD/CDD
+      if ({{weatherPoint}} == null) do
+        // Error: weather point required
+        [{error: "Weather point required for weather normalization"}].toGrid
+      else do
+        // Read outdoor temperature
+        tempPoint: read({{weatherPoint}})
+        tempData: tempPoint
+          .hisRead({{dateRange}})
+          .hisRollup(avg, {{rollupInterval}})
+        
+        // Calculate HDD/CDD and normalize consumption
+        consumption.zip(tempData, (energy, temp) => do
+          avgTemp: temp["v0"]
+          kwh: energy["v0"]
+          
+          // Calculate degree days
+          hdd: if (avgTemp < {{baseTemp}}) do
+            {{baseTemp}} - avgTemp
+          else
+            0
+          end
+          
+          cdd: if (avgTemp >= {{baseTemp}}) do
+            avgTemp - {{baseTemp}}
+          else
+            0
+          end
+          
+          totalDD: hdd + cdd
+          
+          // Normalize: consumption per degree day
+          normalizedKwh: if (totalDD > 0) do
+            kwh / totalDD
+          else
+            kwh
+          end
+          
+          {
+            ts: energy["ts"],
+            consumption: kwh.round,
+            avgTemp: avgTemp.round(1),
+            hdd: hdd.round(1),
+            cdd: cdd.round(1),
+            normalizedConsumption: normalizedKwh.round(2),
+            unit: "kWh/DD"
+          }
+        end).toGrid
+        .addColMeta("consumption", {dis: "Actual Consumption (kWh)"})
+        .addColMeta("normalizedConsumption", {dis: "Normalized (kWh/DD)"})
+        .addColMeta("avgTemp", {dis: "Avg Temp (°F)"})
+      end
+    else if ({{normalizationType}} == "occupancy") do
+      // Normalize by occupancy/people count
+      // Get occupancy data (assuming occupancy point exists)
+      try
+        occPoints: readAll(occupied and siteRef->id == energyPoints.first->siteRef->id)
+        occData: occPoints
+          .hisRead({{dateRange}})
+          .hisRollup(avg, {{rollupInterval}})
+        
+        consumption.zip(occData, (energy, occ) => do
+          kwh: energy["v0"]
+          occupancy: occ["v0"]
+          
+          normalizedKwh: if (occupancy > 0) do
+            kwh / occupancy
+          else
+            kwh
+          end
+          
+          {
+            ts: energy["ts"],
+            consumption: kwh.round,
+            occupancy: occupancy.round,
+            normalizedConsumption: normalizedKwh.round(2),
+            unit: "kWh/person"
+          }
+        end).toGrid
+        .addColMeta("consumption", {dis: "Actual Consumption (kWh)"})
+        .addColMeta("normalizedConsumption", {dis: "Normalized (kWh/person)"})
+      catch (err)
+        // Fallback if occupancy data not available
+        consumption.map(row => do
+          {
+            ts: row["ts"],
+            consumption: row["v0"].round,
+            error: "Occupancy data not available"
+          }
+        end).toGrid
+      end
+    else if ({{normalizationType}} == "area") do
+      // Normalize by building area (kWh/sqft or kWh/sqm)
+      site: read(energyPoints.first->siteRef)
+      area: site->area
+      
+      if (area == null) do
+        consumption.map(row => do
+          {
+            ts: row["ts"],
+            consumption: row["v0"].round,
+            error: "Building area not defined"
+          }
+        end).toGrid
+      else do
+        consumption.map(row => do
+          kwh: row["v0"]
+          normalizedKwh: kwh / area
+          
+          {
+            ts: row["ts"],
+            consumption: kwh.round,
+            buildingArea: area,
+            normalizedConsumption: normalizedKwh.round(3),
+            unit: "kWh/sqft"
+          }
+        end).toGrid
+        .addColMeta("consumption", {dis: "Actual Consumption (kWh)"})
+        .addColMeta("normalizedConsumption", {dis: "Normalized (kWh/sqft)"})
+      end
+      
+    else
+      // Default: return raw consumption
+      consumption
+    end
+    
+    result
+  end
+  
+
+examples: [{name:"Weather normalization with HDD/CDD",description:"Normalize energy consumption by heating and cooling degree days",params:{equipmentFilter:"energy and equipRef->siteMeter",dateRange:"lastYear",normalizationType:"weather",weatherPoint:"@outsideTempSensor",baseTemp:65,rollupInterval:"1day"}},{name:"Occupancy normalization",description:"Normalize energy by number of occupants for per-person analysis",params:{equipmentFilter:"elecMeter and siteRef==@office",dateRange:"lastMonth",normalizationType:"occupancy",rollupInterval:"1day"}},{name:"Area normalization",description:"Calculate energy intensity (kWh per square foot)",params:{equipmentFilter:"energy and equipRef->mainMeter",dateRange:"lastMonth",normalizationType:"area",rollupInterval:"1mo"}},{name:"Monthly weather-normalized comparison",description:"Enable fair month-to-month comparisons accounting for weather",params:{equipmentFilter:"energy and siteRef->geoCity==\"Chicago\"",dateRange:"lastYear",normalizationType:"weather",weatherPoint:"@weatherStation",baseTemp:65,rollupInterval:"1mo"}}]

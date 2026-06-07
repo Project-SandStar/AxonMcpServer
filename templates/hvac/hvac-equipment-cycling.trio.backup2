@@ -1,0 +1,137 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @hvac-equipment-cycling
+name: "Equipment Short Cycling Detection"
+category: "hvac"
+description: "Detect equipment short cycling by identifying on/off cycles shorter than minimum thresholds, based on patterns from spk0Chiller_Cycling"
+tags: ["hvac","cycling","fault","equipment","runtime","maintenance","efficiency"]
+
+parameters: [{name:"equipmentFilter",type:"string",description:"Filter expression for equipment to analyze",required:T,examples:["chiller","ahu","boiler","equip and hvac"]},{name:"dateRange",type:"string",description:"Date range for cycling analysis",required:T,examples:["today","lastWeek","lastMonth","yesterday"]},{name:"minOnTime",type:"string",description:"Minimum on time before cycling is considered short (e.g., '5min', '10min')",default:"5min",examples:["3min","5min","10min","15min"]},{name:"minOffTime",type:"string",description:"Minimum off time before cycling is considered short (e.g., '5min', '10min')",default:"5min",examples:["3min","5min","10min","15min"]},{name:"statusPoint",type:"string",description:"Point tag pattern for status/run indicator (optional, will auto-detect if not provided)",required:F,examples:["run and status","enable and cmd","command"]}]
+
+template:
+  (equipFilter, dates, minOn: "5min", minOff: "5min", statusTag: null) => do
+    
+    // Read equipment
+    equips: readAll({{equipmentFilter}})
+    
+    if (equips.isEmpty) do
+      [{error: "No equipment found matching filter"}].toGrid
+    else do
+      
+      // Convert time thresholds to hours for comparison
+      minOnHours: {{minOnTime}}.to(1h)
+      minOffHours: {{minOffTime}}.to(1h)
+      
+      // Process each equipment
+      results: equips.map(equip => do
+        
+        equipName: equip->dis
+        equipId: equip->id
+        
+        // Find status point
+        statusPoint: if ({{statusPoint}} != null) do
+          readAll(point and equipRef==equipId and {{statusPoint}}).first(false)
+        else do
+          // Try common status point patterns
+          statusCandidates: readAll(point and equipRef==equipId)
+          statusCandidates.has("run and status").first(false) ?:
+          statusCandidates.has("enable and cmd").first(false) ?:
+          statusCandidates.has("command").first(false) ?:
+          statusCandidates.has("status").first(false)
+         end
+        
+        if (statusPoint == null) do
+          {
+            equipment: equipName,
+            error: "No status point found"
+          }
+        else do
+          
+          try do
+            // Find all on periods
+            onPeriods: statusPoint
+              .hisRead({{dateRange}})
+              .hisFindPeriods(v => v == true or v > 0)
+            
+            // Find all off periods  
+            offPeriods: statusPoint
+              .hisRead({{dateRange}})
+              .hisFindPeriods(v => v == false or v == 0)
+            
+            // Identify short on cycles
+            shortOnCycles: onPeriods.findAll(row => row["v0"].to(1h) < minOnHours)
+            
+            // Identify short off cycles
+            shortOffCycles: offPeriods.findAll(row => row["v0"].to(1h) < minOffHours)
+            
+            // Calculate cycling metrics
+            totalOnPeriods: onPeriods.size
+            totalOffPeriods: offPeriods.size
+            shortOnCount: shortOnCycles.size
+            shortOffCount: shortOffCycles.size
+            
+            // Calculate percentages
+            shortOnPct: if (totalOnPeriods > 0) ((shortOnCount.toFloat / totalOnPeriods) * 100).round(1) else 0 end
+            shortOffPct: if (totalOffPeriods > 0) ((shortOffCount.toFloat / totalOffPeriods) * 100).round(1) else 0 end
+            
+            // Determine severity
+            cyclingIssue: if (shortOnCount > 5 or shortOffCount > 5) "High"
+                          else if (shortOnCount > 2 or shortOffCount > 2) "Medium"
+                          else if (shortOnCount > 0 or shortOffCount > 0) "Low"
+                          else "None"
+                            end
+            
+            // Calculate average cycle duration
+            avgOnDuration: if (totalOnPeriods > 0) do
+              onPeriods.reduce(0, (sum, row) => sum + row["v0"].to(1h)) / totalOnPeriods
+            else
+              0
+            end
+            
+            avgOffDuration: if (totalOffPeriods > 0) do
+              offPeriods.reduce(0, (sum, row) => sum + row["v0"].to(1h)) / totalOffPeriods
+            else
+              0
+            end
+            
+            {
+              equipment: equipName,
+              totalCycles: totalOnPeriods,
+              shortOnCycles: shortOnCount,
+              shortOffCycles: shortOffCount,
+              shortOnPercent: shortOnPct,
+              shortOffPercent: shortOffPct,
+              avgOnDuration: (avgOnDuration * 60).round(1),
+              avgOffDuration: (avgOffDuration * 60).round(1),
+              severity: cyclingIssue,
+              statusPoint: statusPoint->dis
+            }
+          end catch (ex) do
+            {
+              equipment: equipName,
+              error: "Analysis failed: " + ex.toStr
+            }
+          end
+         end
+      end).toGrid
+      
+      // Add column metadata
+      results = results
+        .addColMeta("equipment", {dis: "Equipment"})
+        .addColMeta("totalCycles", {dis: "Total Cycles"})
+        .addColMeta("shortOnCycles", {dis: "Short On Cycles"})
+        .addColMeta("shortOffCycles", {dis: "Short Off Cycles"})
+        .addColMeta("shortOnPercent", {dis: "Short On %"})
+        .addColMeta("shortOffPercent", {dis: "Short Off %"})
+        .addColMeta("avgOnDuration", {dis: "Avg On Time (min)"})
+        .addColMeta("avgOffDuration", {dis: "Avg Off Time (min)"})
+        .addColMeta("severity", {dis: "Issue Severity"})
+      
+      // Sort by severity
+      results.sortr(row => if (row["shortOnCycles"] != null) row["shortOnCycles"] else 0 end)
+     end
+  
+  
+
+examples: [{name:"Chiller short cycling detection",description:"Detect short cycling on chillers with 5-minute thresholds",params:{equipmentFilter:"chiller",dateRange:"lastWeek",minOnTime:"5min",minOffTime:"5min"}},{name:"AHU cycling analysis",description:"Analyze AHU cycling patterns with 10-minute minimum runtime",params:{equipmentFilter:"ahu",dateRange:"today",minOnTime:"10min",minOffTime:"10min",statusPoint:"run and status"}},{name:"All HVAC equipment cycling review",description:"Comprehensive cycling analysis for all HVAC equipment",params:{equipmentFilter:"equip and hvac",dateRange:"lastMonth",minOnTime:"5min",minOffTime:"5min"}},{name:"Boiler cycling with custom thresholds",description:"Detect boiler short cycling with 15-minute minimum",params:{equipmentFilter:"boiler",dateRange:"lastWeek",minOnTime:"15min",minOffTime:"10min",statusPoint:"enable and cmd"}}]

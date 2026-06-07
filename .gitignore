@@ -1,0 +1,56 @@
+# ── Dependencies / build output ─────────────────────────────
+node_modules/
+dist/
+coverage/
+*.log
+*.tmp
+.DS_Store
+
+# ── Editor / OS ─────────────────────────────────────────────
+.vscode/
+.idea/
+
+# ── Env files (keep ONLY the example) ───────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Runtime config (contains credentials) ───────────────────
+# Real SkySpark connection configs live here and must never be committed.
+axon-config.json
+config/*.json
+config/*.backup
+config/backups/
+# ...but DO ship the templates:
+!config/*.example.json
+!config/README.md
+
+# ── Databases (Prisma / SQLite) ─────────────────────────────
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+prisma/dev.db
+prisma/*.db
+
+# ── Synced SkySpark functions (backend cache, regenerable) ──
+proj/
+
+# ── Caches & generated code ─────────────────────────────────
+.cache/
+.test-cache/
+/src/generated/prisma
+
+# ── Generated sync state ────────────────────────────────────
+.skyspark-sync.json
+.sync-metadata.json
+
+# ── Backups & stray debug / dump artifacts ──────────────────
+*.backup
+*.bak
+debug-*.txt
+*-state.txt
+load-project-caches.log
+
+# ── VSCode extension packaging ──────────────────────────────
+*.vsix

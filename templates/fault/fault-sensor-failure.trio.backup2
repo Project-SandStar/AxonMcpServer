@@ -1,0 +1,182 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @fault-sensor-failure
+name: "Sensor Failure Detection"
+category: "fault"
+description: "Detect failed, stuck, or erratic sensor readings based on statistical analysis"
+tags: ["fault","sensor","diagnostic","stuck","failure","validation"]
+
+parameters: [{name:"pointFilter",type:"string",description:"Filter expression for points to monitor",required:T,examples:["point and sensor and temp","point and sensor","sensor and (temp or pressure)"]},{name:"dateRange",type:"string",description:"Date range for analysis",required:T,examples:["today","yesterday","lastWeek"]},{name:"stuckThreshold",type:"number",description:"Number of consecutive identical readings to flag as stuck",default:12,examples:[6,12,24]},{name:"maxRateOfChange",type:"number",description:"Maximum acceptable rate of change per minute (% of range)",default:10,examples:[5,10,15]},{name:"outlierStdDev",type:"number",description:"Number of standard deviations for outlier detection",default:3,examples:[2,3,4]},{name:"minDataPoints",type:"number",description:"Minimum number of data points required for analysis",default:50,examples:[20,50,100]}]
+
+template:
+  (pointFilt, dates, stuckThresh: 12.0, maxRateChange: 10.0, outlierSd: 3.0, minData: 50.0) => do
+    
+    // Read all points to monitor
+    points: readAll({{pointFilter}})
+    
+    // Analyze each point for faults
+    results: points.map(point => do
+      
+      // Read historical data
+      history: point.hisRead({{dateRange}})
+      dataCount: history.size
+      
+      // Skip if insufficient data
+      if (dataCount < {{minDataPoints}}) do
+        {
+          pointId: point->id,
+          pointName: point->dis,
+          dataCount: dataCount,
+          status: "Insufficient Data",
+          issues: ["Less than " + {{minDataPoints}}.toStr + " data points"],
+          severity: "Info"
+        }
+      else do
+        
+        // Check for stuck sensor (consecutive identical readings)
+        stuckCount: history.toList.reduce({maxStreak: 0, currentStreak: 0, prevVal: na()}, (acc, row) => do
+          if (acc->prevVal == na()) do
+            {maxStreak: 0, currentStreak: 1, prevVal: row->v0}
+          else if (row->v0 == acc->prevVal) do
+            newStreak: acc->currentStreak + 1
+            {maxStreak: newStreak.max(acc->maxStreak), currentStreak: newStreak, prevVal: row->v0}
+          else do
+            {maxStreak: acc->maxStreak, currentStreak: 1, prevVal: row->v0}
+            end
+        end)->maxStreak
+        
+        isStuck: stuckCount >= {{stuckThreshold}}
+        
+        // Check for excessive rate of change (spikes/noise)
+        rates: history.toList.reduce([], (list, row, idx, all) => do
+          if (idx > 0) do
+            prev: all[idx - 1]
+            timeDiff: (row->ts - prev->ts).to(1min)
+            if (timeDiff > 0) do
+              rate: ((row->v0 - prev->v0).abs / timeDiff)
+              list.add({ts: row->ts, rate: rate})
+            else
+              list
+            end
+          else
+            list
+  
+        end)
+        
+        // Calculate statistics
+        values: history.map(r => r->v0).toList
+        avgVal: history.hisRollup(avg)->v0
+        minVal: history.hisRollup(min)->v0
+        maxVal: history.hisRollup(max)->v0
+        valueRange: maxVal - minVal
+        
+        // Calculate standard deviation
+        variance: values.reduce(0, (sum, val) => sum + ((val - avgVal) * (val - avgVal))) / dataCount
+        stdDev: variance.pow(0.5)
+        
+        // Detect outliers (values beyond N standard deviations)
+        outlierThreshold: {{outlierStdDev}} * stdDev
+        outliers: history.findAll(r => (r->v0 - avgVal).abs > outlierThreshold)
+        outlierCount: outliers.size
+        outlierRate: (outlierCount.to(1f) / dataCount) * 100
+        
+        hasOutliers: outlierRate > 5.0  // More than 5% outliers
+        
+        // Check for excessive rate of change
+        if (rates.isEmpty.not) do
+          maxRate: rates.reduce(0, (max, item) => item->rate.max(max))
+          acceptableRate: if (valueRange > 0) (valueRange * {{maxRateOfChange}} / 100.0) else 1.0 end
+          excessiveRate: maxRate > acceptableRate
+        else do
+          excessiveRate: false
+          maxRate: 0
+  
+        
+        // Check for flat line (no variation)
+        isFlat: valueRange < (avgVal * 0.01)  // Less than 1% variation
+        
+        // Check for missing data gaps
+        expectedInterval: if (dataCount > 1) do
+          totalTime: (history.last->ts - history.first->ts).to(1min)
+          totalTime / (dataCount - 1)
+        else
+          5.0  // Assume 5 min default
+  
+        
+        gaps: history.toList.reduce([], (list, row, idx, all) => do
+          if (idx > 0) do
+            prev: all[idx - 1]
+            gap: (row->ts - prev->ts).to(1min)
+            if (gap > expectedInterval * 3) do
+              list.add({start: prev->ts, end: row->ts, duration: gap})
+            else
+              list
+  
+          else
+            list
+  
+        end)
+        
+        hasGaps: gaps.isEmpty.not
+        
+        // Compile issues
+        issues: [
+          if (isStuck) "Stuck at " + stuckCount.toStr + " consecutive readings" else na() end,
+          if (hasOutliers) outlierRate.round(1).toStr + "% outliers detected" else na() end,
+          if (excessiveRate) "Excessive rate of change: " + maxRate.round(2).toStr else na() end,
+          if (isFlat) "Flat line - no variation" else na() end,
+          if (hasGaps) gaps.size.toStr + " data gaps > " + (expectedInterval * 3).round(0).toStr + " min" else na() end
+        ].findAll(v => v != na())
+        
+        // Determine overall status and severity
+        hasFault: isStuck or hasOutliers or excessiveRate or isFlat
+        
+        severity: if (isStuck or isFlat) "Critical"
+                 else if (hasOutliers and outlierRate > 15.0) "High"
+                 else if (excessiveRate or (hasOutliers and outlierRate > 5.0)) "Medium"
+                 else if (hasGaps) "Low"
+                 else "Normal"    end
+        
+        status: if (hasFault) "Fault Detected" else if (hasGaps) "Communication Issues" else "OK"  end
+        
+        {
+          pointId: point->id,
+          pointName: point->dis,
+          pointType: if (point.has("temp")) "Temperature" 
+                    else if (point.has("pressure")) "Pressure"
+                    else if (point.has("flow")) "Flow"
+                    else if (point.has("humidity")) "Humidity"
+                    else "Other"    end,
+          dataCount: dataCount,
+          avgValue: avgVal.round(2),
+          minValue: minVal.round(2),
+          maxValue: maxVal.round(2),
+          stdDev: stdDev.round(2),
+          stuckReadings: stuckCount,
+          outlierCount: outlierCount,
+          outlierRate: outlierRate.round(1),
+          maxRateOfChange: if(maxRate != null) maxRate.round(2) else null,
+          dataGaps: gaps.size,
+          status: status,
+          severity: severity,
+          issues: issues.join("; "),
+          recommendation: if (isStuck) "Check sensor wiring and calibration"
+                         else if (isFlat) "Sensor may be disconnected or failed"
+                         else if (hasOutliers) "Investigate sensor accuracy and mounting"
+                         else if (excessiveRate) "Check for electrical interference"
+                         else if (hasGaps) "Verify BACnet/network connectivity"
+                         else "Continue monitoring"     end
+        }
+  
+    end).toGrid
+    
+    results.addMeta({
+      analysisRange: {{dateRange}},
+      pointsAnalyzed: points.size,
+      faultsDetected: results.findAll(r => r->status == "Fault Detected").size
+    })
+  
+  
+
+examples: [{name:"Check temperature sensors today",description:"Monitor all temperature sensors for faults today",params:{pointFilter:"point and sensor and temp",dateRange:"today",stuckThreshold:12,maxRateOfChange:10,outlierStdDev:3,minDataPoints:50}},{name:"Weekly sensor health check",description:"Comprehensive sensor fault detection for the past week",params:{pointFilter:"point and sensor",dateRange:"lastWeek",stuckThreshold:24,maxRateOfChange:15,outlierStdDev:3,minDataPoints:100}},{name:"Critical sensor validation",description:"Strict validation for critical measurement points",params:{pointFilter:"sensor and (temp or pressure or flow)",dateRange:"yesterday",stuckThreshold:6,maxRateOfChange:5,outlierStdDev:2,minDataPoints:50}}]

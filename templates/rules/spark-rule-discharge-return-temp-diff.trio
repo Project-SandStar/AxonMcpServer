@@ -1,0 +1,152 @@
+id:@spark-rule-discharge-return-temp-diff
+name:"Spark Rule - Discharge Return Temperature Differential"
+category:"rules"
+description:"Detects when discharge temperature minus return temperature is greater than a specified threshold for longer than a specified duration. This creates a Spark rule that monitors HVAC equipment for excessive temperature differentials."
+tags:["spark", "rule", "temperature", "hvac", "ahu", "fault", "defcomp"]
+
+parameters:[
+  {
+    name:"ruleName"
+    type:"string"
+    description:"Name for the spark rule function"
+    required:true
+    examples:["dischargeTempDiffAlert", "ahuTempDifferential", "excessiveTempDiff"]
+  }
+  {
+    name:"dischargePointFilter"
+    type:"string"
+    description:"Haystack filter to identify the discharge temperature sensor point"
+    required:false
+    default:"point and discharge and temp and sensor"
+    examples:["point and discharge and temp and sensor", "point and leaving and temp and sensor"]
+  }
+  {
+    name:"returnPointFilter"
+    type:"string"
+    description:"Haystack filter to identify the return temperature sensor point"
+    required:false
+    default:"point and return and temp and sensor"
+    examples:["point and return and temp and sensor", "point and entering and temp and sensor"]
+  }
+  {
+    name:"tempDifferentialThreshold"
+    type:"number"
+    description:"Temperature differential threshold in degrees (discharge - return)"
+    required:false
+    default:"5"
+    examples:["5", "10", "3", "7"]
+  }
+  {
+    name:"durationThreshold"
+    type:"string"
+    description:"Duration that the condition must persist before alerting"
+    required:false
+    default:"10min"
+    examples:["10min", "15min", "5min", "30min"]
+  }
+  {
+    name:"equipmentFilter"
+    type:"string"
+    description:"Filter for equipment type this rule applies to"
+    required:false
+    default:"ahu"
+    examples:["ahu", "rtu", "equip and hvac"]
+  }
+  {
+    name:"helpText"
+    type:"string"
+    description:"Help text describing what this rule does"
+    required:false
+    default:"Detects when discharge temperature exceeds return temperature by more than threshold for extended period"
+    examples:["Detects excessive temperature differential indicating potential equipment issue", "Monitors AHU for abnormal discharge-return temperature spread"]
+  }
+]
+
+template:
+  // {{ruleName}} - Spark Rule
+  // Help: {{helpText}}
+  // Target: {{equipmentFilter}}
+  defcomp
+    dis: "{{ruleName}}"
+    help: "{{helpText}}"
+    ruleOn: {{equipmentFilter}}
+    sparkRule
+    target: {}
+    date:   {}
+    out:    {readonly}
+    dischargeTemp: {bind:"{{dischargePointFilter}} and equipRef=={{target->id}}"}
+    returnTemp:    {bind:"{{returnPointFilter}} and equipRef=={{target->id}}"}
+    tempDiffThreshold: {bindTuning: "tempDiffThreshold", defVal: {{tempDifferentialThreshold}}}
+    durationThreshold: {bindTuning: "durationThreshold", defVal: {{durationThreshold}}}
+    do
+      // Read historical data for both temperature points
+      dischargeHis: dischargeTemp.hisRead(date)
+      returnHis: returnTemp.hisRead(date)
+      
+      // Calculate temperature differential (discharge - return)
+      tempDiff: dischargeHis.hisJoin(returnHis, (d, r) => d - r)
+      
+      // Find periods where differential exceeds threshold
+      excessiveDiff: tempDiff.hisFindPeriods(x => x > tempDiffThreshold)
+      
+      // Find periods that exceed the duration threshold
+      his: excessiveDiff.hisFindAll(x => x > durationThreshold)
+      
+      out = his
+    end
+  end
+
+examples:[
+  {
+    name:"AHU Temperature Differential"
+    description:"Monitor AHU for excessive discharge-return temperature differential"
+    params:{
+      ruleName:"ahuTempDiffAlert"
+      dischargePointFilter:"point and discharge and temp and sensor"
+      returnPointFilter:"point and return and temp and sensor"
+      tempDifferentialThreshold:"5"
+      durationThreshold:"10min"
+      equipmentFilter:"ahu"
+      helpText:"Alerts when AHU discharge temperature exceeds return temperature by more than 5 degrees for longer than 10 minutes, indicating potential heating/cooling system issues"
+    }
+  }
+  {
+    name:"RTU Temperature Monitoring"
+    description:"Monitor rooftop unit for temperature spread issues"
+    params:{
+      ruleName:"rtuTempSpreadAlert"
+      dischargePointFilter:"point and leaving and temp and sensor"
+      returnPointFilter:"point and entering and temp and sensor"
+      tempDifferentialThreshold:"7"
+      durationThreshold:"15min"
+      equipmentFilter:"rtu"
+      helpText:"Monitors RTU for excessive temperature spread between leaving and entering air, indicating possible equipment malfunction"
+    }
+  }
+  {
+    name:"HVAC High Differential Alert"
+    description:"General HVAC equipment temperature differential monitoring"
+    params:{
+      ruleName:"hvacHighTempDiff"
+      dischargePointFilter:"point and discharge and temp and sensor"
+      returnPointFilter:"point and return and temp and sensor"
+      tempDifferentialThreshold:"10"
+      durationThreshold:"5min"
+      equipmentFilter:"equip and hvac"
+      helpText:"Detects when HVAC equipment has abnormally high temperature differential (>10°) for more than 5 minutes"
+    }
+  }
+]
+
+notes:[
+  "This creates a Spark rule component that can be bound to HVAC equipment"
+  "The rule monitors discharge and return temperature sensors"
+  "Calculates the differential: discharge temp - return temp"
+  "Generates alerts when differential exceeds threshold for the specified duration"
+  "The target slot specifies which equipment this rule monitors"
+  "The bindTuning allows site-specific threshold configuration"
+  "Use readAll(func and sparkRule) to find all spark rules"
+  "Ensure both discharge and return temperature points exist on target equipment"
+  "This rule is useful for detecting heating/cooling system malfunctions"
+  "Can indicate issues such as: excessive heating, cooling problems, or sensor failures"
+]

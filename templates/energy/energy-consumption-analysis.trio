@@ -1,0 +1,53 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @energy-consumption-analysis
+name: "Energy Consumption Analysis"
+category: "energy"
+description: "Analyze energy consumption over time periods with rollup intervals (hourly, daily, monthly, yearly)"
+tags: ["energy","consumption","analysis","meter","kwh","rollup"]
+
+parameters: [{name:"equipmentFilter",type:"string",description:"Filter expression for energy meters (e.g., 'elecMeter', 'energy and equipRef->siteMeter')",required:T,examples:["elecMeter","energy and equipRef->siteMeter","energy and equipRef->mainMeter"]},{name:"dateRange",type:"string",description:"Date range for analysis (e.g., 'today', 'lastMonth', 'lastYear', or specific dates)",required:T,examples:["today","lastWeek","lastMonth","lastYear","2024-01-01..2024-12-31"]},{name:"rollupInterval",type:"string",description:"Interval for data rollup (1h, 1day, 1wk, 1mo, 1yr)",default:"1day",examples:["1h","1day","1wk","1mo","1yr"]},{name:"includeMetadata",type:"boolean",description:"Include equipment metadata (site, equipment names) in output",default:T}]
+
+template:
+  (equipFilter, dates, interval: "1day", includeMeta: true) => do
+    
+    // Read equipment matching filter
+    equips: readAll({{equipmentFilter}})
+    
+    // Get energy points for each equipment
+    points: equips.equipToPoints.has("energy")
+    
+    // Read and rollup historical data
+    consumption: points.hisRead({{dateRange}}).hisRollup(sum, {{rollupInterval}})
+    
+    // Format output grid with proper column metadata
+    result: consumption.map(row => do
+      output: {
+        ts: row["ts"],
+        consumption: row["v0"].round,
+        unit: "kWh"
+      }
+      
+      // Add equipment metadata if requested
+      if (includeMeta) do
+        equipRef: row.id.equipRef
+        output = output.set("equipName", equipRef->dis)
+        output = output.set("siteName", equipRef->siteRef->dis)
+      end
+      
+      output
+    end).toGrid
+    
+    // Add column metadata for better display
+    result = result.addColMeta("consumption", {dis: "Energy Consumption (kWh)"})
+    if (includeMeta) do
+      result = result.addColMeta("equipName", {dis: "Equipment"})
+      result = result.addColMeta("siteName", {dis: "Site"})
+    end
+    
+    result
+  end
+  
+
+examples: [{name:"Monthly consumption for main meters",description:"Get monthly energy consumption for all main site meters",params:{equipmentFilter:"energy and equipRef->siteMeter",dateRange:"lastYear",rollupInterval:"1mo",includeMetadata:T}},{name:"Daily consumption for specific meter",description:"Get daily consumption for a specific meter over the last week",params:{equipmentFilter:"energy and equipRef->dis==\"Main Meter\"",dateRange:"lastWeek",rollupInterval:"1day",includeMetadata:F}},{name:"Hourly consumption for current day",description:"Get hourly consumption pattern for today",params:{equipmentFilter:"elecMeter",dateRange:"today",rollupInterval:"1h",includeMetadata:T}}]

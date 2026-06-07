@@ -1,0 +1,110 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @energy-baseline-comparison
+name: "Energy Baseline Comparison"
+category: "energy"
+description: "Compare current energy consumption against baseline (previous year, budget, or target)"
+tags: ["energy","baseline","comparison","savings","variance","yoy"]
+
+parameters: [{name:"equipmentFilter",type:"string",description:"Filter expression for energy meters",required:T,examples:["elecMeter","energy and equipRef->siteMeter"]},{name:"currentPeriod",type:"string",description:"Current period date range",required:T,examples:["thisMonth","thisYear","lastMonth","2024-01-01..2024-12-31"]},{name:"baselinePeriod",type:"string",description:"Baseline period date range (typically same period last year)",required:T,examples:["lastYear","2023-01-01..2023-12-31"]},{name:"rollupInterval",type:"string",description:"Interval for comparison aggregation",default:"1mo",examples:["1day","1wk","1mo"]},{name:"showPercentChange",type:"boolean",description:"Include percent change calculations in output",default:T}]
+
+template:
+  (equipFilter, current, baseline, interval: "1mo", showPercent: true) => do
+    
+    // Read energy points
+    points: readAll({{equipmentFilter}})
+    
+    // Get current period consumption
+    currentData: points
+      .hisRead({{currentPeriod}})
+      .hisRollup(sum, {{rollupInterval}})
+      .map(row => {
+        period: row["ts"].format("MMM YYYY"),
+        current: row["v0"].round
+      })
+      .toGrid
+    
+    // Get baseline period consumption
+    baselineData: try do
+      points
+        .hisRead({{baselinePeriod}})
+        .hisRollup(sum, {{rollupInterval}})
+        .map(row => {
+          period: row["ts"].format("MMM YYYY"),
+          baseline: row["v0"].round
+        })
+        .toGrid
+    end catch
+      // If baseline data not available, return empty grid
+      [].toGrid
+    end
+    
+    // Combine current and baseline data
+    result: if (baselineData.isEmpty) do
+      currentData.addColMeta("current", {dis: "Current (kWh)"})
+    else do
+      // Join on period or index
+      combined: currentData.zip(baselineData, (curr, base) => do
+        variance: curr["current"] - base["baseline"]
+        percentChange: if (base["baseline"] != 0) do
+          ((variance / base["baseline"]) * 100).round(1)
+        else
+          na()
+        end
+        
+        output: {
+          period: curr["period"],
+          current: curr["current"],
+          baseline: base["baseline"],
+          variance: variance.round,
+          varStatus: if (variance > 0) "Over" else if (variance < 0) "Under" else "Equal" 
+        }
+        
+        if (showPercent) do
+          output = output.set("percentChange", percentChange)
+        end
+        
+        output
+      end).toGrid
+      
+      // Add column metadata
+      combined = combined
+        .addColMeta("current", {dis: "Current (kWh)"})
+        .addColMeta("baseline", {dis: "Baseline (kWh)"})
+        .addColMeta("variance", {dis: "Variance (kWh)"})
+      
+      if (showPercent) do
+        combined = combined.addColMeta("percentChange", {dis: "Change (%)"})
+      end
+      
+      combined
+    end
+    
+    // Add summary row
+    totalCurrent: currentData.reduce(0, (sum, row) => sum + row["current"])
+    totalBaseline: baselineData.reduce(0, (sum, row) => sum + row["baseline"])
+    totalVariance: totalCurrent - totalBaseline
+    totalPercent: if (totalBaseline != 0) do
+      ((totalVariance / totalBaseline) * 100).round(1)
+    else
+      na()
+    end
+    
+    summaryRow: {
+      period: "TOTAL",
+      current: totalCurrent.round,
+      baseline: totalBaseline.round,
+      variance: totalVariance.round,
+      varStatus: if (totalVariance > 0) "Over" else if (totalVariance < 0) "Under" else "Equal" 
+    }
+    
+    if (showPercent) do
+      summaryRow = summaryRow.set("percentChange", totalPercent)
+  
+    
+    result.addRow(summaryRow)
+  
+  
+
+examples: [{name:"Year-over-year monthly comparison",description:"Compare this year's monthly consumption to last year",params:{equipmentFilter:"energy and equipRef->siteMeter",currentPeriod:"thisYear",baselinePeriod:"lastYear",rollupInterval:"1mo",showPercentChange:T}},{name:"Month-over-month comparison",description:"Compare current month to previous month",params:{equipmentFilter:"elecMeter",currentPeriod:"thisMonth",baselinePeriod:"lastMonth",rollupInterval:"1day",showPercentChange:T}},{name:"Current vs budget baseline",description:"Compare actual consumption to budget/target period",params:{equipmentFilter:"energy and siteRef->dis==\"Building A\"",currentPeriod:"2024-01-01..2024-12-31",baselinePeriod:"2023-01-01..2023-12-31",rollupInterval:"1mo",showPercentChange:F}}]

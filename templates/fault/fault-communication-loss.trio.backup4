@@ -1,0 +1,189 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @fault-communication-loss
+name: "Communication Loss Detection"
+category: "fault"
+description: "Detect points that have stopped communicating or have intermittent communication failures"
+tags: ["fault","communication","network","bacnet","data-loss","connectivity"]
+
+parameters: [{name:"pointFilter",type:"string",description:"Filter expression for points to monitor",required:T,examples:["point","point and sensor","point and (temp or pressure)"]},{name:"dateRange",type:"string",description:"Date range for communication analysis",required:T,examples:["today","yesterday","lastWeek"]},{name:"expectedInterval",type:"number",description:"Expected data collection interval in minutes",default:5,examples:[1,5,15]},{name:"maxGapMultiplier",type:"number",description:"Multiplier of expected interval to flag as communication gap",default:3,examples:[2,3,5]},{name:"minCoveragePercent",type:"number",description:"Minimum acceptable data coverage percentage",default:90,examples:[80,90,95]},{name:"groupByDevice",type:"boolean",description:"Group results by device/controller to identify network issues",default:T}]
+
+template:
+  (pointFilt, dates, expectedInt: 5.0, gapMult: 3.0, minCov: 90.0, groupDev: true) => do
+    
+    // Read all points
+    points: readAll({{pointFilter}})
+    
+    // Analyze each point
+    pointResults: points.map(point => do
+      
+      // Read historical data
+      history: point.hisRead({{dateRange}})
+      dataCount: history.size
+      
+      // Calculate expected data points
+      totalMinutes: (({{dateRange}}.parseSpan.to(1min))).to(1f)
+      expectedPoints: totalMinutes / {{expectedInterval}}
+      coverage: if (expectedPoints > 0) (dataCount.to(1f) / expectedPoints) * 100 else 0 
+      
+      if (dataCount == 0) do
+        // Complete communication loss
+        lastSeenTime: na()
+        timeSinceData: na()
+        
+        {
+          pointId: point->id,
+          pointName: point->dis,
+          pointType: if (point.has("temp")) "Temperature" 
+                    else if (point.has("pressure")) "Pressure"
+                    else if (point.has("flow")) "Flow"
+                    else if (point.has("cmd")) "Command"
+                    else "Other"    end,
+          deviceRef: if (point.has("deviceRef")) point->deviceRef else na() ,
+          status: "No Communication",
+          severity: "Critical",
+          dataCount: 0,
+          expectedCount: expectedPoints.round(0),
+          coverage: 0.0,
+          gaps: 0,
+          longestGapMinutes: totalMinutes.round(0),
+          lastSeenMinutesAgo: na(),
+          issues: ["No data received during entire period"],
+          recommendation: "Check device power, network connectivity, and BACnet configuration"
+        }
+      else do
+        
+        // Calculate actual intervals and find gaps
+        intervals: history.toList.reduce([], (list, row, idx, all) => do
+          if (idx > 0) do
+            prev: all[idx - 1]
+            interval: (row->ts - prev->ts).to(1min)
+            list.add({start: prev->ts, end: row->ts, duration: interval})
+          else
+            list
+  
+        end)
+        
+        maxAllowedGap: {{expectedInterval}} * {{maxGapMultiplier}}
+        gaps: intervals.findAll(i => i->duration > maxAllowedGap)
+        gapCount: gaps.size
+        
+        // Find longest gap
+        longestGap: if (gaps.isEmpty.not) do
+          gaps.reduce(gaps[0], (max, gap) => if (gap->duration > max->duration) gap else max )
+        else
+          na()
+  
+        
+        longestGapDuration: if (longestGap != na()) longestGap->duration else 0 
+        
+        // Calculate total gap time
+        totalGapTime: gaps.reduce(0, (sum, gap) => sum + gap->duration)
+        gapTimePercent: (totalGapTime / totalMinutes) * 100
+        
+        // Check time since last data
+        lastSeen: history.last->ts
+        timeSinceData: (now() - lastSeen).to(1min).round(0)
+        
+        // Check for intermittent communication (many small gaps)
+        avgInterval: if (intervals.isEmpty.not) do
+          intervals.reduce(0, (sum, i) => sum + i->duration) / intervals.size
+        else
+          {{expectedInterval}}
+  
+        
+        isIntermittent: gapCount > 10 and avgInterval > {{expectedInterval}} * 1.5
+        
+        // Identify issues
+        lowCoverage: coverage < {{minCoveragePercent}}
+        hasSignificantGap: longestGapDuration > 60  // > 1 hour
+        recentLoss: timeSinceData > maxAllowedGap * 2
+        
+        issues: [
+          if (lowCoverage) "Data coverage: " + coverage.round(1).toStr + "%" else na() ,
+          if (gapCount > 0) gapCount.toStr + " communication gaps detected" else na() ,
+          if (hasSignificantGap) "Longest gap: " + longestGapDuration.round(0).toStr + " minutes" else na() ,
+          if (isIntermittent) "Intermittent communication pattern" else na() ,
+          if (recentLoss) "Last data " + timeSinceData.toStr + " minutes ago" else na() ,
+          if (gapTimePercent > 20) "Offline " + gapTimePercent.round(0).toStr + "% of time" else na() 
+        ].findAll(v => v != na())
+        
+        // Determine severity
+        hasFault: lowCoverage or hasSignificantGap or recentLoss
+        
+        severity: if (coverage < 50 or longestGapDuration > 360) "Critical"
+                 else if (coverage < 80 or longestGapDuration > 120 or recentLoss) "High"
+                 else if (lowCoverage or gapCount > 5) "Medium"
+                 else if (gapCount > 0) "Low" else "Normal"
+        
+        status: if (recentLoss) "Recent Communication Loss"
+               else if (isIntermittent) "Intermittent Communication"
+               else if (hasSignificantGap) "Significant Gaps"
+               else if (gapCount > 0) "Minor Gaps" else "Good Communication"
+        
+        {
+          pointId: point->id,
+          pointName: point->dis,
+          pointType: if (point.has("temp")) "Temperature" 
+                    else if (point.has("pressure")) "Pressure"
+                    else if (point.has("flow")) "Flow"
+                    else if (point.has("cmd")) "Command"
+                    else "Other"    end,
+          deviceRef: if (point.has("deviceRef")) point->deviceRef else na() ,
+          status: status,
+          severity: severity,
+          dataCount: dataCount,
+          expectedCount: expectedPoints.round(0),
+          coverage: coverage.round(1),
+          gaps: gapCount,
+          longestGapMinutes: longestGapDuration.round(0),
+          totalGapMinutes: totalGapTime.round(0),
+          avgIntervalMinutes: avgInterval.round(1),
+          lastSeenMinutesAgo: timeSinceData,
+          issues: issues.join("; "),
+          recommendation: if (recentLoss) "Investigate recent network or device failure"
+                         else if (isIntermittent) "Check network stability and device configuration"
+                         else if (hasSignificantGap) "Review network logs for time of gap"
+                         else if (lowCoverage) "Verify polling rate and network capacity" else "Continue monitoring"
+        }
+  
+    end).toGrid
+    
+    // Group by device if requested
+    results: if ({{groupByDevice}}) do
+      // Add device-level summary
+      devices: pointResults.map(r => r->deviceRef).findAll(v => v != na()).unique
+      
+      deviceSummary: devices.map(devRef => do
+        devPoints: pointResults.findAll(r => r->deviceRef == devRef)
+        
+        {
+          deviceId: devRef,
+          totalPoints: devPoints.size,
+          criticalPoints: devPoints.findAll(p => p->severity == "Critical").size,
+          highPoints: devPoints.findAll(p => p->severity == "High").size,
+          avgCoverage: devPoints.reduce(0, (sum, p) => sum + p->coverage) / devPoints.size,
+          status: if (devPoints.findAll(p => p->severity == "Critical").size > 0) "Device Issue"
+                 else if (devPoints.findAll(p => p->severity == "High").size > devPoints.size * 0.3) "Partial Failure"
+                 else "OK"  end
+        }
+      end).toGrid
+      
+      pointResults.addMeta({deviceSummary: deviceSummary})
+    else
+      pointResults
+  
+    
+    results.addMeta({
+      analysisRange: {{dateRange}},
+      expectedInterval: {{expectedInterval}},
+      maxGapThreshold: {{expectedInterval}} * {{maxGapMultiplier}},
+      pointsChecked: points.size,
+      criticalIssues: results.findAll(r => r->severity == "Critical").size,
+      pointsWithGaps: results.findAll(r => r->gaps > 0).size
+    })
+  
+  
+
+examples: [{name:"Daily communication check",description:"Monitor all points for communication issues today",params:{pointFilter:"point",dateRange:"today",expectedInterval:5,maxGapMultiplier:3,minCoveragePercent:90,groupByDevice:T}},{name:"Weekly network health",description:"Analyze communication patterns over the past week",params:{pointFilter:"point and sensor",dateRange:"lastWeek",expectedInterval:5,maxGapMultiplier:5,minCoveragePercent:85,groupByDevice:T}},{name:"Critical point monitoring",description:"Strict monitoring for critical measurement points",params:{pointFilter:"point and (temp or pressure) and critical",dateRange:"yesterday",expectedInterval:1,maxGapMultiplier:2,minCoveragePercent:95,groupByDevice:F}}]

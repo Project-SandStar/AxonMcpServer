@@ -1,0 +1,123 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @data-bulk-update
+name: "Bulk Metadata Update"
+category: "data"
+description: "Bulk update point or equipment metadata tags for configuration management"
+tags: ["data","bulk-update","metadata","tags","configuration","management"]
+
+parameters: [{name:"targetFilter",type:"string",description:"Filter expression for records to update",required:T,examples:["point and temp and not unit","equip and ahu and not zone","point and sensor"]},{name:"updateMode",type:"string",description:"Update mode (add, remove, set)",required:T,examples:["add","remove","set"]},{name:"tagsToUpdate",type:"object",description:"Tags to add, remove, or set with their values",required:T,default:{newTag:"newValue"}},{name:"dryRun",type:"boolean",description:"Preview changes without applying them",default:T},{name:"maxRecords",type:"number",description:"Maximum number of records to update (safety limit)",default:100,examples:[50,100,500]},{name:"requireConfirmation",type:"boolean",description:"Require explicit confirmation before applying updates",default:T}]
+
+template:
+  (targetFilt, mode, tags, dryR: true, maxRecs: 100.0, reqConfirm: true) => do
+    
+    // Read target records
+    targets: readAll({{targetFilter}}).limit({{maxRecords}}.toInt)
+    
+    if (targets.isEmpty) do
+      {
+        status: "No Records Found",
+        message: "No records matched the filter expression",
+        filter: {{targetFilter}},
+        recordsToUpdate: 0,
+        dryRun: {{dryRun}}
+      }.toGrid
+    else do
+      
+      // Preview changes
+      preview: targets.map(record => do
+        
+        // Build update based on mode
+        changes: if ({{updateMode}} == "add") do
+          // Add new tags or update existing
+          {{tagsToUpdate}}.keys.map(key => do
+            oldVal: if (record.has(key)) record.get(key) else na() end
+            newVal: {{tagsToUpdate}}.get(key)
+            {
+              tag: key,
+              operation: "add",
+              oldValue: if(oldVal != null) oldVal.toStr else null,
+              newValue: newVal.toStr,
+              willChange: oldVal != newVal
+            }
+          end).toList
+        else if ({{updateMode}} == "remove") do
+          // Remove tags
+          {{tagsToUpdate}}.keys.map(key => do
+            hasTag: record.has(key)
+            {
+              tag: key,
+              operation: "remove",
+              oldValue: if (hasTag) record.get(key).toStr else "N/A" end,
+              newValue: "N/A",
+              willChange: hasTag
+            }
+          end).toList
+        else if ({{updateMode}} == "set") do
+          // Set tags, removing old value completely
+          {{tagsToUpdate}}.keys.map(key => do
+            oldVal: if (record.has(key)) record.get(key) else na() end
+            newVal: {{tagsToUpdate}}.get(key)
+            {
+              tag: key,
+              operation: "set",
+              oldValue: if(oldVal != null) oldVal.toStr else null,
+              newValue: newVal.toStr,
+              willChange: true  // Always changes in set mode
+            }
+          end).toList
+        else
+          []
+          end
+        
+        willBeModified: changes.findAll(c => c->willChange).isEmpty.not
+        
+        {
+          recordId: record->id.toStr,
+          recordName: record->dis,
+          recordType: if (record.has("point")) "Point"
+                     else if (record.has("equip")) "Equipment"
+                     else if (record.has("site")) "Site"
+                     else "Other"   end,
+          willBeModified: willBeModified,
+          changesCount: changes.findAll(c => c->willChange).size,
+          changes: changes.map(c => c->tag + ": " + c->oldValue + " -> " + c->newValue).join("; ")
+        }
+      end).toGrid
+      
+      // Count modifications
+      recordsToModify: preview.findAll(r => r->willBeModified).size
+      totalChanges: preview.reduce(0, (sum, r) => sum + r->changesCount)
+      
+      // Apply updates if not dry run and conditions met
+      applied: if ({{dryRun}}.not) do
+        if ({{requireConfirmation}}) do
+          "Updates require manual confirmation - set requireConfirmation=false to apply"
+        else do
+          // In a real implementation, this would use commit() or similar
+          // For safety, this template only previews changes
+          "SIMULATION: Would update " + recordsToModify.toStr + " records with " + totalChanges.toStr + " changes"
+        end
+      else
+        "Dry run - no changes applied"
+      end
+      
+      // Return preview with metadata
+      preview.addMeta({
+        status: if ({{dryRun}}) "Preview Only" else if ({{requireConfirmation}}) "Confirmation Required" else "Applied"  end,
+        updateMode: {{updateMode}},
+        tagsToUpdate: {{tagsToUpdate}}.keys.join(", "),
+        recordsMatched: targets.size,
+        recordsToModify: recordsToModify,
+        totalChanges: totalChanges,
+        dryRun: {{dryRun}},
+        requireConfirmation: {{requireConfirmation}},
+        appliedResult: applied,
+        warning: if (recordsToModify > 50) "Large update - review carefully before applying" else "OK" end
+      })
+  
+  
+  
+
+examples: [{name:"Add units to temperature points",description:"Add missing unit tags to temperature sensor points (preview only)",params:{targetFilter:"point and temp and sensor and not unit",updateMode:"add",tagsToUpdate:{unit:"°F"},dryRun:T,maxRecords:100,requireConfirmation:T}},{name:"Set zone references for VAV boxes",description:"Bulk assign zone references to VAV equipment",params:{targetFilter:"equip and vav and not zoneRef",updateMode:"set",tagsToUpdate:{zoneRef:"@defaultZone",configured:"true"},dryRun:T,maxRecords:50,requireConfirmation:T}},{name:"Remove deprecated tags",description:"Clean up deprecated metadata tags from old system",params:{targetFilter:"point and legacyTag",updateMode:"remove",tagsToUpdate:{legacyTag:N,oldSystemId:N},dryRun:T,maxRecords:200,requireConfirmation:T}}]

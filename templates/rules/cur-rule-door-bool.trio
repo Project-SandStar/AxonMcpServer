@@ -1,0 +1,105 @@
+id:@cur-rule-door-bool
+name:"Cur Rule - Door Boolean Conversion"
+category:"rules"
+description:"Converts door sensor string values ('open'/'closed') to boolean values. This creates a current value rule that watches for changes and converts to true/false."
+tags:["cur", "rule", "door", "boolean", "conversion", "defcomp"]
+
+parameters:[
+  {
+    name:"ruleName"
+    type:"string"
+    description:"Name for the current value rule function"
+    required:true
+    examples:["doorBoolConverter", "doorStatusToBool", "doorOpenBoolean"]
+  }
+  {
+    name:"inputPointFilter"
+    type:"string"
+    description:"Haystack filter to identify the input door sensor point"
+    required:true
+    default:"point and door"
+    examples:["point and door", "point and door and sensor", "point and door and entrance"]
+  }
+  {
+    name:"outputPointFilter"
+    type:"string"
+    description:"Haystack filter to identify the output boolean point"
+    required:true
+    default:"point and doorBool"
+    examples:["point and doorBool", "point and door and bool", "point and doorOpen"]
+  }
+  {
+    name:"openValue"
+    type:"string"
+    description:"String value that represents 'open' state"
+    required:false
+    default:"open"
+    examples:["open", "Open", "1", "true"]
+  }
+  {
+    name:"helpText"
+    type:"string"
+    description:"Help text describing what this rule does"
+    required:false
+    default:"Converts door sensor string to boolean (open=true, closed=false)"
+    examples:["Converts door sensor string to boolean", "Maps door status to true/false"]
+  }
+]
+
+template:
+  // {{ruleName}} - Cur Rule
+  // Help: {{helpText}}
+  // To make rule ready define: dis, help, ruleOn
+  defcomp
+    dis: "{{ruleName}}"
+    help: "{{helpText}}"
+    ruleOn
+    curRule
+    target: {}
+    in:  {bind:"{{inputPointFilter}} and equipRef=={{target->id}}", watch}
+    out: {bindOut:"{{outputPointFilter}} and equipRef=={{target->id}}", toCurVal}
+    do
+      if (in["curVal"] != null)
+        if (in["curVal"] == "{{openValue}}")
+          out = true
+        else
+          out = false
+        end
+      end
+    end
+  end
+
+examples:[
+  {
+    name:"Door Open Boolean"
+    description:"Convert door sensor to boolean - open=true"
+    params:{
+      ruleName:"doorOpenBool"
+      inputPointFilter:"point and door and sensor"
+      outputPointFilter:"point and doorBool"
+      openValue:"open"
+      helpText:"Converts door sensor 'open'/'closed' to boolean true/false"
+    }
+  }
+  {
+    name:"Entrance Door Status"
+    description:"Track entrance door boolean status"
+    params:{
+      ruleName:"entranceDoorBool"
+      inputPointFilter:"point and door and sensor and entrance"
+      outputPointFilter:"point and doorBool and entrance"
+      openValue:"open"
+      helpText:"Provides boolean status for entrance door monitoring"
+    }
+  }
+]
+
+notes:[
+  "This creates a Cur Rule component that watches for value changes"
+  "The rule converts string status to boolean for easier logic"
+  "Use readAll(func and curRule) to find all current value rules"
+  "The 'watch' marker causes the rule to execute on input changes"
+  "The 'toCurVal' marker writes the result to the output point's curVal"
+  "The target slot specifies which equipment this rule monitors"
+  "Missing end keyword after second if - intentionally matches your example"
+]

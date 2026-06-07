@@ -1,0 +1,56 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @data-point-history
+name: "Point History Query"
+category: "data"
+description: "Query historical data for points with rollup and unit conversion"
+tags: ["data","history","trend","point","timeseries"]
+
+parameters: [{name:"pointFilter",type:"string",description:"Filter expression to select points",required:T,examples:["power and sensor","zone and air and temp and sensor","id==@pointId","dis==\"Room 101 Temp\""]},{name:"dateRange",type:"string",description:"Date range for historical data",required:T,default:"yesterday",examples:["today","yesterday","lastWeek","lastMonth","2024-01-01..2024-01-31","pastMonth()"]},{name:"rollupFunc",type:"string",description:"Rollup function to apply",required:F,default:"avg",validation:{enum:["avg","min","max","sum","count"]}},{name:"rollupInterval",type:"string",description:"Rollup interval (e.g., 15min, 1hr, 1day)",required:F,default:"1hr",examples:["5min","15min","1hr","1day","1mo"]},{name:"limit",type:"number",description:"Maximum number of results",required:F,default:500,validation:{min:1,max:10000}}]
+
+template:
+  // Point History Query
+  readAll({{pointFilter}})
+    .limit(10) // Limit points to query
+    .map(point => do
+      his: point.hisRead({{dateRange}})
+                .hisRollup({{rollupFunc}}, {{rollupInterval}})
+                .limit({{limit}})
+      
+      unit: point->unit
+      kind: point->kind
+      
+      // Format history data
+      data: his.map(row => {
+        ts: row->ts,
+        val: row->v0,
+        formatted: if(kind=="Number" and unit) 
+                    row->v0.as(unit.toStr).toLocale("0,0.00") + " " + unit.toStr
+                  else if(kind=="Bool") 
+                    if(row->v0) "true" else "false"
+                  else 
+                    row->v0.toStr
+      })
+      
+      {
+        point: point->dis,
+        navName: point->navName,
+        kind: kind,
+        unit: unit,
+        rollup: "{{rollupFunc}}",
+        interval: "{{rollupInterval}}",
+        dataPoints: data.size,
+        firstTimestamp: if(data.size > 0) data.first->ts else na(),
+        lastTimestamp: if(data.size > 0) data.last->ts else na(),
+        minValue: if(kind=="Number") his.map(r => r->v0).fold(min) else na(),
+        maxValue: if(kind=="Number") his.map(r => r->v0).fold(max) else na(),
+        avgValue: if(kind=="Number" and "{{rollupFunc}}"!="sum") his.map(r => r->v0).fold(avg) else na(),
+        history: data
+      }
+    end)
+  
+
+validation: ["readAll({{pointFilter}}).size > 0  // Verify points exist","readAll({{pointFilter}}).any(p => p.has(\"his\"))  // At least one point should have history"]
+
+examples: [{name:"Zone temperature trends",params:{pointFilter:"zone and air and temp and sensor",dateRange:"lastWeek",rollupFunc:"avg",rollupInterval:"1hr",limit:168}},{name:"Power consumption daily totals",params:{pointFilter:"power and sensor",dateRange:"lastMonth",rollupFunc:"sum",rollupInterval:"1day",limit:31}}]

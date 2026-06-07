@@ -1,0 +1,106 @@
+==================
+Single param lambda
+==================
+
+x => x + 1
+
+---
+
+(source_file
+  (lambda
+    params: (param_single (identifier))
+    body: (add_expr
+      left: (var (identifier))
+      right: (number))))
+
+==================
+Multi param lambda
+==================
+
+(a, b) => a + b
+
+---
+
+(source_file
+  (lambda
+    params: (param_list
+      (param name: (identifier))
+      (param name: (identifier)))
+    body: (add_expr
+      left: (var (identifier))
+      right: (var (identifier)))))
+
+==================
+No param lambda
+==================
+
+() => 42
+
+---
+
+(source_file
+  (lambda
+    body: (number)))
+
+==================
+Lambda with default param
+==================
+
+(maxEquipments: 100) => do
+  maxEquipments
+end
+
+---
+
+(source_file
+  (lambda
+    params: (param_list
+      (param
+        name: (identifier)
+        default: (number)))
+    body: (do_block
+      (var (identifier)))))
+
+==================
+Lambda with string default param
+==================
+
+(mode:"createNew") => do
+  mode
+end
+
+---
+
+(source_file
+  (lambda
+    params: (param_list
+      (param
+        name: (identifier)
+        default: (string)))
+    body: (do_block
+      (var (identifier)))))
+
+==================
+Lambda with do block
+==================
+
+(x) => do
+  y: x + 1
+  y * 2
+end
+
+---
+
+(source_file
+  (lambda
+    params: (param_list
+      (param name: (identifier)))
+    body: (do_block
+      (define_var
+        name: (identifier)
+        value: (add_expr
+          left: (var (identifier))
+          right: (number)))
+      (mult_expr
+        left: (var (identifier))
+        right: (number)))))

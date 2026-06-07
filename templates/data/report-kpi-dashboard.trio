@@ -1,0 +1,251 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @report-kpi-dashboard
+name: "KPI Dashboard Data"
+category: "data"
+description: "Generate key performance indicator data for building management dashboards"
+tags: ["report","kpi","dashboard","metrics","performance","analytics"]
+
+parameters: [{name:"siteFilter",type:"string",description:"Filter expression for sites",default:"site",examples:["site","site and @headquarters","site and portfolio"]},{name:"comparisonPeriod",type:"string",description:"Current period for KPI calculation",default:"lastMonth",examples:["lastWeek","lastMonth","last3Months","thisYear"]},{name:"baselinePeriod",type:"string",description:"Baseline period for comparison",default:"lastYear",examples:["prevWeek","prevMonth","lastYear"]},{name:"kpiCategories",type:"array",description:"KPI categories to include",default:["energy","cost","comfort","efficiency"],examples:[["energy"],["energy","cost"],["energy","comfort","efficiency"]]},{name:"targetValues",type:"object",description:"Target values for KPIs",default:{energyReduction:10,comfortRate:95,efficiency:85}}]
+
+template:
+  (siteFilt: "site", currPeriod: "lastMonth", basePeriod: "lastYear", kpiCat: ["energy", "cost", "comfort", "efficiency"], targets: {energyReduction: 10, comfortRate: 95, efficiency: 85}) => do
+    
+    // Read sites
+    sites: readAll({{siteFilter}})
+    
+    if (sites.isEmpty) do
+      {status: "No Sites Found"}.toGrid
+    else do
+      
+      // Generate KPIs for each site
+      siteKpis: sites.map(site => do
+        
+        kpis: {}
+        
+        // ===== ENERGY KPIs =====
+        if ({{kpiCategories}}.contains("energy")) do
+          meters: readAll(elecMeter and siteRef == site->id)
+          
+          if (meters.isEmpty.not) do
+            // Current period energy
+            currEnergy: meters.reduce(0, (sum, meter) => do
+              data: meter.hisRead({{comparisonPeriod}})
+              total: if (data.isEmpty.not) data.hisRollup(sum)->v0 else 0 
+              sum + total
+            end)
+            
+            // Baseline period energy
+            baseEnergy: meters.reduce(0, (sum, meter) => do
+              data: meter.hisRead({{baselinePeriod}})
+              total: if (data.isEmpty.not) data.hisRollup(sum)->v0 else 0 
+              sum + total
+            end)
+            
+            // Calculate metrics
+            energyChange: if (baseEnergy > 0) ((currEnergy - baseEnergy) / baseEnergy) * 100 else 0 
+            
+            // Get area for normalization
+            area: if (site.has("area")) site->area else 100000 end  // Default 100k sqft
+            eui: if (area > 0) (currEnergy / area) * 12 else 0  // Annualized EUI
+            
+            // Peak demand
+            peakDemand: meters.reduce(0, (max, meter) => do
+              data: meter.hisRead({{comparisonPeriod}})
+              peak: if (data.isEmpty.not) data.hisRollup(max)->v0 else 0 
+              peak.max(max)
+            end)
+            
+            kpis: kpis.add({
+              energyConsumptionKwh: currEnergy.round(0),
+              energyChangePercent: energyChange.round(1),
+              euiKwhSqFt: eui.round(2),
+              peakDemandKw: peakDemand.round(1),
+              energyTargetMet: energyChange <= (0 - {{targetValues}}->energyReduction)
+            })
+          end
+        end
+        
+        // ===== COST KPIs =====
+        if ({{kpiCategories}}.contains("cost")) do
+          meters: readAll(elecMeter and siteRef == site->id)
+          
+          if (meters.isEmpty.not) do
+            // Simple cost calculation (assuming $0.12/kWh)
+            costRate: 0.12
+            
+            currEnergy: meters.reduce(0, (sum, meter) => do
+              data: meter.hisRead({{comparisonPeriod}})
+              total: if (data.isEmpty.not) data.hisRollup(sum)->v0 else 0 
+              sum + total
+            end)
+            
+            baseEnergy: meters.reduce(0, (sum, meter) => do
+              data: meter.hisRead({{baselinePeriod}})
+              total: if (data.isEmpty.not) data.hisRollup(sum)->v0 else 0 
+              sum + total
+            end)
+            
+            currCost: currEnergy * costRate
+            baseCost: baseEnergy * costRate
+            costSavings: baseCost - currCost
+            
+            kpis: kpis.add({
+              energyCost: currCost.round(2),
+              costSavings: costSavings.round(2),
+              costChangePercent: if (baseCost > 0) ((currCost - baseCost) / baseCost) * 100 else 0 end.round(1)
+            })
+          end
+        end
+        
+        // ===== COMFORT KPIs =====
+        if ({{kpiCategories}}.contains("comfort")) do
+          zones: readAll(zone and siteRef == site->id)
+          
+          if (zones.isEmpty.not) do
+            comfortData: zones.map(zone => do
+              zoneTemp: readAll(point and zone and temp and sensor and equipRef == zone->id)
+              
+              if (zoneTemp.isEmpty.not) do
+                tempHis: zoneTemp[0].hisRead({{comparisonPeriod}})
+                
+                if (tempHis.isEmpty.not) do
+                  violations: tempHis.findAll(r => r->v0 < 68 or r->v0 > 76).size
+                  violationRate: (violations.to(1f) / tempHis.size) * 100
+                  comfortRate: 100 - violationRate
+                  
+                  {comfortRate: comfortRate}
+                else
+                  na()
+                end
+              else
+                na()
+              end
+            end).findAll(v => v != na())
+            
+            if (comfortData.isEmpty.not) do
+              avgComfortRate: comfortData.reduce(0, (sum, d) => sum + d->comfortRate) / comfortData.size
+              comfortableZones: comfortData.findAll(d => d->comfortRate >= 95).size
+              
+              kpis: kpis.add({
+                comfortRate: avgComfortRate.round(1),
+                comfortableZones: comfortableZones,
+                totalZones: comfortData.size,
+                comfortTargetMet: avgComfortRate >= {{targetValues}}->comfortRate
+              })
+            end
+          end
+  
+        
+        // ===== EFFICIENCY KPIs =====
+        if ({{kpiCategories}}.contains("efficiency")) do
+          // Chiller efficiency
+          chillers: readAll(chiller and siteRef == site->id)
+          
+          if (chillers.isEmpty.not) do
+            chillerEff: chillers.map(chiller => do
+              powerPt: readAll(point and power and sensor and equipRef == chiller->id)
+              tonsPt: readAll(point and coolingCapacity and sensor and equipRef == chiller->id)
+              
+              if (powerPt.isEmpty.not and tonsPt.isEmpty.not) do
+                powerHis: powerPt[0].hisRead({{comparisonPeriod}})
+                tonsHis: tonsPt[0].hisRead({{comparisonPeriod}})
+                
+                if (powerHis.isEmpty.not and tonsHis.isEmpty.not) do
+                  avgPower: powerHis.hisRollup(avg)->v0
+                  avgTons: tonsHis.hisRollup(avg)->v0
+                  
+                  if (avgTons > 0) do
+                    kwPerTon: avgPower / avgTons
+                    efficiency: (1.0 / kwPerTon) * 100  // Simplified efficiency metric
+                    {efficiency: efficiency}
+                  else
+                    na()
+  
+                else
+                  na()
+  
+              else
+                na()
+  
+            end).findAll(v => v != na())
+            
+            if (chillerEff.isEmpty.not) do
+              avgEff: chillerEff.reduce(0, (sum, e) => sum + e->efficiency) / chillerEff.size
+              
+              kpis: kpis.add({
+                chillerEfficiency: avgEff.round(1),
+                efficiencyTargetMet: avgEff >= {{targetValues}}->efficiency
+              })
+  
+  
+          
+          // Equipment uptime
+          equipment: readAll(equip and siteRef == site->id)
+          
+          if (equipment.isEmpty.not) do
+            uptimes: equipment.map(equip => do
+              statusPt: readAll(point and run and status and equipRef == equip->id)
+              
+              if (statusPt.isEmpty.not) do
+                statusHis: statusPt[0].hisRead({{comparisonPeriod}})
+                
+                if (statusHis.isEmpty.not and statusHis.size > 10) do
+                  runTime: statusHis.findAll(r => r->v0 == true or r->v0 == 1).size
+                  uptime: (runTime.to(1f) / statusHis.size) * 100
+                  {uptime: uptime}
+                else
+                  na()
+  
+              else
+                na()
+  
+            end).findAll(v => v != na())
+            
+            if (uptimes.isEmpty.not) do
+              avgUptime: uptimes.reduce(0, (sum, u) => sum + u->uptime) / uptimes.size
+              
+              kpis: kpis.add({
+                equipmentUptime: avgUptime.round(1)
+              })
+  
+  
+  
+        
+        // Calculate overall score
+        scores: [
+          if (kpis.has("energyTargetMet") and kpis->energyTargetMet) 25 else 0 ,
+          if (kpis.has("comfortTargetMet") and kpis->comfortTargetMet) 25 else 0 ,
+          if (kpis.has("efficiencyTargetMet") and kpis->efficiencyTargetMet) 25 else 0 ,
+          if (kpis.has("costSavings") and kpis->costSavings > 0) 25 else 0 
+        ].findAll(v => v > 0)
+        
+        overallScore: scores.reduce(0, (sum, s) => sum + s)
+        
+        // Return site KPIs
+        kpis.add({
+          siteId: site->id,
+          siteName: site->dis,
+          overallScore: overallScore,
+          performanceRating: if (overallScore >= 75) "Excellent"
+                            else if (overallScore >= 50) "Good"
+                            else if (overallScore >= 25) "Fair" else "Needs Improvement"
+        })
+      end).toGrid
+      
+      // Add dashboard metadata
+      siteKpis.addMeta({
+        dashboardGenerated: now().toStr,
+        comparisonPeriod: {{comparisonPeriod}},
+        baselinePeriod: {{baselinePeriod}},
+        kpiCategories: {{kpiCategories}}.join(", "),
+        sitesIncluded: sites.size,
+        targets: {{targetValues}}.toStr,
+        generatedBy: "axon-mcp-server"
+      })
+  
+  
+  
+
+examples: [{name:"Full KPI dashboard",description:"Generate all KPI categories for last month",params:{siteFilter:"site",comparisonPeriod:"lastMonth",baselinePeriod:"lastYear",kpiCategories:["energy","cost","comfort","efficiency"],targetValues:{energyReduction:10,comfortRate:95,efficiency:85}}},{name:"Energy-only KPIs",description:"Focus on energy performance metrics",params:{siteFilter:"site",comparisonPeriod:"lastMonth",baselinePeriod:"prevMonth",kpiCategories:["energy","cost"],targetValues:{energyReduction:5}}},{name:"Quarterly performance review",description:"Comprehensive quarterly KPI review",params:{siteFilter:"site and portfolio",comparisonPeriod:"last3Months",baselinePeriod:"lastYear",kpiCategories:["energy","cost","comfort","efficiency"],targetValues:{energyReduction:15,comfortRate:98,efficiency:90}}}]

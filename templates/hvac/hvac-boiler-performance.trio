@@ -1,0 +1,141 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @hvac-boiler-performance
+name: "Boiler Performance Analysis"
+category: "hvac"
+description: "Analyze boiler efficiency, cycling behavior, and operating characteristics"
+tags: ["hvac","boiler","efficiency","combustion","cycling","performance"]
+
+parameters: [{name:"boilerFilter",type:"string",description:"Filter expression for boiler equipment",required:T,examples:["boiler","hotWaterPlant and boiler","equip and boiler and heating"]},{name:"dateRange",type:"string",description:"Date range for analysis",required:T,examples:["today","yesterday","lastWeek","2024-01-01..2024-01-31"]},{name:"minEfficiency",type:"number",description:"Minimum acceptable efficiency percentage",default:75,examples:[75,80,85]},{name:"maxCyclesPerHour",type:"number",description:"Maximum acceptable cycles per hour threshold",default:6,examples:[4,6,8]},{name:"includeGasAnalysis",type:"boolean",description:"Include gas consumption analysis if available",default:T}]
+
+template:
+  (boilerFilt, dates, minEff: 75.0, maxCycles: 6.0, includeGas: true) => do
+    
+    // Read boiler equipment
+    boilers: readAll({{boilerFilter}})
+    
+    // Collect boiler performance data
+    results: boilers.map(boiler => do
+      
+      // Read key performance points
+      supplyTemp: readAll(point and hotWaterSupply and temp and equipRef == boiler->id)
+      returnTemp: readAll(point and hotWaterReturn and temp and equipRef == boiler->id)
+      flowRate: readAll(point and water and flow and equipRef == boiler->id)
+      status: readAll(point and run and cmd and equipRef == boiler->id)
+      gasFlow: if (includeGas) readAll(point and gas and flow and equipRef == boiler->id) else [].toGrid 
+      
+      // Read historical data
+      supplyHis: if (supplyTemp.isEmpty.not) supplyTemp[0].hisRead({{dateRange}}) else [].toGrid
+      returnHis: if (returnTemp.isEmpty.not) returnTemp[0].hisRead({{dateRange}}) else [].toGrid
+      flowHis: if (flowRate.isEmpty.not) flowRate[0].hisRead({{dateRange}}) else [].toGrid
+      statusHis: if (status.isEmpty.not) status[0].hisRead({{dateRange}}) else [].toGrid
+      gasHis: if (includeGas and gasFlow.isEmpty.not) gasFlow[0].hisRead({{dateRange}}) else [].toGrid
+      
+      // Calculate thermal output (BTU/hr or kW)
+      thermalOutput: if (supplyHis.isEmpty.not and returnHis.isEmpty.not and flowHis.isEmpty.not) do
+        supplyHis.map(row => do
+          foundRet: returnHis.findAll(r => r->ts == row->ts)
+          retVal: if(foundRet.isEmpty.not) foundRet[0]->v0 else na()
+          foundFlow: flowHis.findAll(f => f->ts == row->ts)
+          flowVal: if(foundFlow.isEmpty.not) foundFlow[0]->v0 else na()
+          if (retVal != na() and flowVal != na()) do
+            deltaT: row->v0 - retVal
+            output: flowVal * deltaT * 500  // Simplified BTU/hr calculation
+            {ts: row->ts, thermalOutput: output}
+          else
+            na()
+  
+        end).findAll(v => v != na()).toGrid
+      else
+        [].toGrid
+  
+      
+      // Calculate efficiency if gas data available
+      efficiency: if (includeGas and gasHis.isEmpty.not and thermalOutput.isEmpty.not) do
+        thermalOutput.map(row => do
+          foundGas: gasHis.findAll(g => g->ts == row->ts)
+          gasVal: if(foundGas.isEmpty.not) foundGas[0]->v0 else na()
+          if (gasVal != na() and gasVal > 0) do
+            eff: (row->thermalOutput / (gasVal * 1000)) * 100  // Simplified efficiency
+            {ts: row->ts, efficiency: eff.min(100).max(0)}
+          else
+            na()
+  
+        end).findAll(v => v != na()).toGrid
+      else
+        [].toGrid
+  
+      
+      // Detect cycling behavior
+      cycles: if (statusHis.isEmpty.not) do
+        transitions: statusHis.toList.reduce(0, (count, row, idx, list) => do
+          if (idx > 0) do
+            prev: list[idx - 1]
+            if (row->v0 != prev->v0) count + 1 else count 
+          else
+            count
+  
+        end)
+        
+        duration: statusHis.last->ts - statusHis.first->ts
+        hoursSpan: duration.to(1hr)
+        cyclesPerHour: if (hoursSpan > 0) transitions / hoursSpan else 0 
+        
+        {
+          totalCycles: transitions,
+          cyclesPerHour: cyclesPerHour.round(2),
+          exceedsThreshold: cyclesPerHour > {{maxCyclesPerHour}}
+        }
+      else
+        {totalCycles: 0, cyclesPerHour: 0, exceedsThreshold: false}
+  
+      
+      // Calculate average metrics
+      avgEfficiency: if (efficiency.isEmpty.not) efficiency.hisRollup(avg)->v0 else na() 
+      minEfficiency: if (efficiency.isEmpty.not) efficiency.hisRollup(min)->v0 else na() 
+      maxThermalOutput: if (thermalOutput.isEmpty.not) thermalOutput.hisRollup(max)->v0 else na() 
+      avgSupplyTemp: if (supplyHis.isEmpty.not) supplyHis.hisRollup(avg)->v0 else na() 
+      
+      // Operating hours
+      operatingHours: if (statusHis.isEmpty.not) do
+        onTime: statusHis.findAll(r => r->v0 == true).size
+        totalTime: statusHis.size
+        (onTime.to(1f) / totalTime) * ((statusHis.last->ts - statusHis.first->ts).to(1hr))
+      else
+        na()
+  
+      
+      // Performance flags
+      lowEfficiencyFlag: avgEfficiency != na() and avgEfficiency < {{minEfficiency}}
+      excessiveCyclingFlag: cycles->exceedsThreshold
+      
+      {
+        boilerId: boiler->id,
+        boilerName: boiler->dis,
+        avgEfficiency: if(avgEfficiency != null) avgEfficiency.round(2) else null,
+        minEfficiency: if(minEfficiency != null) minEfficiency.round(2) else null,
+        maxThermalOutput: if(maxThermalOutput != null) maxThermalOutput.round(0) else null,
+        avgSupplyTemp: if(avgSupplyTemp != null) avgSupplyTemp.round(1) else null,
+        operatingHours: if(operatingHours != null) operatingHours.round(1) else null,
+        cyclesPerHour: cycles->cyclesPerHour,
+        totalCycles: cycles->totalCycles,
+        lowEfficiencyFlag: lowEfficiencyFlag,
+        excessiveCyclingFlag: excessiveCyclingFlag,
+        overallStatus: if (lowEfficiencyFlag or excessiveCyclingFlag) "Attention Required" else "Normal" 
+      }
+    end).toGrid
+    
+    results
+  
+  
+
+  end
+  end
+  end
+  end
+  end
+  end
+  end
+  end
+examples: [{name:"Basic boiler efficiency analysis",description:"Analyze boiler efficiency and cycling for the last week",params:{boilerFilter:"boiler and hotWaterPlant",dateRange:"lastWeek",minEfficiency:80,maxCyclesPerHour:6,includeGasAnalysis:T}},{name:"Quick boiler cycling check",description:"Check for excessive boiler cycling today",params:{boilerFilter:"boiler",dateRange:"today",minEfficiency:75,maxCyclesPerHour:4,includeGasAnalysis:F}},{name:"Monthly performance review",description:"Comprehensive boiler performance review for last month",params:{boilerFilter:"equip and boiler and heating",dateRange:"lastMonth",minEfficiency:82,maxCyclesPerHour:5,includeGasAnalysis:T}}]

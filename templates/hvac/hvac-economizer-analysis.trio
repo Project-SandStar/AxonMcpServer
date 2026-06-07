@@ -1,0 +1,165 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @hvac-economizer-analysis
+name: "Economizer Analysis"
+category: "hvac"
+description: "Analyze economizer operation, opportunities, and energy savings from free cooling"
+tags: ["hvac","economizer","free-cooling","damper","ahu","efficiency"]
+
+parameters: [{name:"ahuFilter",type:"string",description:"Filter expression for air handlers with economizers",required:T,examples:["ahu and economizer","ahu","airHandler and outside"]},{name:"dateRange",type:"string",description:"Date range for analysis",required:T,examples:["yesterday","lastWeek","lastMonth"]},{name:"minOutdoorTemp",type:"number",description:"Minimum outdoor temperature for economizer operation (°F)",default:45,examples:[40,45,50]},{name:"maxOutdoorTemp",type:"number",description:"Maximum outdoor temperature for economizer operation (°F)",default:65,examples:[60,65,70]},{name:"maxOutdoorHumidity",type:"number",description:"Maximum outdoor humidity for economizer operation (%)",default:70,examples:[65,70,75]},{name:"minDamperPosition",type:"number",description:"Minimum damper position to consider economizer active (%)",default:30,examples:[25,30,40]}]
+
+template:
+  (ahuFilt, dates, minOat: 45.0, maxOat: 65.0, maxHumidity: 70.0, minDamper: 30.0) => do
+    
+    // Read AHU equipment
+    ahus: readAll({{ahuFilter}})
+    
+    // Analyze each AHU
+    results: ahus.map(ahu => do
+      
+      // Read key points
+      oaDamper: readAll(point and outside and damper and cmd and equipRef == ahu->id)
+      oaTemp: readAll(point and outside and air and temp and sensor and equipRef == ahu->id)
+      oaHumidity: readAll(point and outside and air and humidity and sensor and equipRef == ahu->id)
+      returnTemp: readAll(point and "return" and air and temp and sensor and equipRef == ahu->id)
+      mixedTemp: readAll(point and mixed and air and temp and sensor and equipRef == ahu->id)
+      cooling: readAll(point and cooling and (valve or cmd) and equipRef == ahu->id)
+      
+      // Get site outdoor temp if local not available
+      siteOat: if (oaTemp.isEmpty) readAll(point and outside and temp and siteRef == ahu->siteRef) else [].toGrid 
+      oatPoint: if (oaTemp.isEmpty.not) oaTemp[0] else if (siteOat.isEmpty.not) siteOat[0] else na()  
+      
+      // Read historical data
+      damperHis: if (oaDamper.isEmpty.not) oaDamper[0].hisRead({{dateRange}}) else [].toGrid
+      oatHis: if (oatPoint != na()) oatPoint.hisRead({{dateRange}}) else [].toGrid end
+      oahHis: if (oaHumidity.isEmpty.not) oaHumidity[0].hisRead({{dateRange}}) else [].toGrid
+      ratHis: if (returnTemp.isEmpty.not) returnTemp[0].hisRead({{dateRange}}) else [].toGrid
+      matHis: if (mixedTemp.isEmpty.not) mixedTemp[0].hisRead({{dateRange}}) else [].toGrid
+      coolingHis: if (cooling.isEmpty.not) cooling[0].hisRead({{dateRange}}) else [].toGrid
+      
+      // Identify economizer-favorable conditions
+      favorableConditions: if (oatHis.isEmpty.not and ratHis.isEmpty.not) do
+        oatHis.map(row => do
+          rat: do
+            found: ratHis.findAll(r => r->ts == row->ts)
+            if (found.isEmpty.not) found[0]->v0 else na()
+          oah: if (oahHis.isEmpty.not) do
+            found: oahHis.findAll(h => h->ts == row->ts)
+            if (found.isEmpty.not) found[0]->v0 else na() else na()
+          
+          // Check if conditions are favorable
+          tempOk: row->v0 >= {{minOutdoorTemp}} and row->v0 <= {{maxOutdoorTemp}}
+          humidityOk: oah == na() or oah <= {{maxOutdoorHumidity}}
+          needsCooling: rat != na() and rat > row->v0 + 2
+          
+          isFavorable: tempOk and humidityOk and needsCooling
+          
+          {
+            ts: row->ts,
+            oat: row->v0,
+            rat: rat,
+            humidity: oah,
+            isFavorable: isFavorable
+          }
+        end).toGrid
+      else
+        [].toGrid
+  
+      
+      // Identify actual economizer operation
+      actualOperation: if (damperHis.isEmpty.not and favorableConditions.isEmpty.not) do
+        damperHis.map(row => do
+          favorable: favorableConditions.findAll(f => f->ts == row->ts)[0]
+          damperOpen: row->v0 >= {{minDamperPosition}}
+          
+          if (favorable != na()) do
+            {
+              ts: row->ts,
+              damperPos: row->v0,
+              isFavorable: favorable->isFavorable,
+              isOperating: damperOpen,
+              correctOperation: (favorable->isFavorable and damperOpen) or (favorable->isFavorable.not and damperOpen.not)
+            }
+          else
+            na()
+  
+        end).findAll(v => v != na()).toGrid
+      else
+        [].toGrid
+  
+      
+      // Calculate statistics
+      totalHours: (({{dateRange}}.parseSpan.to(1hr))).to(1f)
+      
+      favorableHours: if (favorableConditions.isEmpty.not) do
+        favorableConditions.findAll(r => r->isFavorable).size.to(1f)
+      else
+        0
+  
+      
+      operatingHours: if (actualOperation.isEmpty.not) do
+        actualOperation.findAll(r => r->isOperating and r->isFavorable).size.to(1f)
+      else
+        0
+  
+      
+      missedHours: if (actualOperation.isEmpty.not) do
+        actualOperation.findAll(r => r->isFavorable and r->isOperating.not).size.to(1f)
+      else
+        0
+  
+      
+      unnecessaryHours: if (actualOperation.isEmpty.not) do
+        actualOperation.findAll(r => r->isFavorable.not and r->isOperating).size.to(1f)
+      else
+        0
+  
+      
+      utilizationRate: if (favorableHours > 0) (operatingHours / favorableHours) * 100 else 0 
+      
+      // Estimate energy savings
+      avgCoolingLoad: if (coolingHis.isEmpty.not) coolingHis.hisRollup(avg)->v0 else 50 
+      actualSavings: operatingHours * avgCoolingLoad * 0.7  // 70% savings when economizing
+      missedSavings: missedHours * avgCoolingLoad * 0.7
+      
+      // Performance assessment
+      performance: if (utilizationRate >= 80) "Excellent"
+                   else if (utilizationRate >= 60) "Good"
+                   else if (utilizationRate >= 40) "Fair" else "Poor"
+      
+      issues: [
+        if (missedHours > favorableHours * 0.2) "Missed opportunities > 20%" else na() ,
+        if (unnecessaryHours > totalHours * 0.1) "Unnecessary operation > 10%" else na() ,
+        if (oaDamper.isEmpty) "No damper command point found" else na() ,
+        if (oatHis.isEmpty) "No outdoor temp data" else na()
+      ].findAll(v => v != na())
+      
+      {
+        ahuId: ahu->id,
+        ahuName: ahu->dis,
+        totalHours: totalHours.round(1),
+        favorableHours: favorableHours.round(1),
+        operatingHours: operatingHours.round(1),
+        missedHours: missedHours.round(1),
+        unnecessaryHours: unnecessaryHours.round(1),
+        utilizationRate: utilizationRate.round(1),
+        performance: performance,
+        actualSavings: actualSavings.round(0),
+        missedSavings: missedSavings.round(0),
+        potentialSavings: (actualSavings + missedSavings).round(0),
+        issues: issues.join(", "),
+        recommendation: if (utilizationRate < 60) "Review economizer controls and sensors" 
+                       else if (missedHours > 10) "Optimize damper control sequence" else "Continue monitoring"
+      }
+    end).toGrid
+    
+    results.addMeta({
+      analysisRange: {{dateRange}},
+      tempRange: {{minOutdoorTemp}}.toStr + "°F - " + {{maxOutdoorTemp}}.toStr + "°F",
+      maxHumidity: {{maxOutdoorHumidity}}.toStr + "%"
+    })
+  
+  
+
+examples: [{name:"Weekly economizer performance",description:"Analyze economizer usage and savings for the past week",params:{ahuFilter:"ahu and economizer",dateRange:"lastWeek",minOutdoorTemp:45,maxOutdoorTemp:65,maxOutdoorHumidity:70,minDamperPosition:30}},{name:"Identify missed opportunities",description:"Find periods when economizer should have been used but wasn't",params:{ahuFilter:"ahu",dateRange:"lastMonth",minOutdoorTemp:50,maxOutdoorTemp:70,maxOutdoorHumidity:65,minDamperPosition:40}},{name:"Yesterday's economizer check",description:"Quick check of economizer operation for yesterday",params:{ahuFilter:"ahu and economizer",dateRange:"yesterday",minOutdoorTemp:45,maxOutdoorTemp:65,maxOutdoorHumidity:75,minDamperPosition:25}}]

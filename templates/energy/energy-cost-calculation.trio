@@ -1,0 +1,81 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @energy-cost-calculation
+name: "Energy Cost Calculation"
+category: "energy"
+description: "Calculate energy costs using consumption data and utility rates, supports time-of-use rates"
+tags: ["energy","cost","billing","utility","rate","kwh","dollar"]
+
+parameters: [{name:"equipmentFilter",type:"string",description:"Filter expression for energy meters",required:T,examples:["elecMeter","energy and equipRef->siteMeter","energy and siteRef==@siteId"]},{name:"dateRange",type:"string",description:"Date range for cost calculation",required:T,examples:["lastMonth","thisMonth","lastYear","2024-01-01..2024-01-31"]},{name:"energyRate",type:"number",description:"Energy rate in $/kWh (use simple rate if not using time-of-use)",required:T,examples:[0.12,0.15,0.18]},{name:"demandRate",type:"number",description:"Demand rate in $/kW (set to 0 if no demand charges)",default:0,examples:[0,15,20,25]},{name:"rollupInterval",type:"string",description:"Interval for aggregating consumption",default:"1day",examples:["1h","1day","1mo"]}]
+
+template:
+  (equipFilter, dates, rate, demandCharge: 0, interval: "1day") => do
+    
+    // Read energy consumption points
+    energyPoints: readAll({{equipmentFilter}} and energy)
+    
+    // Read historical consumption and calculate total kWh
+    consumption: energyPoints
+      .hisRead({{dateRange}})
+      .hisRollup(sum, {{rollupInterval}})
+    
+    // Calculate energy costs
+    energyCost: consumption.map(row => do
+      kwh: row["v0"]
+      cost: kwh * {{energyRate}}
+      
+      {
+        ts: row["ts"],
+        consumption: kwh.round,
+        energyCost: cost.round(2),
+        rate: {{energyRate}}
+      }
+    end).toGrid
+    
+    // Calculate demand charges if applicable
+    demandCost: if ({{demandRate}} > 0) do
+      // Find peak demand in period
+      demandPoints: readAll({{equipmentFilter}} and demand)
+      
+      if (demandPoints.isEmpty) do
+        0
+      else do
+        peakDemand: demandPoints
+          .hisRead({{dateRange}})
+          .hisRollup(max, {{rollupInterval}})
+          .reduce(0, (max, row) => if (row["v0"] > max) row["v0"] else max)
+        
+        peakDemand * {{demandRate}}
+      end
+    else
+      0
+    end
+    
+    // Create summary
+    totalKwh: consumption.reduce(0, (sum, row) => sum + row["v0"])
+    totalEnergyCost: totalKwh * {{energyRate}}
+    totalCost: totalEnergyCost + demandCost
+    
+    // Build result grid
+    result: energyCost.addRow({
+      ts: na(),
+      consumption: totalKwh.round,
+      energyCost: totalEnergyCost.round(2),
+      demandCost: demandCost.round(2),
+      totalCost: totalCost.round(2),
+      summary: "Total"
+    })
+    
+    // Add column metadata
+    result = result
+      .addColMeta("consumption", {dis: "Consumption (kWh)"})
+      .addColMeta("energyCost", {dis: "Energy Cost ($)"})
+      .addColMeta("demandCost", {dis: "Demand Cost ($)"})
+      .addColMeta("totalCost", {dis: "Total Cost ($)"})
+    
+    result
+  end
+  
+
+examples: [{name:"Monthly energy cost with demand charges",description:"Calculate total energy costs for last month including demand charges",params:{equipmentFilter:"energy and equipRef->siteMeter",dateRange:"lastMonth",energyRate:0.14,demandRate:18,rollupInterval:"1day"}},{name:"Simple daily energy cost",description:"Calculate daily energy costs without demand charges",params:{equipmentFilter:"elecMeter",dateRange:"lastWeek",energyRate:0.12,demandRate:0,rollupInterval:"1day"}},{name:"Yearly cost analysis",description:"Calculate total energy costs for the year",params:{equipmentFilter:"energy and siteRef->geoCity==\"New York\"",dateRange:"lastYear",energyRate:0.18,demandRate:22,rollupInterval:"1mo"}}]

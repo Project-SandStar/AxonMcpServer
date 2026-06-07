@@ -1,0 +1,275 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @report-daily-summary
+name: "Daily Operational Summary"
+category: "data"
+description: "Generate a comprehensive daily summary report of building operations, energy usage, and system health"
+tags: ["report","summary","daily","operations","energy","performance","health"]
+
+parameters: [{name:"siteFilter",type:"string",description:"Filter expression for sites to report on",default:"site",examples:["site","site and @headquarters","site and building"]},{name:"reportDate",type:"string",description:"Date for the report (default: yesterday)",default:"yesterday",examples:["yesterday","today",{}]},{name:"includeEnergy",type:"boolean",description:"Include energy consumption summary",default:T},{name:"includeComfort",type:"boolean",description:"Include comfort conditions summary",default:T},{name:"includeFaults",type:"boolean",description:"Include fault and alarm summary",default:T},{name:"includeEquipment",type:"boolean",description:"Include equipment runtime summary",default:T}]
+
+template:
+  (siteFilt: "site", repDate: "yesterday", inclEnergy: true, inclComfort: true, inclFaults: true, inclEquip: true) => do
+    
+    // Read sites
+    sites: readAll({{siteFilter}})
+    
+    if (sites.isEmpty) do
+      {
+        status: "No Sites Found",
+        message: "No sites matched the filter"
+      }.toGrid
+    else do
+      
+      // Generate summary for each site
+      summaries: sites.map(site => do
+        
+        // ===== ENERGY SUMMARY =====
+        energySummary: if ({{includeEnergy}}) do
+          meters: readAll(elecMeter and siteRef == site->id)
+          
+          if (meters.isEmpty.not) do
+            totalEnergy: meters.reduce(0, (sum, meter) => do
+              meterData: meter.hisRead({{reportDate}})
+              meterTotal: if (meterData.isEmpty.not) meterData.hisRollup(sum)->v0 else 0
+              sum + meterTotal
+            end)
+            
+            avgPower: meters.reduce(0, (sum, meter) => do
+              meterData: meter.hisRead({{reportDate}})
+              meterAvg: if (meterData.isEmpty.not) meterData.hisRollup(avg)->v0 else 0
+              sum + meterAvg
+            end)
+            
+            peakDemand: meters.reduce(0, (max, meter) => do
+              meterData: meter.hisRead({{reportDate}})
+              meterPeak: if (meterData.isEmpty.not) meterData.hisRollup(max)->v0 else 0
+              meterPeak.max(max)
+            end)
+            
+            {
+              totalEnergyKwh: totalEnergy.round(2),
+              avgPowerKw: avgPower.round(2),
+              peakDemandKw: peakDemand.round(2),
+              metersCount: meters.size
+            }
+          else
+            {totalEnergyKwh: 0, avgPowerKw: 0, peakDemandKw: 0, metersCount: 0}
+          end
+        else
+          na()
+        end
+        
+        // ===== COMFORT SUMMARY =====
+        comfortSummary: if ({{includeComfort}}) do
+          zones: readAll(zone and siteRef == site->id)
+          
+          if (zones.isEmpty.not) do
+            zonesWithData: zones.map(zone => do
+              zoneTemp: readAll(point and zone and temp and sensor and equipRef == zone->id)
+              
+              if (zoneTemp.isEmpty.not) do
+                tempHis: zoneTemp[0].hisRead({{reportDate}})
+                
+                if (tempHis.isEmpty.not) do
+                  avgTemp: tempHis.hisRollup(avg)->v0
+                  minTemp: tempHis.hisRollup(min)->v0
+                  maxTemp: tempHis.hisRollup(max)->v0
+                  
+                  // Check comfort range (68-76°F)
+                  violations: tempHis.findAll(r => r->v0 < 68 or r->v0 > 76).size
+                  violationRate: (violations.to(1f) / tempHis.size) * 100
+                  
+                  {
+                    zoneId: zone->id,
+                    avgTemp: avgTemp,
+                    comfortable: violationRate < 5.0
+                  }
+                else
+                  na()
+                end
+              else
+                na()
+              end
+            end).findAll(v => v != na())
+            
+            comfortableZones: zonesWithData.findAll(z => z->comfortable).size
+            totalZones: zonesWithData.size
+            comfortRate: if (totalZones > 0) (comfortableZones.to(1f) / totalZones) * 100 else 100
+            
+            avgSiteTemp: if (zonesWithData.isEmpty.not) do
+              zonesWithData.reduce(0, (sum, z) => sum + z->avgTemp) / zonesWithData.size
+            else
+              na()
+            end
+            
+            {
+              totalZones: totalZones,
+              comfortableZones: comfortableZones,
+              comfortRate: comfortRate.round(1),
+              avgSiteTemp: if(avgSiteTemp != null) avgSiteTemp.round(1) else null
+            }
+          else
+            {totalZones: 0, comfortableZones: 0, comfortRate: 100.0, avgSiteTemp: na()}
+          end
+        else
+          na()
+        end
+        
+        // ===== FAULT SUMMARY =====
+        faultSummary: if ({{includeFaults}}) do
+          // Check for sensor issues
+          sensors: readAll(point and sensor and siteRef == site->id)
+          
+          sensorIssues: sensors.map(sensor => do
+            history: sensor.hisRead({{reportDate}})
+            
+            if (history.isEmpty) do
+              {sensorId: sensor->id, issue: "No Data"}
+            else do
+              // Check for stuck readings
+              stuckCount: history.toList.reduce({max: 0, curr: 0, prev: na()}, (acc, row) => do
+                if (acc->prev == na()) {max: 0, curr: 1, prev: row->v0}
+                else if (row->v0 == acc->prev) do
+                  newCurr: acc->curr + 1
+                  {max: newCurr.max(acc->max), curr: newCurr, prev: row->v0}
+                else
+                  {max: acc->max, curr: 1, prev: row->v0}
+                 end
+              end)->max
+              
+              if (stuckCount > 12) {sensorId: sensor->id, issue: "Stuck Sensor"} else na()
+            end
+          end).findAll(v => v != na())
+          
+          // Check for offline equipment
+          equipment: readAll(equip and siteRef == site->id)
+          
+          offlineEquip: equipment.map(equip => do
+            statusPoint: readAll(point and run and status and equipRef == equip->id)
+            
+            if (statusPoint.isEmpty.not) do
+              statusHis: statusPoint[0].hisRead({{reportDate}})
+              
+              if (statusHis.isEmpty) do
+                {equipId: equip->id, issue: "No Communication"}
+              else
+                na()
+              end
+            else
+              na()
+            end
+          end).findAll(v => v != na())
+          
+          {
+            sensorIssuesCount: sensorIssues.size,
+            offlineEquipmentCount: offlineEquip.size,
+            totalIssues: sensorIssues.size + offlineEquip.size
+          }
+        else
+          na()
+  
+        
+        // ===== EQUIPMENT SUMMARY =====
+        equipmentSummary: if ({{includeEquipment}}) do
+          equipment: readAll(equip and siteRef == site->id)
+          
+          runtimes: equipment.map(equip => do
+            statusPoint: readAll(point and run and status and equipRef == equip->id)
+            
+            if (statusPoint.isEmpty.not) do
+              statusHis: statusPoint[0].hisRead({{reportDate}})
+              
+              if (statusHis.isEmpty.not) do
+                runTime: statusHis.findAll(r => r->v0 == true or r->v0 == 1).size
+                runtime: (runTime.to(1f) / statusHis.size) * 100
+                
+                {
+                  equipType: if (equip.has("ahu")) "AHU" 
+                            else if (equip.has("chiller")) "Chiller"
+                            else if (equip.has("boiler")) "Boiler"
+                            else if (equip.has("fan")) "Fan"
+                            else "Other"    end,
+                  runtime: runtime
+                }
+              else
+                na()
+  
+            else
+              na()
+  
+          end).findAll(v => v != na())
+          
+          avgRuntime: if (runtimes.isEmpty.not) do
+            runtimes.reduce(0, (sum, r) => sum + r->runtime) / runtimes.size
+          else
+            0
+  
+          
+          {
+            totalEquipment: equipment.size,
+            equipmentMonitored: runtimes.size,
+            avgRuntime: avgRuntime.round(1)
+          }
+        else
+          na()
+  
+        
+        // ===== WEATHER SUMMARY =====
+        weatherPoints: readAll(point and weather and temp and siteRef == site->id)
+        
+        weather: if (weatherPoints.isEmpty.not) do
+          weatherHis: weatherPoints[0].hisRead({{reportDate}})
+          
+          if (weatherHis.isEmpty.not) do
+            {
+              avgTemp: weatherHis.hisRollup(avg)->if(v0 != null) v0.round(1) else null,
+              minTemp: weatherHis.hisRollup(min)->if(v0 != null) v0.round(1) else null,
+              maxTemp: weatherHis.hisRollup(max)->if(v0 != null) v0.round(1) else null
+            }
+          else
+            {avgTemp: na(), minTemp: na(), maxTemp: na()}
+  
+        else
+          {avgTemp: na(), minTemp: na(), maxTemp: na()}
+  
+        
+        // ===== COMPILE SITE SUMMARY =====
+        {
+          siteId: site->id,
+          siteName: site->dis,
+          reportDate: {{reportDate}},
+          energyTotalKwh: if(energySummary != null) energySummary.totalEnergyKwh else null,
+          energyAvgKw: if(energySummary != null) energySummary.avgPowerKw else null,
+          energyPeakKw: if(energySummary != null) energySummary.peakDemandKw else null,
+          comfortRate: if(comfortSummary != null) comfortSummary.comfortRate else null,
+          avgIndoorTemp: if(comfortSummary != null) comfortSummary.avgSiteTemp else null,
+          faultsDetected: if(faultSummary != null) faultSummary.totalIssues else null,
+          equipmentRuntime: if(equipmentSummary != null) equipmentSummary.avgRuntime else null,
+          weatherAvgTemp: weather->avgTemp,
+          weatherMinTemp: weather->minTemp,
+          weatherMaxTemp: weather->maxTemp,
+          overallStatus: if (if(faultSummary != null) faultSummary.totalIssues else null > 5) "Attention Required"
+                        else if (if(comfortSummary != null) comfortSummary.comfortRate else null < 90) "Minor Issues" else "Normal Operations"
+        }
+      end).toGrid
+      
+      // Add report metadata
+      summaries.addMeta({
+        reportGenerated: now().toStr,
+        reportDate: {{reportDate}},
+        sitesIncluded: sites.size,
+        sectionsIncluded: [
+          if ({{includeEnergy}}) "Energy" else na() end,
+          if ({{includeComfort}}) "Comfort" else na() end,
+          if ({{includeFaults}}) "Faults" else na() end,
+          if ({{includeEquipment}}) "Equipment" else na()
+        ].findAll(v => v != na()).join(", "),
+        generatedBy: "axon-mcp-server"
+      })
+  
+  
+  
+
+examples: [{name:"Full daily summary",description:"Complete operational summary for yesterday",params:{siteFilter:"site",reportDate:"yesterday",includeEnergy:T,includeComfort:T,includeFaults:T,includeEquipment:T}},{name:"Energy-focused report",description:"Daily energy summary only",params:{siteFilter:"site",reportDate:"yesterday",includeEnergy:T,includeComfort:F,includeFaults:F,includeEquipment:F}},{name:"Custom date summary",description:"Summary for a specific date",params:{siteFilter:"site and @headquarters",reportDate:{},includeEnergy:T,includeComfort:T,includeFaults:T,includeEquipment:T}}]

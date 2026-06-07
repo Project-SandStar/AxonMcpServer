@@ -1,0 +1,162 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @hvac-ahu-performance
+name: "AHU Performance Analysis"
+category: "hvac"
+description: "Analyze Air Handling Unit performance including temperatures, airflow, fan status, and energy efficiency"
+tags: ["hvac","ahu","performance","temperature","airflow","fan","efficiency"]
+
+parameters: [{name:"equipmentFilter",type:"string",description:"Filter expression for AHU equipment",required:T,examples:["ahu","ahu and siteRef==@site","equip and ahu"]},{name:"dateRange",type:"string",description:"Date range for performance analysis",required:T,examples:["today","lastWeek","lastMonth","yesterday"]},{name:"includeTemperatures",type:"boolean",description:"Include temperature analysis (mixed, discharge, return)",default:T},{name:"includeAirflow",type:"boolean",description:"Include airflow and static pressure analysis",default:T},{name:"includeEnergy",type:"boolean",description:"Include fan energy consumption analysis",default:T},{name:"rollupInterval",type:"string",description:"Data aggregation interval",default:"15min",examples:["5min","15min","1h"]}]
+
+template:
+  (equipFilter, dates, temps: true, airflow: true, energy: true, interval: "15min") => do
+    
+    // Read AHU equipment
+    ahus: readAll({{equipmentFilter}})
+    
+    if (ahus.isEmpty) do
+      [{error: "No AHU equipment found matching filter"}].toGrid
+    else do
+      
+      // Process each AHU
+      results: ahus.map(ahu => do
+        
+        ahuName: ahu->dis
+        ahuId: ahu->id
+        
+        // Get AHU points
+        points: readAll(point and equipRef==ahuId)
+        
+        // Initialize result object
+        result: {
+          ahu: ahuName,
+          ahuId: ahuId.toStr
+        }
+        
+        // Temperature analysis
+        if ({{includeTemperatures}}) do
+          try do
+            // Get temperature points
+            mixedTemp: points.has("mixed and temp").first(false)
+            dischargeTemp: points.has("discharge and temp").first(false)
+            returnTemp: points.has("return and temp").first(false)
+            outsideTemp: points.has("outside and temp").first(false)
+            
+            // Read and average temperatures
+            if (mixedTemp != null) do
+              mixedAvg: mixedTemp.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}}).reduce(0, (sum, row) => sum + row["v0"]) / mixedTemp.hisRead({{dateRange}}).size
+              result = result.set("mixedTempAvg", mixedAvg.round(1))
+            end
+            
+            if (dischargeTemp != null) do
+              dischargeAvg: dischargeTemp.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}}).reduce(0, (sum, row) => sum + row["v0"]) / dischargeTemp.hisRead({{dateRange}}).size
+              result = result.set("dischargeTempAvg", dischargeAvg.round(1))
+            end
+            
+            if (returnTemp != null) do
+              returnAvg: returnTemp.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}}).reduce(0, (sum, row) => sum + row["v0"]) / returnTemp.hisRead({{dateRange}}).size
+              result = result.set("returnTempAvg", returnAvg.round(1))
+            end
+            
+            // Calculate temperature differentials if available
+            if (dischargeTemp != null and returnTemp != null) do
+              tempDiff: result["dischargeTempAvg"] - result["returnTempAvg"]
+              result = result.set("supplyReturnDelta", tempDiff.round(1))
+            end
+          end catch
+            result = result.set("tempError", "Temperature data unavailable")
+          end
+        end
+        
+        // Airflow analysis
+        if ({{includeAirflow}}) do
+          try do
+            flowPoint: points.has("flow and air").first(false)
+            staticPoint: points.has("static and pressure").first(false)
+            damperPoint: points.has("damper and cmd").first(false)
+            
+            if (flowPoint != null) do
+              flowAvg: flowPoint.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}}).reduce(0, (sum, row) => sum + row["v0"]) / flowPoint.hisRead({{dateRange}}).size
+              result = result.set("airflowAvg", flowAvg.round)
+            end
+            
+            if (staticPoint != null) do
+              staticAvg: staticPoint.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}}).reduce(0, (sum, row) => sum + row["v0"]) / staticPoint.hisRead({{dateRange}}).size
+              result = result.set("staticPressure", staticAvg.round(2))
+            end
+            
+            if (damperPoint != null) do
+              damperAvg: damperPoint.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}}).reduce(0, (sum, row) => sum + row["v0"]) / damperPoint.hisRead({{dateRange}}).size
+              result = result.set("damperPosition", damperAvg.round(1))
+            end
+          end catch
+            result = result.set("airflowError", "Airflow data unavailable")
+          end
+        end
+        
+        // Energy analysis
+        if ({{includeEnergy}}) do
+          try do
+            fanPoint: points.has("fan and power").first(false)
+            
+            if (fanPoint == null) do
+              fanPoint = points.has("fan and energy").first(false)
+            end
+            
+            if (fanPoint != null) do
+              // Calculate total energy
+              totalEnergy: fanPoint.hisRead({{dateRange}}).hisRollup(sum, 1h).reduce(0, (sum, row) => sum + row["v0"])
+              
+              // Calculate average power
+              avgPower: fanPoint.hisRead({{dateRange}}).hisRollup(avg, {{rollupInterval}}).reduce(0, (sum, row) => sum + row["v0"]) / fanPoint.hisRead({{dateRange}}).size
+              
+              result = result.set("totalEnergy", totalEnergy.round)
+              result = result.set("avgPower", avgPower.round(1))
+              
+              // Calculate runtime hours
+              fanStatus: points.has("fan and run and status").first(false)
+              if (fanStatus != null) do
+                runtime: fanStatus.hisRead({{dateRange}}).hisFindPeriods(v => v == true).reduce(0, (sum, row) => sum + row["v0"].to(1h))
+                result = result.set("runtimeHours", runtime.round(1))
+              end
+            end
+          end catch
+            result = result.set("energyError", "Energy data unavailable")
+          end
+        end
+        
+        result
+      end).toGrid
+      
+      // Add column metadata
+      results = results.addColMeta("ahu", {dis: "AHU Name"})
+      
+      if ({{includeTemperatures}}) do
+        results = results
+          .addColMeta("mixedTempAvg", {dis: "Mixed Air Temp (°F)"})
+          .addColMeta("dischargeTempAvg", {dis: "Discharge Temp (°F)"})
+          .addColMeta("returnTempAvg", {dis: "Return Temp (°F)"})
+          .addColMeta("supplyReturnDelta", {dis: "Supply-Return ΔT (°F)"})
+      end
+      
+      if ({{includeAirflow}}) do
+        results = results
+          .addColMeta("airflowAvg", {dis: "Airflow (CFM)"})
+          .addColMeta("staticPressure", {dis: "Static Pressure (in.wc)"})
+          .addColMeta("damperPosition", {dis: "Damper Position (%)"})
+      end
+      
+      if ({{includeEnergy}}) do
+        results = results
+          .addColMeta("totalEnergy", {dis: "Total Energy (kWh)"})
+          .addColMeta("avgPower", {dis: "Avg Power (kW)"})
+          .addColMeta("runtimeHours", {dis: "Runtime (hrs)"})
+      end
+      
+      results
+  
+  
+  
+
+examples: [{name:"Comprehensive AHU analysis",description:"Analyze all AHU performance metrics for today",params:{equipmentFilter:"ahu",dateRange:"today",includeTemperatures:T,includeAirflow:T,includeEnergy:T,rollupInterval:"15min"}},{name:"Temperature-only analysis",description:"Focus on AHU temperature performance for last week",params:{equipmentFilter:"ahu and siteRef==@building",dateRange:"lastWeek",includeTemperatures:T,includeAirflow:F,includeEnergy:F,rollupInterval:"1h"}},{name:"Energy efficiency review",description:"Analyze AHU energy consumption and runtime",params:{equipmentFilter:"equip and ahu",dateRange:"lastMonth",includeTemperatures:F,includeAirflow:F,includeEnergy:T,rollupInterval:"1h"}}]

@@ -1,0 +1,95 @@
+{
+  "name": "addEnumPoints",
+  "hash": "test-hash-123",
+  "synced": "2025-10-01T06:06:17.841Z",
+  "signature": {
+    "parameters": [],
+    "returnType": "Grid",
+    "isAsync": false
+  },
+  "dependencies": {
+    "functions": [
+      "has",
+      "set",
+      "diff",
+      "logInfo",
+      "ahuCoolPeriods",
+      "ahuHeatPeriods",
+      "hisPeriodMatrix",
+      "add"
+    ],
+    "tags": [
+      "point",
+      "ahu",
+      "cmd",
+      "sp",
+      "cooling",
+      "heating"
+    ],
+    "queries": [
+      "readAll",
+      "read",
+      "hisWrite"
+    ],
+    "externalApis": []
+  },
+  "complexity": {
+    "linesOfCode": 36,
+    "cyclomaticComplexity": 11,
+    "nestedDepth": 2,
+    "commentRatio": 0.12
+  },
+  "operations": {
+    "reads": [
+      "ahu"
+    ],
+    "writes": [
+      "hisWrite"
+    ],
+    "commits": false,
+    "jobs": false,
+    "emails": false
+  },
+  "documentation": {
+    "description": "",
+    "examples": [],
+    "notes": []
+  },
+  "patterns": {
+    "category": "hvac",
+    "subcategory": "AHU",
+    "keywords": [
+      "add",
+      "enum",
+      "points",
+      "read"
+    ],
+    "useCase": "General utility"
+  },
+  "performance": {
+    "estimatedRuntime": "medium",
+    "hasLoops": true,
+    "hasRecursion": false,
+    "datasetSize": "small"
+  },
+  "context": {
+    "siteSpecific": false,
+    "projectName": "mobilytik",
+    "instanceName": "local",
+    "sharedAcrossProjects": false
+  },
+  "quality": {
+    "hasDocumentation": true,
+    "hasExamples": false,
+    "hasErrorHandling": false,
+    "hasTests": false
+  },
+  "relationships": {
+    "similarFunctions": [],
+    "relatedEquipTypes": [
+      "ahu",
+      "fan"
+    ],
+    "prerequisiteFunctions": []
+  }
+}

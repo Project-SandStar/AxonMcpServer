@@ -1,0 +1,31 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @energy-meter-consumption
+name: "Meter Energy Consumption"
+category: "energy"
+description: "Calculate energy consumption for meters over a time period"
+tags: ["energy","meter","consumption","kWh","analysis"]
+
+parameters: [{name:"meterFilter",type:"string",description:"Filter expression to select meters (e.g., \"elecMeter\", \"elecMeter and equip\")",required:T,examples:["elecMeter","elecMeter and equip","elecMeter and siteRef==@siteId"]},{name:"dateRange",type:"string",description:"Date range for the analysis (e.g., \"yesterday\", \"lastWeek\", \"2024-01\")",required:T,default:"yesterday",examples:["today","yesterday","lastWeek","lastMonth","thisMonth","2024-01"]},{name:"rollup",type:"string",description:"Time rollup period (e.g., \"1hour\", \"1day\", \"1month\")",required:F,default:"1day",validation:{enum:["1min","1hour","1day","1week","1month"]}}]
+
+template:
+  // Energy consumption analysis for meters
+  readAll({{meterFilter}})
+    .hisRead({{dateRange}})
+    .hisRollup(sum, {{rollup}})
+    .map(row => do
+      consumed: row->v0
+      { 
+        meter: row->dis,
+        period: row->ts,
+        consumption: consumed,
+        consumptionDisp: consumed.as("kWh").toLocale("0.0") + "kWh"
+      }
+    end)
+    .sort("meter")
+  
+
+validation: ["readAll({{meterFilter}}).size > 0  // Verify meters exist"]
+
+examples: [{name:"Daily consumption for all electric meters",params:{meterFilter:"elecMeter",dateRange:"yesterday",rollup:"1day"}},{name:"Monthly consumption for site meters",params:{meterFilter:"elecMeter and siteRef==@1234",dateRange:"lastMonth",rollup:"1month"}}]

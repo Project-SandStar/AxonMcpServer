@@ -1,0 +1,459 @@
+/* 
+ * Axon AI Assistant Chat UI Styles
+ * 
+ * Fully implemented chat interface with:
+ * - Message bubbles (user/assistant/system)
+ * - Code blocks with syntax highlighting
+ * - Streaming animations
+ * - Action buttons
+ */
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    color: var(--vscode-foreground);
+    background-color: var(--vscode-editor-background);
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+}
+
+#app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100%;
+}
+
+/* Header */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    background-color: var(--vscode-sideBar-background);
+}
+
+.header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+}
+
+.header-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.header-actions button {
+    padding: 6px 12px;
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.header-actions button:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+/* Messages Container */
+.messages-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+}
+
+/* Welcome Message */
+.welcome-message {
+    text-align: center;
+    padding: 40px 20px;
+}
+
+.welcome-message h2 {
+    font-size: 20px;
+    margin-bottom: 12px;
+}
+
+.welcome-message p {
+    color: var(--vscode-descriptionForeground);
+    margin-bottom: 24px;
+}
+
+.quick-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.quick-action {
+    padding: 12px 20px;
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    border: 1px solid var(--vscode-button-border);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.quick-action:hover {
+    background-color: var(--vscode-button-secondaryHoverBackground);
+    transform: translateY(-2px);
+}
+
+/* Input Container */
+.input-container {
+    border-top: 1px solid var(--vscode-panel-border);
+    background-color: var(--vscode-sideBar-background);
+    padding: 12px 16px;
+}
+
+.input-wrapper {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+#message-input {
+    flex: 1;
+    padding: 10px 12px;
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 4px;
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    resize: vertical;
+    min-height: 60px;
+}
+
+#message-input:focus {
+    outline: 1px solid var(--vscode-focusBorder);
+}
+
+#send-button {
+    padding: 10px 20px;
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+#send-button:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+#send-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Status Bar */
+.status-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+}
+
+/* Scrollbar */
+.messages-container::-webkit-scrollbar {
+    width: 10px;
+}
+
+.messages-container::-webkit-scrollbar-track {
+    background: var(--vscode-scrollbarSlider-background);
+}
+
+.messages-container::-webkit-scrollbar-thumb {
+    background: var(--vscode-scrollbarSlider-activeBackground);
+    border-radius: 5px;
+}
+
+.messages-container::-webkit-scrollbar-thumb:hover {
+    background: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+/* Messages */
+.message {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 16px;
+    max-width: 85%;
+    animation: slideIn 0.2s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.message-user {
+    align-self: flex-end;
+}
+
+.message-assistant {
+    align-self: flex-start;
+}
+
+.message-system {
+    align-self: center;
+    max-width: 90%;
+}
+
+/* Message Header */
+.message-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+}
+
+.message-role {
+    font-weight: 600;
+}
+
+.message-timestamp {
+    font-size: 11px;
+    opacity: 0.7;
+}
+
+/* Message Content */
+.message-content {
+    padding: 12px 16px;
+    border-radius: 8px;
+    line-height: 1.5;
+    word-wrap: break-word;
+}
+
+.message-user .message-content {
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+}
+
+.message-assistant .message-content {
+    background-color: var(--vscode-editor-inactiveSelectionBackground);
+    color: var(--vscode-editor-foreground);
+    border: 1px solid var(--vscode-panel-border);
+}
+
+.message-system .message-content {
+    background-color: var(--vscode-notifications-background);
+    color: var(--vscode-notifications-foreground);
+    border: 1px solid var(--vscode-notifications-border);
+    text-align: center;
+    font-size: 13px;
+    padding: 8px 12px;
+}
+
+/* Streaming Animation */
+.message.streaming .message-content::after {
+    content: '▋';
+    animation: blink 1s infinite;
+    margin-left: 2px;
+}
+
+@keyframes blink {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+}
+
+/* Code Blocks */
+.code-block {
+    margin: 12px 0;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--vscode-panel-border);
+}
+
+.code-block-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background-color: var(--vscode-editor-background);
+    border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.code-block-language {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--vscode-descriptionForeground);
+}
+
+.code-block-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.code-action-btn {
+    padding: 4px 8px;
+    font-size: 11px;
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    border: 1px solid var(--vscode-button-border);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.code-action-btn:hover {
+    background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+.code-block-content {
+    padding: 12px;
+    background-color: var(--vscode-editor-background);
+    overflow-x: auto;
+}
+
+.code-block-content pre {
+    margin: 0;
+    font-family: var(--vscode-editor-font-family);
+    font-size: var(--vscode-editor-font-size);
+    line-height: 1.4;
+    color: var(--vscode-editor-foreground);
+}
+
+.code-block-content code {
+    font-family: inherit;
+}
+
+/* Message Actions */
+.message-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.message:hover .message-actions {
+    opacity: 1;
+}
+
+.message-action-btn {
+    padding: 4px 10px;
+    font-size: 11px;
+    background-color: transparent;
+    color: var(--vscode-descriptionForeground);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.message-action-btn:hover {
+    background-color: var(--vscode-list-hoverBackground);
+    color: var(--vscode-foreground);
+}
+
+/* Error Messages */
+.message.error .message-content {
+    background-color: var(--vscode-inputValidation-errorBackground);
+    border: 1px solid var(--vscode-inputValidation-errorBorder);
+    color: var(--vscode-errorForeground);
+}
+
+/* Info Messages */
+.message.info .message-content {
+    background-color: var(--vscode-inputValidation-infoBackground);
+    border: 1px solid var(--vscode-inputValidation-infoBorder);
+    color: var(--vscode-foreground);
+}
+
+/* Warning Messages */
+.message.warning .message-content {
+    background-color: var(--vscode-inputValidation-warningBackground);
+    border: 1px solid var(--vscode-inputValidation-warningBorder);
+    color: var(--vscode-foreground);
+}
+
+/* Loading Spinner */
+.loading-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--vscode-panel-border);
+    border-top-color: var(--vscode-button-background);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Empty State */
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--vscode-descriptionForeground);
+}
+
+.empty-state-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+}
+
+/* Markdown-like Formatting */
+.message-content p {
+    margin: 8px 0;
+}
+
+.message-content p:first-child {
+    margin-top: 0;
+}
+
+.message-content p:last-child {
+    margin-bottom: 0;
+}
+
+.message-content ul,
+.message-content ol {
+    margin: 8px 0;
+    padding-left: 24px;
+}
+
+.message-content li {
+    margin: 4px 0;
+}
+
+.message-content strong {
+    font-weight: 600;
+}
+
+.message-content em {
+    font-style: italic;
+}
+
+.message-content code:not(pre code) {
+    padding: 2px 6px;
+    background-color: var(--vscode-textCodeBlock-background);
+    border-radius: 3px;
+    font-family: var(--vscode-editor-font-family);
+    font-size: 0.9em;
+}

@@ -1,0 +1,272 @@
+// Prisma schema for Axon MCP Server usage tracking
+// Uses SQLite via better-sqlite3 adapter
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model ToolEvent {
+  id         Int      @id @default(autoincrement())
+  toolName   String   @map("tool_name")
+  timestamp  DateTime @default(now())
+  durationMs Int?     @map("duration_ms")
+  success    Boolean  @default(true)
+  error      String?
+  params     String?  // JSON string of params
+
+  @@index([toolName])
+  @@index([timestamp])
+  @@map("tool_events")
+}
+
+model SearchEvent {
+  id          Int      @id @default(autoincrement())
+  query       String
+  toolName    String   @map("tool_name")
+  timestamp   DateTime @default(now())
+  resultCount Int      @default(0) @map("result_count")
+  durationMs  Int?     @map("duration_ms")
+
+  @@index([query])
+  @@index([timestamp])
+  @@map("search_events")
+}
+
+model SessionEvent {
+  id           Int      @id @default(autoincrement())
+  sessionId    String   @map("session_id")
+  action       String   // 'start' or 'end'
+  timestamp    DateTime @default(now())
+  durationMs   Int?     @map("duration_ms")
+  requestCount Int?     @map("request_count")
+
+  @@index([sessionId])
+  @@index([timestamp])
+  @@map("session_events")
+}
+
+model DailyStats {
+  id          Int    @id @default(autoincrement())
+  date        String @unique
+  toolCalls   Int    @default(0) @map("tool_calls")
+  searches    Int    @default(0)
+  sessions    Int    @default(0)
+  uniqueTools Int    @default(0) @map("unique_tools")
+
+  @@index([date])
+  @@map("daily_stats")
+}
+
+// ============================================
+// OAuth 2.1 Models
+// ============================================
+
+model OAuthClient {
+  id           String   @id @default(uuid())
+  clientId     String   @unique @map("client_id")
+  clientSecret String?  @map("client_secret")
+  clientName   String?  @map("client_name")
+  redirectUris String   @map("redirect_uris") // JSON array stored as string
+  scope        String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  authCodes     AuthorizationCode[]
+  accessTokens  AccessToken[]
+  refreshTokens RefreshToken[]
+
+  @@map("oauth_clients")
+}
+
+model AuthorizationCode {
+  id            String      @id @default(uuid())
+  code          String      @unique
+  clientId      String      @map("client_id")
+  client        OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  userId        String?     @map("user_id")
+  redirectUri   String      @map("redirect_uri")
+  scope         String?
+  codeChallenge String      @map("code_challenge")
+  codeChallengeMethod String @default("S256") @map("code_challenge_method")
+  expiresAt     DateTime    @map("expires_at")
+  used          Boolean     @default(false)
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@index([code])
+  @@index([expiresAt])
+  @@map("authorization_codes")
+}
+
+model AccessToken {
+  id        String    @id @default(uuid())
+  token     String    @unique
+  clientId  String    @map("client_id")
+  client    OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  userId    String?   @map("user_id")
+  scope     String?
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([token])
+  @@index([expiresAt])
+  @@map("access_tokens")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  token     String    @unique
+  clientId  String    @map("client_id")
+  client    OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  userId    String?   @map("user_id")
+  scope     String?
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([token])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model OAuthSession {
+  id           String   @id @default(uuid())
+  sessionId    String   @unique @map("session_id")
+  clientId     String   @map("client_id")
+  clientName   String?  @map("client_name")
+  userId       String?  @map("user_id")
+  scope        String?
+  createdAt    DateTime @default(now()) @map("created_at")
+  lastActivity DateTime @default(now()) @map("last_activity")
+  userAgent    String?  @map("user_agent")
+  ipAddress    String?  @map("ip_address")
+
+  @@index([clientId])
+  @@index([userId])
+  @@map("oauth_sessions")
+}
+
+// ============================================
+// Code Graph Models
+// ============================================
+
+model AxonProject {
+  id            Int       @id @default(autoincrement())
+  name          String    @unique
+  path          String
+  description   String?
+  functionCount Int       @default(0) @map("function_count")
+  lastIndexed   DateTime? @map("last_indexed")
+  autoIndex     Boolean   @default(true) @map("auto_index")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  codeNodes     CodeNode[]
+
+  @@map("axon_projects")
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
+model AppSecret {
+  name      String   @id
+  value     String   // AES-256-GCM ciphertext (base64) of the raw secret
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("app_secrets")
+}
+
+model CodeNode {
+  id            String   @id @default(uuid())
+  projectId     Int      @map("project_id")
+  nodeType      String   @map("node_type") // "function", "defcomp", "variable"
+  name          String
+  qualifiedName String   @map("qualified_name")
+  filePath      String   @map("file_path")
+  lineStart     Int      @map("line_start")
+  lineEnd       Int?     @map("line_end")
+  signature     String?
+  documentation String?
+  returnType    String?  @map("return_type")
+  source        String?
+  modifiers     String?  // JSON array
+  facets        String?  // JSON array
+  parentType    String?  @map("parent_type")
+  isPublic      Boolean? @map("is_public")
+  isStatic      Boolean? @map("is_static")
+  isAbstract    Boolean? @map("is_abstract")
+  language      String?  @default("axon")
+
+  project       AxonProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  outgoingEdges CodeEdge[] @relation("EdgeSource")
+  incomingEdges CodeEdge[] @relation("EdgeTarget")
+
+  @@unique([projectId, qualifiedName])
+  @@index([projectId])
+  @@index([name])
+  @@index([nodeType])
+  @@map("code_nodes")
+}
+
+model CodeEdge {
+  id         String  @id @default(uuid())
+  sourceId   String  @map("source_id")
+  targetId   String  @map("target_id")
+  edgeType   String  @map("edge_type") // "calls", "contains"
+  lineNumber Int?    @map("line_number")
+  colNumber  Int?    @map("col_number")
+  isResolved Boolean @default(true) @map("is_resolved")
+  metadata   String? // JSON string
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  source     CodeNode @relation("EdgeSource", fields: [sourceId], references: [id], onDelete: Cascade)
+  target     CodeNode @relation("EdgeTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, targetId, edgeType, lineNumber])
+  @@index([sourceId])
+  @@index([targetId])
+  @@index([edgeType])
+  @@map("code_edges")
+}
+
+model UnresolvedRef {
+  id            String   @id @default(uuid())
+  projectId     Int      @map("project_id")
+  fromNodeId    String   @map("from_node_id")
+  referenceName String   @map("reference_name")
+  refType       String   @map("ref_type")
+  lineNumber    Int      @map("line_number")
+  colNumber     Int?     @map("col_number")
+  candidates    String?  // JSON array
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([projectId])
+  @@index([fromNodeId])
+  @@map("unresolved_refs")
+}
+
+model GraphBuildStats {
+  id              String    @id @default(uuid())
+  projectId       Int       @unique @map("project_id")
+  nodeCount       Int       @default(0) @map("node_count")
+  edgeCount       Int       @default(0) @map("edge_count")
+  unresolvedCount Int       @default(0) @map("unresolved_count")
+  vectorCount     Int       @default(0) @map("vector_count")
+  lastBuildAt     DateTime? @map("last_build_at")
+  lastVectorAt    DateTime? @map("last_vector_at")
+  buildDurationMs Int?      @map("build_duration_ms")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@map("graph_build_stats")
+}

@@ -1,0 +1,40 @@
+// Trio Format Template
+// Generated from YAML template
+
+id: @data-equipment-query
+name: "Equipment Query"
+category: "data"
+description: "Query and list equipment with related points and metadata"
+tags: ["data","equipment","points","query","export"]
+
+parameters: [{name:"equipFilter",type:"string",description:"Filter expression to select equipment",required:T,examples:["equip","equip and hvac","equip and siteRef==@siteId","ahu or vav","equip and area==\"Floor2\""]},{name:"includePoints",type:"boolean",description:"Include associated points count",required:F,default:T},{name:"sortBy",type:"string",description:"Field to sort results by",required:F,default:"dis",validation:{enum:["dis","navName","area","space","id"]}}]
+
+template:
+  // Equipment Query with Details
+  readAll({{equipFilter}})
+    .map(equip => do
+      points: readAll(point and equipRef==equip->id)
+      sensors: points.findAll(p => p.has("sensor"))
+      commands: points.findAll(p => p.has("cmd"))
+      setpoints: points.findAll(p => p.has("sp"))
+      
+      {
+        id: equip->id,
+        dis: equip->dis,
+        navName: equip->navName,
+        type: equip.names.findAll(n => n!="equip").join(", "),
+        area: equip->area,
+        space: equip->space,
+        siteRef: equip->siteRef,
+        totalPoints: points.size,
+        sensors: sensors.size,
+        commands: commands.size,
+        setpoints: setpoints.size
+      }
+    end)
+    .sort("{{sortBy}}")
+  
+
+validation: ["readAll({{equipFilter}}).size > 0  // Verify equipment exists"]
+
+examples: [{name:"All HVAC equipment",params:{equipFilter:"equip and hvac",includePoints:T,sortBy:"dis"}},{name:"VAV boxes on floor 2",params:{equipFilter:"vav and area==\"Floor2\"",includePoints:T,sortBy:"navName"}}]
