@@ -17,7 +17,7 @@ The CLI script was looking for environment variables that didn't exist, causing 
 config/
 ├── local-skyspark.json       # Local instance (6 projects)
 ├── michealsEnergy.json       # Michael's Energy (3 projects)
-└── skyone.json               # SkyOne (52 projects)
+└── demoInstance.json               # DemoInstance (52 projects)
 ```
 
 Each file contains:
@@ -168,14 +168,14 @@ From your config files:
 - test
 
 **michealsEnergy** (3 projects)
-**skyone** (52 projects)
+**demoInstance** (52 projects)
 
 You can sync any of these:
 ```bash
 npm run sync local demo
 npm run sync local test
 npm run sync michealsEnergy projectName
-npm run sync skyone projectName
+npm run sync demoInstance projectName
 ```
 
 ## File Formats

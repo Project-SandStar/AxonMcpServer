@@ -100,7 +100,7 @@ SKYSPARK_AUTO_DISCOVER=true npm start
 
 ### ✅ Authentication Tests
 - **Local SkySpark**: Authenticated successfully
-- **SkyOne Production**: Authenticated successfully  
+- **DemoInstance Production**: Authenticated successfully  
 - **Token Reuse**: 44ms initial → 1-3ms subsequent requests
 - **Concurrent Requests**: 5 parallel requests handled correctly
 
@@ -130,7 +130,7 @@ SKYSPARK_AUTO_DISCOVER=true npm start
 ## Test Files Created
 
 1. `test-auth.js` - Authentication validation
-2. `test-skyone.js` - Production server testing
+2. `test-demoInstance.js` - Production server testing
 3. `test-token-reuse.js` - Token caching verification
 4. `test-auto-discovery.js` - Discovery functionality test
 

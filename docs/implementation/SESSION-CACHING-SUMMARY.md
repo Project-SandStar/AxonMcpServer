@@ -52,7 +52,7 @@ await saveCachedSession(token);
 {
   "authToken": "abc123...xyz789",
   "timestamp": 1759260455872,
-  "instance": "skyone",
+  "instance": "demoInstance",
   "project": "techwind",
   "username": "su",
   "maxAge": 86400000

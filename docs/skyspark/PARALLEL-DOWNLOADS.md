@@ -75,7 +75,7 @@ node dist/index.js
 
 **Output:**
 ```
-📥 Smart syncing functions for skyone/demoProject...
+📥 Smart syncing functions for demoInstance/demoProject...
   ⚡ Using 10 parallel downloads
   📦 Batch 1/96 (10 functions)
   📦 Batch 2/96 (10 functions)
@@ -91,7 +91,7 @@ Total time: 45 seconds
 
 When syncing with changes:
 ```
-📥 Smart syncing functions for skyone/demoProject...
+📥 Smart syncing functions for demoInstance/demoProject...
   ⚡ Using 10 parallel downloads
   📦 Batch 1/96 (10 functions)
     ⬇️  newFunction1.axon (new)
@@ -219,7 +219,7 @@ If a batch has errors:
 
 2. **Test sync time**
    ```bash
-   rm proj/skyone/demoProject/.sync-metadata.json
+   rm proj/demoInstance/demoProject/.sync-metadata.json
    time node dist/index.js
    ```
 

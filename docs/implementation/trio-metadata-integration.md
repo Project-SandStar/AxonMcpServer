@@ -51,7 +51,7 @@ kpiRule
 ### 4. **Project Context**
 
 Automatically extracts and tags:
-- **Instance name** (e.g., `local`, `production`, `skyone`)
+- **Instance name** (e.g., `local`, `production`, `demoInstance`)
 - **Project name** (e.g., `akpizza`, `demo`)
 - **Module name** from `mod` field
 

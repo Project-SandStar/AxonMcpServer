@@ -60,7 +60,7 @@ You should see output like:
 📂 Found 3 files in config directory
    ✅ Loaded: local-skyspark.json → instance "local" (6 projects)
    ✅ Loaded: michealsEnergy.json → instance "michaelsEnergy" (1 projects)
-   ✅ Loaded: skyone.json → instance "skyone" (12 projects)
+   ✅ Loaded: demoInstance.json → instance "demoInstance" (12 projects)
 🔍 Auto-discovery: ENABLED
 📥 Auto-sync functions: ENABLED
    Will sync function source files to proj/<instance>/<project>/func/

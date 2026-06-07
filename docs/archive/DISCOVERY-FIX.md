@@ -3,7 +3,7 @@
 ## Issues Fixed
 
 ### 1. **Config Loading Priority** ✅
-**Problem:** Environment variables were overriding file-based configurations, causing `skyone.json` (production) instance to not load.
+**Problem:** Environment variables were overriding file-based configurations, causing `demoInstance.json` (production) instance to not load.
 
 **Solution:** Modified `src/config/skysparkConfig.ts` to prioritize file-based configs:
 ```typescript
@@ -18,7 +18,7 @@ if (this.instances.size === 0) {
 
 **Result:** Both instances now load correctly:
 - ✅ **local** (localhost:8080) - 7 projects from `config/local-skyspark.json`
-- ✅ **production** (<skyspark-host>:80) - 3 projects from `config/skyone.json`
+- ✅ **production** (<skyspark-host>:80) - 3 projects from `config/demoInstance.json`
 
 ---
 
@@ -165,7 +165,7 @@ name,dis,mod,src,...
 ```
 config/
 ├── local-skyspark.json      # Local development instance
-└── skyone.json              # Production instance
+└── demoInstance.json              # Production instance
 ```
 
 ### Priority Order

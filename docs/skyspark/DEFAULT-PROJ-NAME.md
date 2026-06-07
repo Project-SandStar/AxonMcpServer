@@ -21,7 +21,7 @@ Add an optional `defaultProjName` field to your instance configuration:
 
 ```json
 {
-  "name": "skyone",
+  "name": "demoInstance",
   "host": "<skyspark-host>",
   "port": 80,
   "protocol": "http",
@@ -98,7 +98,7 @@ When connecting for discovery, the system uses this priority:
 
 ```json
 {
-  "name": "skyone",
+  "name": "demoInstance",
   "defaultProjName": "demo",
   "projects": [
     {"name": "remoteProject1"},
@@ -136,14 +136,14 @@ node dist/index.js
 
 **Output with `defaultProjName`:**
 ```
-🔍 Discovering projects for instance: skyone...
+🔍 Discovering projects for instance: demoInstance...
   🎯 Using discovery project: demo
   ✅ Discovered 52 projects
 ```
 
 **Output without `defaultProjName`:**
 ```
-🔍 Discovering projects for instance: skyone...
+🔍 Discovering projects for instance: demoInstance...
   ✅ Discovered 52 projects
 ```
 
@@ -152,7 +152,7 @@ node dist/index.js
 ```typescript
 // Call discoverInstanceProjects tool
 {
-  "instanceName": "skyone",
+  "instanceName": "demoInstance",
   "updateConfig": true,
   "buildIndex": false
 }
@@ -241,7 +241,7 @@ The `defaultProjName` project doesn't need separate credentials. It will use:
 
 ```json
 {
-  "name": "skyone",
+  "name": "demoInstance",
   "host": "<skyspark-host>",
   "port": 80,
   "protocol": "http",
@@ -261,7 +261,7 @@ The `defaultProjName` project doesn't need separate credentials. It will use:
 
 ```json
 {
-  "name": "skyone",
+  "name": "demoInstance",
   "host": "<skyspark-host>",
   "port": 80,
   "protocol": "http",
@@ -284,7 +284,7 @@ The `defaultProjName` project doesn't need separate credentials. It will use:
 
 **Symptom:**
 ```
-🔍 Discovering projects for instance: skyone...
+🔍 Discovering projects for instance: demoInstance...
   ✅ Discovered 1 projects
 ```
 
@@ -328,11 +328,11 @@ The `defaultProjName` project doesn't need separate credentials. It will use:
 
 ## Examples
 
-### Example 1: SkyOne Production Setup
+### Example 1: DemoInstance Production Setup
 
 ```json
 {
-  "name": "skyone",
+  "name": "demoInstance",
   "host": "<skyspark-host>",
   "port": 80,
   "protocol": "http",

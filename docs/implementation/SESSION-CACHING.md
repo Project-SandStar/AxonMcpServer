@@ -94,7 +94,7 @@ Sessions are stored in `.cache/session-{instance}-{project}.json`:
 | Scenario | Cache Filename |
 |----------|---------------|
 | With instance & project | `session-production-demo.json` |
-| With ConfigManager | `session-skyone-techwind.json` |
+| With ConfigManager | `session-demoInstance-techwind.json` |
 | Fallback (direct config) | `session-api_demo_about.json` |
 
 ## Features
@@ -145,8 +145,8 @@ Each instance/project gets its own cache file:
 ```
 .cache/
 ├── session-production-demo.json
-├── session-skyone-techwind.json
-├── session-skyone-baymak.json
+├── session-demoInstance-techwind.json
+├── session-demoInstance-baymak.json
 └── session-local-test.json
 ```
 

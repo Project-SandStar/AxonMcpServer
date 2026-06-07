@@ -122,7 +122,7 @@ The SkySpark MCP server includes two approaches for syncing functions:
 
 ```json
 {
-  "instance": "skyone",
+  "instance": "demoInstance",
   "project": "demoProject",
   "lastSync": "2025-01-15T12:00:00.000Z",
   "functionCount": 957
@@ -135,7 +135,7 @@ The SkySpark MCP server includes two approaches for syncing functions:
 
 ```json
 {
-  "instance": "skyone",
+  "instance": "demoInstance",
   "project": "demoProject",
   "lastSync": "2025-01-15T12:00:00.000Z",
   "functionCount": 957,
@@ -172,13 +172,13 @@ node dist/index.js
 
 **Basic Sync Output:**
 ```
-📥 Syncing functions for skyone/demoProject...
+📥 Syncing functions for demoInstance/demoProject...
   ✅ Synced: 957 downloaded, 0 skipped, 0 errors
 ```
 
 **Smart Sync Output:**
 ```
-📥 Smart syncing functions for skyone/demoProject...
+📥 Smart syncing functions for demoInstance/demoProject...
   ✅ Smart sync complete:
      📥 Downloaded: 957 new
      ⏭️  Skipped: 0 unchanged
@@ -206,7 +206,7 @@ node dist/index.js
 
 **Smart Sync:**
 ```
-📥 Smart syncing functions for skyone/demoProject...
+📥 Smart syncing functions for demoInstance/demoProject...
   🔄 spk_chillerCOP.axon (modified on server)
   ✅ Smart sync complete:
      🔄 Updated: 1 changed
@@ -224,7 +224,7 @@ node dist/index.js
 
 **Smart Sync:**
 ```
-📥 Smart syncing functions for skyone/demoProject...
+📥 Smart syncing functions for demoInstance/demoProject...
   🗑️  oldFunction.axon (deleted from server)
   ✅ Smart sync complete:
      🗑️  Deleted: 1 removed
@@ -400,7 +400,7 @@ this.smartSyncManager = new FunctionSyncManagerEnhanced('proj');
 
 ```bash
 # Delete metadata to force re-sync
-rm proj/skyone/demoProject/.sync-metadata.json
+rm proj/demoInstance/demoProject/.sync-metadata.json
 
 # Restart server
 node dist/index.js
@@ -410,14 +410,14 @@ node dist/index.js
 
 ```bash
 # Use CLI tool
-node skyspark-sync.js pull --instance skyone --project demoProject --force
+node skyspark-sync.js pull --instance demoInstance --project demoProject --force
 ```
 
 ### Check Sync Status
 
 ```typescript
 // Via API
-const stats = await smartSyncManager.getSyncStats('skyone', 'demoProject');
+const stats = await smartSyncManager.getSyncStats('demoInstance', 'demoProject');
 
 console.log(stats);
 // {

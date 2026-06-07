@@ -9,7 +9,7 @@ const client = new HaystackSkySparkClient({
   password: '<password>'
 });
 
-console.log('Testing connection to SkyOne...');
+console.log('Testing connection to DemoInstance...');
 console.log('Host: <skyspark-host>:80');
 console.log('Project: demo');
 console.log('Username: alper');

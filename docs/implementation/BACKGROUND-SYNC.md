@@ -185,14 +185,14 @@ Example output:
 
 🚀 Starting automatic project discovery and indexing...
 
-Instance: skyone
-  📚 Building index for skyone/techwind...
+Instance: demoInstance
+  📚 Building index for demoInstance/techwind...
     📁 Building index from synced files...
     ✓ Indexed 127 functions from synced files
     🔄 Smart syncing functions (checking for updates)...
     ✓ All functions up to date (127 files)
 
-  📚 Building index for skyone/demoProject...
+  📚 Building index for demoInstance/demoProject...
     📁 Building index from synced files...
     ✓ Indexed 127 functions from synced files
     🔄 Smart syncing functions (checking for updates)...
@@ -220,7 +220,7 @@ Shows:
 
 Always maintain `proj/` directory:
 ```bash
-npm run sync -- --instance skyone --project techwind
+npm run sync -- --instance demoInstance --project techwind
 ```
 
 This ensures:
@@ -270,11 +270,11 @@ CACHE_MAX_AGE=3600000    # 1 hour
 **Fix:**
 ```bash
 # 1. Remove empty cache
-rm .cache/axon-index-skyone-demoProject.json
-rm .cache/cache-metadata-skyone-demoProject.json
+rm .cache/axon-index-demoInstance-demoProject.json
+rm .cache/cache-metadata-demoInstance-demoProject.json
 
 # 2. Sync functions
-npm run sync -- --instance skyone --project demoProject
+npm run sync -- --instance demoInstance --project demoProject
 
 # 3. Restart server
 npm start
@@ -301,7 +301,7 @@ CACHE_MAX_AGE=86400000
 ```bash
 # Sync once, then server uses cached data
 for project in techwind baymak demoProject; do
-  npm run sync -- --instance skyone --project $project
+  npm run sync -- --instance demoInstance --project $project
 done
 ```
 
@@ -346,7 +346,7 @@ SKYSPARK_AUTO_SYNC_FUNCTIONS=false
 SKYSPARK_AUTO_DISCOVER=false
 
 # Sync specific projects as needed
-npm run sync -- --instance skyone --project techwind
+npm run sync -- --instance demoInstance --project techwind
 ```
 
 ### Production
@@ -371,8 +371,8 @@ SKYSPARK_SYNC_CONCURRENCY=10
 npm run sync-all  # (if script exists)
 
 # Or sync key projects
-npm run sync -- --instance skyone --project techwind
-npm run sync -- --instance skyone --project baymak
+npm run sync -- --instance demoInstance --project techwind
+npm run sync -- --instance demoInstance --project baymak
 
 # Then deploy with cache included
 ```

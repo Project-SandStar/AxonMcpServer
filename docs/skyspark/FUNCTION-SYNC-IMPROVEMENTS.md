@@ -52,13 +52,13 @@ The `skyspark-sync.js` CLI now:
 
 ```bash
 # Sync a single project
-node skyspark-sync.js pull --instance skyone --project demoProject
+node skyspark-sync.js pull --instance demoInstance --project demoProject
 
 # Sync with higher concurrency
-node skyspark-sync.js pull --instance skyone --project demoProject --concurrency 20
+node skyspark-sync.js pull --instance demoInstance --project demoProject --concurrency 20
 
 # Force full re-download
-node skyspark-sync.js pull --instance skyone --project demoProject --force
+node skyspark-sync.js pull --instance demoInstance --project demoProject --force
 
 # Sync ALL projects from ALL instances
 node skyspark-sync.js pull-all
@@ -116,7 +116,7 @@ Each synced project has a `.sync-metadata.json`:
 
 ```json
 {
-  "instance": "skyone",
+  "instance": "demoInstance",
   "project": "demoProject",
   "lastSync": "2025-10-01T05:11:23.456Z",
   "functionCount": 957,
@@ -145,7 +145,7 @@ Each synced project has a `.sync-metadata.json`:
 
 ```bash
 # Test single project sync
-node skyspark-sync.js pull --instance skyone --project demoProject
+node skyspark-sync.js pull --instance demoInstance --project demoProject
 
 # Test status
 node skyspark-sync.js status

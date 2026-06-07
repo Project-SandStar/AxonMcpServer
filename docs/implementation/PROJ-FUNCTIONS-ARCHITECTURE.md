@@ -41,7 +41,7 @@
         ┌─────────────────────────────────────────┐
         │   Project caches NEVER loaded!          │
         │                                         │
-        │   .cache/axon-index-skyone-demo.json    │ ← 📦 NOT LOADED
+        │   .cache/axon-index-demoInstance-demo.json    │ ← 📦 NOT LOADED
         │   .cache/axon-index-local-test.json     │ ← 📦 NOT LOADED
         │   .cache/axon-index-prod-main.json      │ ← 📦 NOT LOADED
         └─────────────────────────────────────────┘

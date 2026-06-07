@@ -1069,7 +1069,7 @@ For mutations (commit/diff/remove), strongly prefer setPrimaryProject + verify w
 
 After switching, all executeAxonCode calls will use the new active project by default (unless project parameter is explicitly specified).
 
-Instance name can be from filename (e.g., "skyone" for skyone.json) or JSON name field. If projectName omitted, uses default or first project.
+Instance name can be from filename (e.g., "demoInstance" for demoInstance.json) or JSON name field. If projectName omitted, uses default or first project.
 
 Common workflow:
 1. Use listSkySparkProjects to see available projects
@@ -1080,7 +1080,7 @@ Common workflow:
             properties: {
               instanceName: {
                 type: 'string',
-                description: 'Instance name (filename or JSON name field, e.g., "skyone", "local")',
+                description: 'Instance name (filename or JSON name field, e.g., "demoInstance", "local")',
               },
               projectName: {
                 type: 'string',
@@ -1168,7 +1168,7 @@ Examples:
             properties: {
               instanceName: {
                 type: 'string',
-                description: 'Instance name (e.g., "local", "skyone")',
+                description: 'Instance name (e.g., "local", "demoInstance")',
               },
               projectName: {
                 type: 'string',

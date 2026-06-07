@@ -16,7 +16,7 @@ This means:
 
 ### Old Behavior (Project-Level Sessions)
 ```
-Instance: skyone, User: alper
+Instance: demoInstance, User: alper
 
 Project 1 (techwind)    → Login 1 → Session 1
 Project 2 (baymak)      → Login 2 → Session 2
@@ -31,7 +31,7 @@ Total: 64 logins, 64 cached sessions
 
 ### New Behavior (Instance-Level Sessions)
 ```
-Instance: skyone, User: alper
+Instance: demoInstance, User: alper
 
 Project 1 (techwind)    → Login 1 → Session (shared)
 Project 2 (baymak)      → Use Session (no login!)
@@ -51,13 +51,13 @@ Total: 1 login, 1 cached session shared by all projects
 **Old Formula:**
 ```
 Cache Key = instance + project + username
-Example: session-skyone-techwind-alper.json
+Example: session-demoInstance-techwind-alper.json
 ```
 
 **New Formula:**
 ```
 Cache Key = instance + username
-Example: session-skyone-alper.json
+Example: session-demoInstance-alper.json
 ```
 
 ### Session Sharing Logic
@@ -65,11 +65,11 @@ Example: session-skyone-alper.json
 1. **First Project Access:**
    - No cached session exists
    - Authenticate with SkySpark
-   - Save session: `session-skyone-alper.json`
+   - Save session: `session-demoInstance-alper.json`
    - Track project: `projects: ["techwind"]`
 
 2. **Second Project Access (Same Instance):**
-   - Load cached session: `session-skyone-alper.json`
+   - Load cached session: `session-demoInstance-alper.json`
    - Validate token (still valid!)
    - **Reuse session** (no new login!)
    - Update projects: `projects: ["techwind", "baymak"]`
@@ -86,7 +86,7 @@ Example: session-skyone-alper.json
 {
   "authToken": "web-ifALU9xxtBZTsmwRFx_QS4KAi9KiOTE9r1vtDePFKsI-3a9",
   "timestamp": 1759304884128,
-  "instance": "skyone",
+  "instance": "demoInstance",
   "username": "<username>",
   "projects": ["techwind", "baymak", "demo", "..."],
   "maxAge": 86400000
@@ -108,7 +108,7 @@ Example: session-skyone-alper.json
 ### Real-World Example
 
 **Your Current Setup (from session files):**
-- **Instance:** skyone (60+ projects)
+- **Instance:** demoInstance (60+ projects)
 - **Instance:** local (6+ projects)
 - **Instance:** production (various projects)
 - **Instance:** michealsEnergy (3+ projects)
@@ -117,7 +117,7 @@ Example: session-skyone-alper.json
 - Total logins: **~70 logins** (one per project)
 
 **After:**
-- skyone: 1 login (shared by 60+ projects)
+- demoInstance: 1 login (shared by 60+ projects)
 - local: 1 login (shared by 6+ projects)
 - production: 1 login
 - michealsEnergy: 1 login
@@ -166,7 +166,7 @@ Example output:
 ```
 Consolidation Plan:
 ───────────────────────────────────────────────────────────────
-  skyone (user: alper): 60 sessions → 1 session
+  demoInstance (user: alper): 60 sessions → 1 session
   local (user: alper): 6 sessions → 1 session
   production (user: alper): 3 sessions → 1 session
   michealsEnergy (user: alper): 3 sessions → 1 session
@@ -189,9 +189,9 @@ Summary:
 
 ```bash
 # Next time you access any project, new instance-level sessions will be created
-npm run sync -- --instance skyone --project techwind
+npm run sync -- --instance demoInstance --project techwind
 
-# This creates one session for entire skyone instance
+# This creates one session for entire demoInstance instance
 # All other projects will reuse it!
 ```
 
@@ -212,16 +212,16 @@ npm run sync -- --instance skyone --project techwind
 ```
 session-<instance>-<project>.json
 Examples:
-  session-skyone-techwind.json
-  session-skyone-baymak.json
-  session-skyone-demo.json
+  session-demoInstance-techwind.json
+  session-demoInstance-baymak.json
+  session-demoInstance-demo.json
 ```
 
 **New Pattern:**
 ```
 session-<instance>-<username>.json
 Examples:
-  session-skyone-alper.json
+  session-demoInstance-alper.json
   session-local-alper.json
   session-production-admin.json
 ```
@@ -259,9 +259,9 @@ Before reusing a cached session:
 
 Sessions are **per-user**:
 ```
-session-skyone-alper.json      # Alper's session
-session-skyone-admin.json      # Admin's session
-session-skyone-operator.json   # Operator's session
+session-demoInstance-alper.json      # Alper's session
+session-demoInstance-admin.json      # Admin's session
+session-demoInstance-operator.json   # Operator's session
 ```
 
 Different users cannot share sessions (different cache files).
@@ -281,7 +281,7 @@ Different users cannot share sessions (different cache files).
 ls -l .cache/session-*.json
 
 # Check a session file
-cat .cache/session-skyone-alper.json | jq '.'
+cat .cache/session-demoInstance-alper.json | jq '.'
 ```
 
 ### Still Seeing Multiple Logins?
@@ -296,17 +296,17 @@ cat .cache/session-skyone-alper.json | jq '.'
 
 ```bash
 # Test with multiple projects
-npm run sync -- --instance skyone --project techwind
+npm run sync -- --instance demoInstance --project techwind
 # Should authenticate (first time)
 
-npm run sync -- --instance skyone --project baymak
+npm run sync -- --instance demoInstance --project baymak
 # Should reuse session (no new login!)
 
-npm run sync -- --instance skyone --project demo
+npm run sync -- --instance demoInstance --project demo
 # Should reuse session (no new login!)
 
 # Check the session file
-cat .cache/session-skyone-*.json | jq '.projects'
+cat .cache/session-demoInstance-*.json | jq '.projects'
 # Should show: ["techwind", "baymak", "demo"]
 ```
 
@@ -325,7 +325,7 @@ done
 
 Example output:
 ```
-session-skyone-alper.json:
+session-demoInstance-alper.json:
 techwind, baymak, demo, btsdemo, chapman, fayette, ...
 
 session-local-alper.json:

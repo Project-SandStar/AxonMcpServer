@@ -10,8 +10,8 @@ echo ""
 echo "local-skyspark.json projects:"
 jq '.projects[] | {name, username, description}' /Users/<user>/Code/axon-mcp-server/config/local-skyspark.json
 echo ""
-echo "skyone.json projects:"
-jq '.projects[] | {name, username, description}' /Users/<user>/Code/axon-mcp-server/config/skyone.json
+echo "demoInstance.json projects:"
+jq '.projects[] | {name, username, description}' /Users/<user>/Code/axon-mcp-server/config/demoInstance.json
 
 echo ""
 echo "🚀 Starting server with SKYSPARK_AUTO_DISCOVER=true (will auto-exit after 5 seconds)..."
@@ -26,8 +26,8 @@ echo ""
 echo "local-skyspark.json projects:"
 jq '.projects[] | {name, username, description}' /Users/<user>/Code/axon-mcp-server/config/local-skyspark.json
 echo ""
-echo "skyone.json projects:"
-jq '.projects[] | {name, username, description}' /Users/<user>/Code/axon-mcp-server/config/skyone.json
+echo "demoInstance.json projects:"
+jq '.projects[] | {name, username, description}' /Users/<user>/Code/axon-mcp-server/config/demoInstance.json
 
 echo ""
 echo "✅ Test complete - compare before/after to verify credentials are preserved"

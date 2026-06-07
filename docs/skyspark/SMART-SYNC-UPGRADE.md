@@ -38,14 +38,14 @@ The SkySpark MCP server now uses **Smart Sync (Enhanced)** by default!
 
 ### First Sync (Same as before)
 ```
-📥 Smart syncing functions for skyone/demoProject...
+📥 Smart syncing functions for demoInstance/demoProject...
   ✅ Smart sync complete:
      📥 Downloaded: 957 new
 ```
 
 ### Subsequent Sync (NEW! Detects changes)
 ```
-📥 Smart syncing functions for skyone/demoProject...
+📥 Smart syncing functions for demoInstance/demoProject...
   🔄 spk_chillerCOP.axon (modified on server)
   ⬇️  newSparkFunction.axon (new)
   🗑️  oldSparkFunction.axon (deleted from server)
@@ -63,7 +63,7 @@ The SkySpark MCP server now uses **Smart Sync (Enhanced)** by default!
 ### Old Format
 ```json
 {
-  "instance": "skyone",
+  "instance": "demoInstance",
   "project": "demoProject",
   "lastSync": "2025-09-30T18:35:00.000Z",
   "functionCount": 957
@@ -73,7 +73,7 @@ The SkySpark MCP server now uses **Smart Sync (Enhanced)** by default!
 ### New Format (Per-Function Tracking)
 ```json
 {
-  "instance": "skyone",
+  "instance": "demoInstance",
   "project": "demoProject",
   "lastSync": "2025-09-30T18:35:00.000Z",
   "functionCount": 957,
@@ -137,13 +137,13 @@ The first time you boot, it will convert your existing metadata to the new forma
 Look for this output on boot:
 
 ```
-📥 Smart syncing functions for skyone/demoProject...
+📥 Smart syncing functions for demoInstance/demoProject...
 ```
 
 Instead of:
 
 ```
-📥 Syncing functions for skyone/demoProject...
+📥 Syncing functions for demoInstance/demoProject...
 ```
 
 ---

@@ -6,7 +6,7 @@ You can name your SkySpark instance configuration files anything you want. The s
 ## How It Works
 
 ### Instance Name vs. Filename
-- **Filename**: The JSON file in the `config/` directory (e.g., `skyone.json`, `skytwo.json`, `local-skyspark.json`)
+- **Filename**: The JSON file in the `config/` directory (e.g., `demoInstance.json`, `skytwo.json`, `local-skyspark.json`)
 - **Instance Name**: The `"name"` field inside the JSON file (used for switching between instances)
 
 These can be different, and the system will maintain both correctly.
@@ -16,7 +16,7 @@ These can be different, and the system will maintain both correctly.
 ### Example 1: Production Servers
 You might have multiple production servers:
 
-**File: `config/skyone.json`**
+**File: `config/demoInstance.json`**
 ```json
 {
   "name": "production",
@@ -108,11 +108,11 @@ When auto-discovery updates an instance:
 3. Never creates duplicate files
 
 ### Example Update Flow
-1. **Start**: File `skyone.json` contains instance with `"name": "production"`
-2. **Load**: System loads it and remembers: `production → skyone.json`
+1. **Start**: File `demoInstance.json` contains instance with `"name": "production"`
+2. **Load**: System loads it and remembers: `production → demoInstance.json`
 3. **Discovery**: Finds 52 projects for instance "production"
-4. **Update**: Saves back to `skyone.json` (not `production.json`)
-5. **Result**: `skyone.json` now has all 52 projects ✅
+4. **Update**: Saves back to `demoInstance.json` (not `production.json`)
+5. **Result**: `demoInstance.json` now has all 52 projects ✅
 
 ## Switching Between Instances
 
@@ -138,7 +138,7 @@ jq '{filename: input_filename, name: .name, host: .host, projects: (.projects | 
 - Use descriptive filenames that make sense for your organization
 - Keep `"name"` field short and easy to type (you'll use it in commands)
 - Use consistent naming patterns across your configs
-- Put environment or server info in filename: `skyone.json`, `skytwo.json`
+- Put environment or server info in filename: `demoInstance.json`, `skytwo.json`
 
 ### ❌ DON'T
 - Don't manually rename files while the server is running
@@ -155,11 +155,11 @@ If you have auto-generated files like `local.json` and `production.json`:
 # Rename to your preferred names
 cd config/
 mv local.json local-skyspark.json
-mv production.json skyone.json
+mv production.json demoInstance.json
 
 # Verify the "name" fields
 jq '.name' local-skyspark.json  # Should still show "local"
-jq '.name' skyone.json          # Should still show "production"
+jq '.name' demoInstance.json          # Should still show "production"
 ```
 
 The system will automatically track the new filenames on next load.

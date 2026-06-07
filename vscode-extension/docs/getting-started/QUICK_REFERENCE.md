@@ -88,7 +88,7 @@ Get key: https://console.anthropic.com/
 ```
 axon-mcp-server/config/
 ├── local-skyspark.json     (Local dev)
-├── skyone.json             (Production)
+├── demoInstance.json             (Production)
 ├── michealsEnergy.json     (Client server)
 └── your-config.json        (Custom)
 ```

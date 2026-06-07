@@ -29,7 +29,7 @@ The SkySpark MCP server now includes **automatic, backend function caching** tha
 
 ```
 proj/                                    # Base directory for cached functions
-├── <instance>/                          # Instance name (e.g., skyone, local)
+├── <instance>/                          # Instance name (e.g., demoInstance, local)
 │   ├── <project>/                       # Project name (e.g., demoProject, mobilytik)
 │   │   ├── .sync-metadata.json         # Sync status tracking
 │   │   └── func/                        # Function source files
@@ -44,7 +44,7 @@ proj/                                    # Base directory for cached functions
 
 ```
 proj/
-├── skyone/
+├── demoInstance/
 │   ├── demoProject/
 │   │   ├── .sync-metadata.json
 │   │   └── func/
@@ -183,7 +183,7 @@ File: `proj/<instance>/<project>/.sync-metadata.json`
 
 ```json
 {
-  "instance": "skyone",
+  "instance": "demoInstance",
   "project": "demoProject",
   "lastSync": "2025-09-30T18:35:00.000Z",
   "functionCount": 957
@@ -200,7 +200,7 @@ File: `proj/<instance>/<project>/.sync-metadata.json`
                   ▼
 ┌─────────────────────────────────────────────┐
 │  Discover Projects (Auto-Discovery)          │
-│  ├─ skyone: 52 projects                      │
+│  ├─ demoInstance: 52 projects                      │
 │  ├─ local: 6 projects                        │
 │  └─ michealsEnergy: 3 projects               │
 └─────────────────┬───────────────────────────┘
@@ -250,17 +250,17 @@ node dist/index.js
 
 **Output:**
 ```
-🔍 Discovering projects for instance: skyone...
+🔍 Discovering projects for instance: demoInstance...
   ✅ Discovered 52 projects
-  📚 Building index for skyone/demoProject...
+  📚 Building index for demoInstance/demoProject...
     ✓ Indexed 957 functions
-  📥 Syncing functions for skyone/demoProject...
+  📥 Syncing functions for demoInstance/demoProject...
     ✅ Synced: 957 downloaded, 0 skipped, 0 errors
 ```
 
 **Result:**
-- Created `proj/skyone/demoProject/func/` with 957 `.axon` files
-- Created `proj/skyone/demoProject/.sync-metadata.json`
+- Created `proj/demoInstance/demoProject/func/` with 957 `.axon` files
+- Created `proj/demoInstance/demoProject/.sync-metadata.json`
 - Functions ready for instant offline access
 
 ### Example 2: Subsequent Boot (Already Synced)
@@ -271,7 +271,7 @@ node dist/index.js
 
 **Output:**
 ```
-  📚 Building index for skyone/demoProject...
+  📚 Building index for demoInstance/demoProject...
     ✓ Indexed 957 functions
     ✓ Functions already synced (957 files)
 ```
@@ -295,7 +295,7 @@ Cost: $0.50 in tokens
 **With Caching:**
 ```
 Cline: "Show me the chillerCOP function"
-→ Server reads from proj/skyone/demoProject/func/spk_chillerCOP.axon
+→ Server reads from proj/demoInstance/demoProject/func/spk_chillerCOP.axon
 → Returns function metadata (not full source)
 → AI only sees function signature and description
 Cost: $0.01 in tokens
@@ -307,13 +307,13 @@ You can still manually sync using the CLI tool:
 
 ```bash
 # Manual sync
-node skyspark-sync.js pull --instance skyone --project demoProject
+node skyspark-sync.js pull --instance demoInstance --project demoProject
 
 # Check what's synced
-ls proj/skyone/demoProject/func/*.axon | wc -l
+ls proj/demoInstance/demoProject/func/*.axon | wc -l
 
 # View a function
-cat proj/skyone/demoProject/func/spk_chillerCOP.axon
+cat proj/demoInstance/demoProject/func/spk_chillerCOP.axon
 ```
 
 ## 🔍 Troubleshooting
@@ -341,7 +341,7 @@ Functions re-sync automatically after 24 hours. To force immediate re-sync:
 
 ```bash
 # Delete metadata file
-rm proj/skyone/demoProject/.sync-metadata.json
+rm proj/demoInstance/demoProject/.sync-metadata.json
 
 # Restart server
 node dist/index.js

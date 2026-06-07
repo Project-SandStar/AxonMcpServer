@@ -61,16 +61,16 @@ $ npm start
 ╚══════════════════════════════════════════════════════════════╝
 
 🚀 Starting automatic project discovery and indexing...
-Instance: skyone
-  📚 Building index for skyone/techwind...
+Instance: demoInstance
+  📚 Building index for demoInstance/techwind...
     ✓ Using cached index (127 functions)
     🔄 Smart syncing functions (checking for updates)...
     ✓ All functions up to date (127 files)
-  📚 Building index for skyone/baymak...
+  📚 Building index for demoInstance/baymak...
     ✓ Using cached index (5 functions)
     🔄 Smart syncing functions (checking for updates)...
     ✓ All functions up to date (5 files)
-  📚 Building index for skyone/demoProject...
+  📚 Building index for demoInstance/demoProject...
     [... 60+ more projects ...]
     
 [User waits 65 seconds with repetitive output] ⏳
@@ -105,7 +105,7 @@ $ npm start
 
 📦 Loading from cache...
 ✅ SkySpark client initialized
-   Active: skyone / techwind
+   Active: demoInstance / techwind
    Instances: 1 (auto-discovery will run...)
 
 🚀 Starting automatic project discovery and indexing in background...
@@ -117,18 +117,18 @@ $ npm start
 
 [Background] 🚀 Starting project discovery and indexing...
 
-[Background] 🔍 Discovering projects for instance: skyone...
+[Background] 🔍 Discovering projects for instance: demoInstance...
 [Background]   🎯 Using discovery project: techwind
 [Background]   ✅ Discovered 64 projects
-[Background]   ✓ skyone/techwind: 127 functions (1/64 = 1.6%) [1.2s]
-[Background]   ✓ skyone/baymak: 5 functions (2/64 = 3.1%) [0.8s]
-[Background]   ✓ skyone/demoProject: 127 functions (3/64 = 4.7%) [1.1s]
-[Background]   ✓ skyone/test: 3 functions (4/64 = 6.3%) [0.5s]
-[Background]   ✓ skyone/proj5: 10 functions (5/64 = 7.8%) [0.9s]
-[Background]   ✓ skyone/proj6: 15 functions (6/64 = 9.4%) [1.0s]
-[Background]   ✓ skyone/proj7: 8 functions (7/64 = 10.9%) [0.7s]
+[Background]   ✓ demoInstance/techwind: 127 functions (1/64 = 1.6%) [1.2s]
+[Background]   ✓ demoInstance/baymak: 5 functions (2/64 = 3.1%) [0.8s]
+[Background]   ✓ demoInstance/demoProject: 127 functions (3/64 = 4.7%) [1.1s]
+[Background]   ✓ demoInstance/test: 3 functions (4/64 = 6.3%) [0.5s]
+[Background]   ✓ demoInstance/proj5: 10 functions (5/64 = 7.8%) [0.9s]
+[Background]   ✓ demoInstance/proj6: 15 functions (6/64 = 9.4%) [1.0s]
+[Background]   ✓ demoInstance/proj7: 8 functions (7/64 = 10.9%) [0.7s]
 ... [compact progress updates for all 64 projects]
-[Background]   ✓ skyone/proj64: 12 functions (64/64 = 100.0%) [0.9s]
+[Background]   ✓ demoInstance/proj64: 12 functions (64/64 = 100.0%) [0.9s]
 
 ============================================================
 📊 BACKGROUND INDEXING COMPLETE
@@ -137,7 +137,7 @@ $ npm start
 ⏱️  Background indexing took 65.4s
 📊 Total functions available: 2543
 
-📦 skyone (skyone.example.com:8080) - 64 projects
+📦 demoInstance (demoInstance.example.com:8080) - 64 projects
    └─ techwind: 127 functions
    └─ baymak: 5 functions
    └─ demoProject: 127 functions

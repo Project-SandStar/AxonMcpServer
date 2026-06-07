@@ -86,7 +86,7 @@ SKYSPARK_AUTO_DISCOVER=true npm start
 
 ## Testing Steps
 
-1. **Fix the skyone.json syntax error** (already done ✅)
+1. **Fix the demoInstance.json syntax error** (already done ✅)
 
 2. **Enable auto-discovery:**
    ```bash
@@ -192,7 +192,7 @@ All errors shown in summary without crashing server.
 1. **Optional:** Refactor `discoverInstanceProjects` tool to use new helper
 2. **Required:** Test the implementation
    - With local SkySpark
-   - With production instance (skyone)
+   - With production instance (demoInstance)
    - With multiple instances
    - With permission issues
    - With cached indexes

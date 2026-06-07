@@ -2,10 +2,10 @@
 
 import { HaystackSkySparkClient } from './dist/skyspark/haystackClient.js';
 
-async function testSkyOne() {
-  console.log('Testing SkyOne (production) authentication...\n');
+async function testDemoInstance() {
+  console.log('Testing DemoInstance (production) authentication...\n');
   
-  // Load skyone config
+  // Load demoInstance config
   const config = {
     host: '<skyspark-host>',
     port: 80,
@@ -82,7 +82,7 @@ async function testSkyOne() {
     results.forEach((r, i) => console.log(`  ${i + 1}. ${r.toString()}`));
     console.log();
     
-    console.log('=== All SkyOne tests passed! ===');
+    console.log('=== All DemoInstance tests passed! ===');
   } catch (error) {
     console.error('\n❌ Error:', error.message);
     if (error.stack) {
@@ -93,4 +93,4 @@ async function testSkyOne() {
   }
 }
 
-testSkyOne();
+testDemoInstance();

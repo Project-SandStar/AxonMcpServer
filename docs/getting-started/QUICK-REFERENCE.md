@@ -28,7 +28,7 @@ node test-session-caching.js
 node test-enhanced-indexing.js
 
 # Sync & run
-npm run sync -- --instance skyone --project techwind
+npm run sync -- --instance demoInstance --project techwind
 npm run build && npm start
 ```
 
@@ -51,7 +51,7 @@ proj/
 **Same instance + same user = ONE session**
 
 Example:
-- `session-skyone-alper.json` → shared by 60+ projects
+- `session-demoInstance-alper.json` → shared by 60+ projects
 - `session-local-alper.json` → shared by 6+ projects
 
 ## 📖 Full Docs

@@ -214,10 +214,10 @@ Options:
 
 Examples:
   # Sync demoProject project
-  node skyspark-sync.js pull --instance skyone --project demoProject
+  node skyspark-sync.js pull --instance demoInstance --project demoProject
   
   # Force full re-sync with higher concurrency
-  node skyspark-sync.js pull --instance skyone --project demoProject --force --concurrency 20
+  node skyspark-sync.js pull --instance demoInstance --project demoProject --force --concurrency 20
   
   # Sync all projects from all instances
   node skyspark-sync.js pull-all

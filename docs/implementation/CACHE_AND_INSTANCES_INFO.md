@@ -20,7 +20,7 @@
      - test
      - demo
 
-2. **production** (from `config/skyone.json`)
+2. **production** (from `config/demoInstance.json`)
    - Host: <skyspark-host>:80
    - Projects: 3
      - demoProject
@@ -202,7 +202,7 @@ $ ls -1 .cache/axon-index-*.json
 
 ---
 
-## About the "production" Instance (skyone.json)
+## About the "production" Instance (demoInstance.json)
 
 ### Configuration
 ```json
@@ -329,7 +329,7 @@ cat .cache/cache-metadata-local-mobilytik.json | jq
 
 ✅ **Both instances are loaded correctly:**
 - local (7 projects)
-- production (3 projects from skyone.json)
+- production (3 projects from demoInstance.json)
 
 ✅ **Cache location:** `.cache/` directory
 

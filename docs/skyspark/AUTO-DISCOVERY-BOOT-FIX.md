@@ -39,7 +39,7 @@ node dist/index.js 2>&1 | head -40
 📁 Config directory: /Users/<user>/Code/axon-mcp-server/config
 📂 Found X files in config directory
    ✅ Loaded: local-skyspark.json → instance "local" (6 projects)
-   ✅ Loaded: skyone.json → instance "production" (52 projects)
+   ✅ Loaded: demoInstance.json → instance "production" (52 projects)
 🔍 Auto-discovery: ENABLED
    Will discover projects from all instances on initialization
 ✅ SkySpark client initialized
@@ -70,7 +70,7 @@ You add a new project called "michaelsEnergy" to your production SkySpark server
 3. **Connects to production instance** using existing credentials
 4. **Queries all projects** using `projs()` function
 5. **Finds "michaelsEnergy"** in the list
-6. **Updates config file** (`skyone.json`):
+6. **Updates config file** (`demoInstance.json`):
    ```json
    {
      "projects": [
@@ -105,7 +105,7 @@ Cline: Executes query on the new project
 
 ⚠️ **Issue Found**: You have TWO config files with the same `"name": "production"`:
 - `michealsEnergy.json` → `"name": "production"`
-- `skyone.json` → `"name": "production"`
+- `demoInstance.json` → `"name": "production"`
 
 This causes a conflict - the last one loaded wins!
 
@@ -122,7 +122,7 @@ This causes a conflict - the last one loaded wins!
 ```
 
 **Option 2: Merge into One File**
-If both point to the same server, put all projects in one file (`skyone.json`) and delete `michealsEnergy.json`.
+If both point to the same server, put all projects in one file (`demoInstance.json`) and delete `michealsEnergy.json`.
 
 **Option 3: Use Different Filenames, Same Instance**
 If you want to keep separate files for organization but they're the same server, you need to decide which one is authoritative. Auto-discovery will update both to have the full project list.

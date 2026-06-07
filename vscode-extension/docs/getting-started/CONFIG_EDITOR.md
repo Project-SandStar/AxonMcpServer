@@ -60,7 +60,7 @@ axon-mcp-server/config/
 
 Common configurations include:
 - `local-skyspark.json` - Local development server
-- `skyone.json` - Production server
+- `demoInstance.json` - Production server
 - `michealsEnergy.json` - Client server
 - Custom configurations
 

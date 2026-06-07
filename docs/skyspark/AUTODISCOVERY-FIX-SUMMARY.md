@@ -45,7 +45,7 @@ const newProjects = discoveredProjects.map(name => {
 
 ### Before Auto-Discovery
 - **local-skyspark.json**: 7 projects (manually configured)
-- **skyone.json**: 3 projects (manually configured)
+- **demoInstance.json**: 3 projects (manually configured)
 
 ### After Auto-Discovery
 - **local.json**: 6 projects discovered ✅
@@ -65,7 +65,7 @@ The config manager saves files as `{instanceName}.json`:
 
 Your original files were:
 - `local-skyspark.json` (for instance "local")
-- `skyone.json` (for instance "production")
+- `demoInstance.json` (for instance "production")
 
 This created duplicates. The new files have ALL discovered projects with correct credentials.
 
@@ -80,7 +80,7 @@ chmod +x cleanup-configs.sh
 Or manually:
 ```bash
 mv config/local-skyspark.json config/local-skyspark.json.old
-mv config/skyone.json config/skyone.json.old
+mv config/demoInstance.json config/demoInstance.json.old
 ```
 
 ## Verification

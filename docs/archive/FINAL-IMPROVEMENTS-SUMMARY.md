@@ -88,13 +88,13 @@ Major enhancements to the Axon MCP Server focusing on **performance, intelligenc
 Example:
 ```
 Before: 64 files (one per project)
-  session-skyone-techwind.json
-  session-skyone-baymak.json
-  session-skyone-demo.json
+  session-demoInstance-techwind.json
+  session-demoInstance-baymak.json
+  session-demoInstance-demo.json
   ... (61 more)
 
 After: 1 file (shared across all projects)
-  session-skyone-alper.json
+  session-demoInstance-alper.json
 ```
 
 ### Index Building
@@ -281,7 +281,7 @@ npm start
 ./check-sessions.sh
 
 # Should show instance-level sessions
-# Example: session-skyone-alper.json (used by 60+ projects)
+# Example: session-demoInstance-alper.json (used by 60+ projects)
 ```
 
 ## 🔒 Security Notes
@@ -324,7 +324,7 @@ ls .cache/session-*.json
 **Rebuild:**
 ```bash
 # Sync functions
-npm run sync -- --instance skyone --project techwind
+npm run sync -- --instance demoInstance --project techwind
 
 # Restart server
 npm start

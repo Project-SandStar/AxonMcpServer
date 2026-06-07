@@ -16,7 +16,7 @@ const syncManager = new FunctionSyncManagerEnhanced('proj');
 async function testVersioning() {
   console.log('\n🧪 Testing Function Versioning\n');
   
-  const instance = 'skyone';
+  const instance = 'demoInstance';
   const project = 'demoProject';
   const testFunc = 'addBacnetDevices'; // Pick a function we know exists
   

@@ -114,7 +114,7 @@ Automatically discover all projects from a SkySpark instance and update your con
 }
 ```
 
-**Save as:** `config/skyone.json`
+**Save as:** `config/demoInstance.json`
 
 #### Step 2: Discover Projects (Preview)
 
@@ -167,7 +167,7 @@ Automatically discover all projects from a SkySpark instance and update your con
 }
 ```
 
-**Result:** `config/skyone.json` is automatically updated!
+**Result:** `config/demoInstance.json` is automatically updated!
 
 ---
 
@@ -490,7 +490,7 @@ npm start
 
 ```bash
 # 1. Create your instance config
-cp config/skyone-improved.json.example config/myinstance.json
+cp config/demoInstance-improved.json.example config/myinstance.json
 nano config/myinstance.json  # Edit with your details
 
 # 2. Start server

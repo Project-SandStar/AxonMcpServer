@@ -100,7 +100,7 @@ Remote projects - ArcBeam (26):
 
 ## Configuration Updates
 
-### Updated config/skyone.json
+### Updated config/demoInstance.json
 
 ```json
 {

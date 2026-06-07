@@ -81,7 +81,7 @@ server.sendLoggingMessage({
   logger: 'axon-indexer',
   data: {
     type: 'indexing_progress',
-    project: 'skyone/techwind',
+    project: 'demoInstance/techwind',
     functionsIndexed: 127,
     totalProjects: 64,
     completedProjects: 1
@@ -91,7 +91,7 @@ server.sendLoggingMessage({
 
 **UI displays:**
 ```
-🔄 Indexing: skyone/techwind (127 functions)
+🔄 Indexing: demoInstance/techwind (127 functions)
 📊 Progress: 1/64 projects (1.5%)
 ```
 
@@ -307,9 +307,9 @@ $ npm start
 ╚══════════════════════════════════════════════════════════════╝
 
 🚀 Starting automatic project discovery and indexing...
-Instance: skyone
-  📚 Building index for skyone/techwind...
-  📚 Building index for skyone/baymak...
+Instance: demoInstance
+  📚 Building index for demoInstance/techwind...
+  📚 Building index for demoInstance/baymak...
   ... (60+ more projects)
   
 [User waits 65 seconds] ⏳
@@ -334,9 +334,9 @@ $ npm start
 
 [Server is ready! Can handle requests immediately] ✅
 
-[Background] ✓ skyone/techwind: 127 functions (1/64)
-[Background] ✓ skyone/baymak: 5 functions (2/64)
-[Background] ✓ skyone/demoProject: 127 functions (3/64)
+[Background] ✓ demoInstance/techwind: 127 functions (1/64)
+[Background] ✓ demoInstance/baymak: 5 functions (2/64)
+[Background] ✓ demoInstance/demoProject: 127 functions (3/64)
 ... [continues in background]
 
 🎉 Background Indexing Complete!

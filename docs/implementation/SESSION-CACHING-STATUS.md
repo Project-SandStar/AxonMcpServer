@@ -20,7 +20,7 @@ $ ls .cache/session-*.json | wc -l
 {
   "authToken": "web-ifALU9xxtBZTsmwRFx_QS4KAi9KiOTE9r1vtDePFKsI-3a9",
   "timestamp": 1759304884128,
-  "instance": "skyone",
+  "instance": "demoInstance",
   "project": "westminsterSup",
   "username": "<username>",
   "maxAge": 86400000
@@ -81,19 +81,19 @@ If client/server clocks differ:
 
 #### Before Session Caching:
 ```
-[2025-10-01 02:47:01] LOGIN: alper @ skyone/techwind
-[2025-10-01 02:47:02] LOGIN: alper @ skyone/techwind  ← duplicate!
-[2025-10-01 02:47:03] LOGIN: alper @ skyone/techwind  ← duplicate!
-[2025-10-01 02:47:04] LOGIN: alper @ skyone/techwind  ← duplicate!
+[2025-10-01 02:47:01] LOGIN: alper @ demoInstance/techwind
+[2025-10-01 02:47:02] LOGIN: alper @ demoInstance/techwind  ← duplicate!
+[2025-10-01 02:47:03] LOGIN: alper @ demoInstance/techwind  ← duplicate!
+[2025-10-01 02:47:04] LOGIN: alper @ demoInstance/techwind  ← duplicate!
 ... hundreds more ...
 ```
 
 #### After Session Caching:
 ```
-[2025-10-01 02:47:01] LOGIN: alper @ skyone/techwind  ← first time
-[2025-10-01 02:47:02] (cached) skyone/techwind        ← reused!
-[2025-10-01 02:47:03] (cached) skyone/techwind        ← reused!
-[2025-10-01 02:47:04] (cached) skyone/techwind        ← reused!
+[2025-10-01 02:47:01] LOGIN: alper @ demoInstance/techwind  ← first time
+[2025-10-01 02:47:02] (cached) demoInstance/techwind        ← reused!
+[2025-10-01 02:47:03] (cached) demoInstance/techwind        ← reused!
+[2025-10-01 02:47:04] (cached) demoInstance/techwind        ← reused!
 ... all cached for 24 hours ...
 ```
 
@@ -111,10 +111,10 @@ done
 
 ```bash
 # Delete cached session
-rm .cache/session-skyone-techwind.json
+rm .cache/session-demoInstance-techwind.json
 
 # Next access will create new session
-npm run sync -- --instance skyone --project techwind --fast
+npm run sync -- --instance demoInstance --project techwind --fast
 ```
 
 ## Expected Behavior
@@ -161,7 +161,7 @@ Improvement: 30s → 1.6s (95% faster!)
 export DEBUG=skyspark:*
 
 # Run sync and watch for session reuse
-npm run sync -- --instance skyone --project techwind --fast 2>&1 | \
+npm run sync -- --instance demoInstance --project techwind --fast 2>&1 | \
   grep -i "session\|login\|auth"
 ```
 
@@ -178,7 +178,7 @@ npm run sync -- --instance skyone --project techwind --fast 2>&1 | \
 rm .cache/session-*.json
 
 # Rebuild fresh sessions
-npm run sync -- --instance skyone --project techwind
+npm run sync -- --instance demoInstance --project techwind
 ```
 
 ### "Hundreds of Logins" Still Happening?

@@ -35,12 +35,12 @@ Phase 2 enhances the background indexing system (from Phase 1) with **real-time 
 
 [Background] 🚀 Starting project discovery and indexing...
 
-[Background] 🔍 Discovering projects for instance: skyone...
+[Background] 🔍 Discovering projects for instance: demoInstance...
 [Background]   ✅ Discovered 64 projects
-[Background]   ✓ skyone/techwind: 127 functions (1/64 = 1.6%) [1.2s]
-[Background]   ✓ skyone/baymak: 5 functions (2/64 = 3.1%) [0.8s]
-[Background]   ✓ skyone/demoProject: 127 functions (3/64 = 4.7%) [1.1s]
-[Background]   ✓ skyone/test: 3 functions (4/64 = 6.3%) [0.5s]
+[Background]   ✓ demoInstance/techwind: 127 functions (1/64 = 1.6%) [1.2s]
+[Background]   ✓ demoInstance/baymak: 5 functions (2/64 = 3.1%) [0.8s]
+[Background]   ✓ demoInstance/demoProject: 127 functions (3/64 = 4.7%) [1.1s]
+[Background]   ✓ demoInstance/test: 3 functions (4/64 = 6.3%) [0.5s]
 ... [continues for each project]
 
 ============================================================
@@ -50,7 +50,7 @@ Phase 2 enhances the background indexing system (from Phase 1) with **real-time 
 ⏱️  Background indexing took 65.4s
 📊 Total functions available: 2543
 
-📦 skyone (skyone.example.com:8080) - 64 projects
+📦 demoInstance (demoInstance.example.com:8080) - 64 projects
    └─ techwind: 127 functions
    └─ baymak: 5 functions
    └─ demoProject: 127 functions
@@ -179,7 +179,7 @@ private getTotalFunctionCount(): number {
 
 📦 Loading from cache...
 ✅ SkySpark client initialized
-   Active: skyone / techwind
+   Active: demoInstance / techwind
    Instances: 1 (auto-discovery will run...)
 
 🚀 Starting automatic project discovery and indexing in background...
@@ -189,16 +189,16 @@ private getTotalFunctionCount(): number {
 
 [Background] 🚀 Starting project discovery and indexing...
 
-[Background] 🔍 Discovering projects for instance: skyone...
+[Background] 🔍 Discovering projects for instance: demoInstance...
 [Background]   ✅ Discovered 64 projects
-[Background]   ✓ skyone/techwind: 127 functions (1/64 = 1.6%) [1.2s]
-[Background]   ✓ skyone/baymak: 5 functions (2/64 = 3.1%) [0.8s]
-[Background]   ✓ skyone/demoProject: 127 functions (3/64 = 4.7%) [1.1s]
-[Background]   ✓ skyone/test: 3 functions (4/64 = 6.3%) [0.5s]
-[Background]   ✓ skyone/proj1: 10 functions (5/64 = 7.8%) [0.9s]
-[Background]   ✓ skyone/proj2: 15 functions (6/64 = 9.4%) [1.0s]
+[Background]   ✓ demoInstance/techwind: 127 functions (1/64 = 1.6%) [1.2s]
+[Background]   ✓ demoInstance/baymak: 5 functions (2/64 = 3.1%) [0.8s]
+[Background]   ✓ demoInstance/demoProject: 127 functions (3/64 = 4.7%) [1.1s]
+[Background]   ✓ demoInstance/test: 3 functions (4/64 = 6.3%) [0.5s]
+[Background]   ✓ demoInstance/proj1: 10 functions (5/64 = 7.8%) [0.9s]
+[Background]   ✓ demoInstance/proj2: 15 functions (6/64 = 9.4%) [1.0s]
 ... [continues for all 64 projects]
-[Background]   ✓ skyone/last_project: 8 functions (64/64 = 100.0%) [0.7s]
+[Background]   ✓ demoInstance/last_project: 8 functions (64/64 = 100.0%) [0.7s]
 
 ============================================================
 📊 BACKGROUND INDEXING COMPLETE
@@ -207,7 +207,7 @@ private getTotalFunctionCount(): number {
 ⏱️  Background indexing took 65.4s
 📊 Total functions available: 2543
 
-📦 skyone (skyone.example.com:8080) - 64 projects
+📦 demoInstance (demoInstance.example.com:8080) - 64 projects
    └─ techwind: 127 functions
    └─ baymak: 5 functions
    └─ demoProject: 127 functions
@@ -218,11 +218,11 @@ private getTotalFunctionCount(): number {
 ### With Errors
 
 ```bash
-[Background] 🔍 Discovering projects for instance: skyone...
+[Background] 🔍 Discovering projects for instance: demoInstance...
 [Background]   ✅ Discovered 64 projects
-[Background]   ✓ skyone/proj1: 10 functions (1/64 = 1.6%) [0.9s]
+[Background]   ✓ demoInstance/proj1: 10 functions (1/64 = 1.6%) [0.9s]
 [Background]   ⚠️  Failed to index proj2: Connection timeout
-[Background]   ✓ skyone/proj3: 15 functions (3/64 = 4.7%) [1.0s]
+[Background]   ✓ demoInstance/proj3: 15 functions (3/64 = 4.7%) [1.0s]
 
 ============================================================
 📊 BACKGROUND INDEXING COMPLETE
@@ -232,8 +232,8 @@ private getTotalFunctionCount(): number {
 📊 Total functions available: 2500
 
 ⚠️  Warnings:
-   - Failed to index skyone/proj2: Connection timeout
-   - Failed to index skyone/proj4: Authentication failed
+   - Failed to index demoInstance/proj2: Connection timeout
+   - Failed to index demoInstance/proj4: Authentication failed
 ============================================================
 ```
 

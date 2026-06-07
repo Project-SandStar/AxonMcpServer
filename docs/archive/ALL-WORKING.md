@@ -32,7 +32,7 @@ SKYSPARK_AUTO_DISCOVER=true
 **`config/*.json` (Single source of truth):**
 - `local-skyspark.json` - 6 projects
 - `michealsEnergy.json` - 3 projects  
-- `skyone.json` - 52 projects
+- `demoInstance.json` - 52 projects
 
 **Total: 61 projects across 3 instances**
 
@@ -88,7 +88,7 @@ proj/
 │   ├── kidsfoodbasket/
 │   └── walmartcostarica/
 │
-└── skyone/
+└── demoInstance/
     ├── aero247/
     ├── demo/
     └── ... (52 projects total)

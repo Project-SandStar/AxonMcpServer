@@ -69,7 +69,7 @@ node dist/index.js 2>&1 | head -20
    Working directory: /Users/<user>/Code/axon-mcp-server
 📂 Found 4 files in config directory
    ✅ Loaded: local-skyspark.json → instance "local" (6 projects)
-   ✅ Loaded: skyone.json → instance "production" (52 projects)
+   ✅ Loaded: demoInstance.json → instance "production" (52 projects)
 ✅ SkySpark client initialized
    Active: local / cityFurnitureCustomerTraffic
    Instances: 2
@@ -147,7 +147,7 @@ The code will automatically try to determine the config location based on where 
    📁 Config directory: <path>
    📂 Found X files in config directory
    ✅ Loaded: local-skyspark.json → instance "local" (X projects)
-   ✅ Loaded: skyone.json → instance "production" (X projects)
+   ✅ Loaded: demoInstance.json → instance "production" (X projects)
    ```
 
 2. **Verify config directory is set correctly:**
@@ -164,7 +164,7 @@ The code will automatically try to determine the config location based on where 
 4. **Verify JSON files are valid:**
    ```bash
    jq '.' /Users/<user>/Code/axon-mcp-server/config/local-skyspark.json
-   jq '.' /Users/<user>/Code/axon-mcp-server/config/skyone.json
+   jq '.' /Users/<user>/Code/axon-mcp-server/config/demoInstance.json
    ```
 
 5. **Restart the MCP server** (if using Claude Desktop or Warp, restart the app)

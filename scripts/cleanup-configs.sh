@@ -10,7 +10,7 @@ echo ""
 
 echo "ℹ️  You have duplicate config files:"
 echo "   - local-skyspark.json (old) vs local.json (new, from auto-discovery)"
-echo "   - skyone.json (old) vs production.json (new, from auto-discovery)"
+echo "   - demoInstance.json (old) vs production.json (new, from auto-discovery)"
 echo ""
 echo "The new files have all discovered projects with credentials preserved."
 echo ""
@@ -21,9 +21,9 @@ echo ""
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "📦 Archiving old config files..."
     mv /Users/<user>/Code/axon-mcp-server/config/local-skyspark.json /Users/<user>/Code/axon-mcp-server/config/local-skyspark.json.archived 2>/dev/null
-    mv /Users/<user>/Code/axon-mcp-server/config/skyone.json /Users/<user>/Code/axon-mcp-server/config/skyone.json.archived 2>/dev/null
+    mv /Users/<user>/Code/axon-mcp-server/config/demoInstance.json /Users/<user>/Code/axon-mcp-server/config/demoInstance.json.archived 2>/dev/null
     echo "   ✅ Archived local-skyspark.json → local-skyspark.json.archived"
-    echo "   ✅ Archived skyone.json → skyone.json.archived"
+    echo "   ✅ Archived demoInstance.json → demoInstance.json.archived"
     echo ""
     
     echo "📊 Final configuration:"

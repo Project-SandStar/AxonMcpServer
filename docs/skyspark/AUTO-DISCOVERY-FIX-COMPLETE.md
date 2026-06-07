@@ -70,13 +70,13 @@ if (file.endsWith('.json') && !file.endsWith('.backup') && !file.endsWith('.arch
 
 ### Before Fix
 - `local-skyspark.json`: 7 projects (manually configured)
-- `skyone.json`: 3 projects (manually configured)
+- `demoInstance.json`: 3 projects (manually configured)
 - Auto-discovery would create `local.json` and `production.json` (duplicates)
 - Credentials were lost on update
 
 ### After Fix
 - `local-skyspark.json`: **6 projects** (all discovered, credentials preserved) ✅
-- `skyone.json`: **52 projects** (was only 3!) ✅
+- `demoInstance.json`: **52 projects** (was only 3!) ✅
 - Original filenames preserved ✅
 - Existing credentials preserved ✅
 - New projects inherit instance credentials ✅
@@ -86,11 +86,11 @@ if (file.endsWith('.json') && !file.endsWith('.backup') && !file.endsWith('.arch
 ```bash
 # Check project counts
 jq '.projects | length' config/local-skyspark.json  # Shows: 6
-jq '.projects | length' config/skyone.json          # Shows: 52
+jq '.projects | length' config/demoInstance.json          # Shows: 52
 
 # Verify credentials preserved
 jq '.projects[0] | {name, username}' config/local-skyspark.json
-jq '.projects[0] | {name, username}' config/skyone.json
+jq '.projects[0] | {name, username}' config/demoInstance.json
 
 # Test auto-discovery
 SKYSPARK_AUTO_DISCOVER=true node dist/index.js
@@ -104,14 +104,14 @@ You can now name your config files anything you want:
 ```
 config/
   ├── local-skyspark.json  → instance name: "local"
-  └── skyone.json          → instance name: "production"
+  └── demoInstance.json          → instance name: "production"
 ```
 
 ### Possible Naming Schemes
 ```
 # Multiple production servers
 config/
-  ├── skyone.json
+  ├── demoInstance.json
   ├── skytwo.json
   ├── skythree.json
 
@@ -170,10 +170,10 @@ SKYSPARK_AUTO_DISCOVER=true node dist/index.js
 jq '{name, host, projects: (.projects | length)}' config/*.json
 
 # List all projects for an instance
-jq '.projects[] | .name' config/skyone.json
+jq '.projects[] | .name' config/demoInstance.json
 
 # Check credentials
-jq '.projects[] | {name, username}' config/skyone.json
+jq '.projects[] | {name, username}' config/demoInstance.json
 ```
 
 ### Switch Between Instances (in code)
@@ -199,4 +199,4 @@ Your system now:
 5. ✅ Updates the correct files automatically
 6. ✅ Supports unlimited instances with any naming scheme
 
-**You can add as many instances as you want** (skyone, skytwo, skythree, etc.) and the system will handle them all correctly! 🎉
+**You can add as many instances as you want** (demoInstance, skytwo, skythree, etc.) and the system will handle them all correctly! 🎉

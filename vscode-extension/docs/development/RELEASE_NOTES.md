@@ -28,7 +28,7 @@
 
 **Supported Configuration Files:**
 - `local-skyspark.json` - Local development server
-- `skyone.json` - Production server
+- `demoInstance.json` - Production server
 - `michealsEnergy.json` - Client server
 - Any custom `*.json` files in the config directory
 

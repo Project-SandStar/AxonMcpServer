@@ -17,7 +17,7 @@ The bundling script copied the **compiled TypeScript files** from `dist/config/`
 **Result:**
 - ❌ No `local-skyspark.json`
 - ❌ No `michealsEnergy.json`
-- ❌ No `skyone.json`
+- ❌ No `demoInstance.json`
 - ✅ Only TypeScript `.js` and `.d.ts` files
 
 So the MCP server fell back to default configuration.
@@ -62,7 +62,7 @@ $ ls -la ~/.vscode/extensions/axon.axon-vscode-0.1.0/dist/mcp-server/config/*.js
 
 -rw-r--r--  local-skyspark.json (1.2 KB)
 -rw-r--r--  michealsEnergy.json (599 B)
--rw-r--r--  skyone.json (8.4 KB)
+-rw-r--r--  demoInstance.json (8.4 KB)
 ```
 
 **Total: 3 config files ✅**
@@ -147,7 +147,7 @@ The bundling process has two phases:
 Copying config JSON files...
   ✓ Copied local-skyspark.json
   ✓ Copied michealsEnergy.json
-  ✓ Copied skyone.json
+  ✓ Copied demoInstance.json
 ✓ 3 config file(s) copied
 ```
 
@@ -188,7 +188,7 @@ Since you already have all projects configured, disable auto-discovery:
 **Files now copied during bundling:**
 - `local-skyspark.json` - Your main localhost instance with 6 projects
 - `michealsEnergy.json` - Additional instance config
-- `skyone.json` - Additional instance config
+- `demoInstance.json` - Additional instance config
 
 ---
 

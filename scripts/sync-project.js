@@ -16,13 +16,13 @@ async function syncDubaiPolice() {
   
   try {
     // Switch to demoProject project
-    client.switchTo('skyone', 'demoProject');
-    console.log('✅ Connected to skyone/demoProject\n');
+    client.switchTo('demoInstance', 'demoProject');
+    console.log('✅ Connected to demoInstance/demoProject\n');
     
     // Sync with enhanced manager
     const result = await syncManager.syncFunctions(
       client,
-      'skyone',
+      'demoInstance',
       'demoProject',
       {
         force: false,
@@ -38,7 +38,7 @@ async function syncDubaiPolice() {
     console.log(`   Skipped: ${result.skipped}`);
     console.log(`   Deleted: ${result.deleted}`);
     console.log(`   Errors: ${result.errors}`);
-    console.log(`\n📁 Location: proj/skyone/demoProject/\n`);
+    console.log(`\n📁 Location: proj/demoInstance/demoProject/\n`);
     
   } catch (error) {
     console.error(`\n❌ Error: ${error.message}\n`);
