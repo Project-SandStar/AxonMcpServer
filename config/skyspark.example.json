@@ -1,18 +1,18 @@
 {
-  "_comment": "Copy this file to e.g. config/local-skyspark.json and fill in real values. Real config/*.json files are git-ignored and MUST NOT be committed (they hold credentials).",
-  "name": "local",
+  "_comment": "Copy this file to e.g. config/local-skyspark.json and fill in real values. Real config/*.json files are git-ignored and MUST NOT be committed (they hold credentials). NOTE: files ending in .example.json are skipped by the loader.",
+  "name": "example-instance",
   "host": "127.0.0.1",
   "port": 8080,
   "protocol": "http",
   "username": "YOUR_SKYSPARK_USERNAME",
   "password": "YOUR_SKYSPARK_PASSWORD",
   "defaultProjName": "demo",
-  "projects": {
-    "0": {
+  "projects": [
+    {
       "name": "demo",
       "description": "Primary project",
       "username": "YOUR_SKYSPARK_USERNAME",
       "password": "YOUR_SKYSPARK_PASSWORD"
     }
-  }
+  ]
 }

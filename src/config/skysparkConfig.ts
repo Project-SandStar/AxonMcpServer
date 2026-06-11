@@ -68,6 +68,7 @@ export class SkySparkConfigManager {
         if (!filename) return;
         // Only react to JSON config files (skip backups, archives, debug files).
         if (!filename.endsWith('.json')) return;
+        if (filename.endsWith('.example.json')) return;
         if (['axonMcpServer-config.json', 'admin.json', 'users.json'].includes(filename)) return;
 
         if (this.watchDebounce) clearTimeout(this.watchDebounce);
@@ -189,7 +190,7 @@ export class SkySparkConfigManager {
     const excludedFiles = ['axonMcpServer-config.json', 'admin.json', 'users.json'];
 
     for (const file of files) {
-      if (file.endsWith('.json') && !file.endsWith('.backup') && !file.endsWith('.archived') && !file.endsWith('.old') && !excludedFiles.includes(file)) {
+      if (file.endsWith('.json') && !file.endsWith('.backup') && !file.endsWith('.archived') && !file.endsWith('.old') && !file.endsWith('.example.json') && !excludedFiles.includes(file)) {
         try {
           const content = fs.readFileSync(path.join(configPath, file), 'utf-8');
           const config = JSON.parse(content) as SkySparkInstance;
@@ -200,8 +201,12 @@ export class SkySparkConfigManager {
             continue;
           }
 
-          // Ensure projects array exists
-          if (!config.projects) {
+          // Ensure projects is an array. A malformed config (e.g. projects as an
+          // object) would otherwise crash any `for...of` over it downstream.
+          if (!Array.isArray(config.projects)) {
+            if (config.projects) {
+              console.error(`   ⚠️  ${file}: "projects" is not an array — coercing to []`);
+            }
             config.projects = [];
           }
 
@@ -408,7 +413,7 @@ export class SkySparkConfigManager {
     const projects: { instance: string; project: string; description?: string }[] = [];
 
     for (const [instanceName, instance] of this.instances) {
-      for (const project of (instance.projects || [])) {
+      for (const project of (Array.isArray(instance.projects) ? instance.projects : [])) {
         projects.push({
           instance: instanceName,
           project: project.name,
