@@ -535,8 +535,10 @@ export class HaystackAuthClient {
       headers
     });
     
-    // If we get 401, token might be expired, try re-authenticating once
-    if (response.status === 401) {
+    // If we get 401, token might be expired, try re-authenticating once.
+    // SkySpark answers 403 (not 401) to a token from before a restart, so
+    // retry on 403 too; a real permission error stays 403 after the retry.
+    if (response.status === 401 || response.status === 403) {
       this.authToken = undefined;
       const newToken = await this.getAuthToken();
       headers['Authorization'] = `BEARER authToken=${newToken}`;
