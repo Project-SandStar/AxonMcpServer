@@ -55,6 +55,10 @@ export interface AxonServerConfig {
   // OAuth 2.1 authentication settings
   oauth?: OAuthSettings;
 
+  // Require a Bearer token on /mcp (default: false; env MCP_REQUIRE_AUTH=true).
+  // When false, a token is optional: verified if sent, anonymous if not.
+  mcpRequireAuth?: boolean;
+
   // Path to the Axon code library
   codePath: string;
 
@@ -128,6 +132,7 @@ const defaultConfig: AxonServerConfig = {
   server: {
     port: 3847
   },
+  mcpRequireAuth: false,
   oauth: {
     enabled: true,
     allowedRedirectUris: [
@@ -261,6 +266,10 @@ export function loadConfig(configPath?: string): AxonServerConfig {
   } else {
     console.error(`[Config] Config file not found at ${filePath}, using defaults`);
     currentConfig = { ...defaultConfig };
+  }
+
+  if (process.env.MCP_REQUIRE_AUTH !== undefined) {
+    currentConfig.mcpRequireAuth = process.env.MCP_REQUIRE_AUTH === 'true';
   }
 
   return currentConfig;

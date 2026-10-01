@@ -270,3 +270,19 @@ model GraphBuildStats {
 
   @@map("graph_build_stats")
 }
+
+// Last SkySpark project a user picked, keyed by user + OAuth client so it
+// survives a server restart (MCP session ids do not). clientId '' is the
+// per-user fallback row.
+model UserProjectScope {
+  id        Int      @id @default(autoincrement())
+  userId    String   @map("user_id")
+  clientId  String   @default("") @map("client_id")
+  instance  String
+  project   String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, clientId])
+  @@index([userId])
+  @@map("user_project_scopes")
+}

@@ -153,6 +153,8 @@ export interface McpSession {
   createdAt: string;
   lastActivity: string;
   userId?: string;
+  username?: string;
+  clientId?: string;
 }
 
 export type AuthClientState = 'idle' | 'connected' | 'down' | 'failed';

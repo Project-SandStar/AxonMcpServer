@@ -50,7 +50,7 @@ interface AdminContext {
   triggerSync: (instance: string, project: string) => Promise<{ downloaded: number; updated: number; deleted: number }>;
   reauthenticateProject: (instance: string, project?: string) => Promise<{ success: boolean; instance?: string; project: string; durationMs: number; message: string }>;
   getAuthClients?: () => Array<{ baseUrl: string; username: string; state: string; checkedAt?: Date; okAt?: Date; reauthAt?: Date; error?: string }>;
-  getSessions?: () => Array<{ sessionId: string; instance?: string; project?: string; createdAt: string; lastActivity: string; userId?: string }>;
+  getSessions?: () => Array<{ sessionId: string; instance?: string; project?: string; createdAt: string; lastActivity: string; userId?: string; username?: string; clientId?: string }>;
   disconnectSession?: (sessionId: string) => Promise<boolean>;
   triggerDiscover: (instance: string) => Promise<{ projects: string[] }>;
   triggerDiscoverWithProgress: (

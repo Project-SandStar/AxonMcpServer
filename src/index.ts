@@ -8,7 +8,7 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import express, { Application, Request, Response } from 'express';
+import express, { Application, Request, RequestHandler, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {
@@ -40,6 +40,7 @@ import { HtmlDocument, DocSearchOptions, DocSearchResult } from './types/documen
 
 // New imports for validation and generation
 import { HaystackSkySparkClient } from './skyspark/haystackClient.js';
+import { initScopeStore, loadScope, saveScope } from './skyspark/scopeStore.js';
 import { startAuthHealthCheck, listSharedAuthClients } from './skyspark/haystackAuth.js';
 import { SkySparkConfigManager } from './config/skysparkConfig.js';
 import { TypedAxonGenerator } from './generation/typedAxonGenerator.js';
@@ -55,10 +56,29 @@ import { ServerStatus, InstanceInfo, ProjectInfo, CacheInfo } from './admin/type
 import { WorkflowManager } from './workflows/workflowManager.js';
 import { WorkflowVectorIndex } from './workflows/workflowVectorIndex.js';
 import { AxonOAuthProvider, TokenCleanupJob, renderAuthorizePage, renderErrorPage } from './auth/index.js';
-import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
+import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { initUserStore, getUserStore } from './admin/userStore.js';
 import { BackupManager } from './admin/backupManager.js';
+
+/** Per-call scope: the MCP session, its caller (from the OAuth token, if any) and a client override. */
+interface SessionStore {
+  sessionId?: string;
+  userId?: string;
+  username?: string;
+  clientId?: string;
+  client?: HaystackSkySparkClient;
+}
+
+/** One HTTP MCP session's SkySpark client and the user first seen on it. */
+interface SessionClientEntry {
+  client: HaystackSkySparkClient;
+  createdAt: Date;
+  lastActivity: Date;
+  userId?: string;
+  username?: string;
+  clientId?: string;
+}
 
 class AxonMCPServer {
   private server: Server;
@@ -82,8 +102,9 @@ class AxonMCPServer {
   // Default client for stdio, admin routes and startup. HTTP MCP sessions each get their own
   // client (see the skysparkClient getter), so one session's project does not leak into another.
   private defaultSkysparkClient?: HaystackSkySparkClient;
-  private sessionScope = new AsyncLocalStorage<{ sessionId?: string; client?: HaystackSkySparkClient }>();
-  private sessionClients = new Map<string, { client: HaystackSkySparkClient; createdAt: Date; lastActivity: Date }>();
+  // userId/username/clientId come from the OAuth token on the request (undefined when anonymous)
+  private sessionScope = new AsyncLocalStorage<SessionStore>();
+  private sessionClients = new Map<string, SessionClientEntry>();
   private sessionStartedAt = new Map<string, Date>();
   // One validator per project, so its function-signature cache matches the project it checks
   private semanticValidators = new Map<string, SemanticValidator>();
@@ -394,17 +415,85 @@ class AxonMCPServer {
       return entry.client;
     }
 
-    const client = new HaystackSkySparkClient(this.configManager);
-    const start = this.primaryContext ?? this.defaultSkysparkClient.getCurrentConfig();
-    if (start.instance && start.project) {
+    return this.createSessionClient({ ...store, sessionId: store.sessionId }).client;
+  }
+
+  /**
+   * Create the session's client. It starts on `restored` (a user's saved scope) if that
+   * instance/project still exists in config, else on the default project.
+   */
+  private createSessionClient(
+    store: SessionStore & { sessionId: string },
+    restored?: { instance: string; project: string } | null
+  ): SessionClientEntry {
+    const client = new HaystackSkySparkClient(this.configManager!);
+    const fallback = this.primaryContext ?? this.defaultSkysparkClient!.getCurrentConfig();
+    const starts = restored ? [restored, fallback] : [fallback];
+    for (const start of starts) {
+      if (!start.instance || !start.project) continue;
       try {
         client.switchTo(start.instance, start.project);
+        break;
       } catch (e: any) {
         console.error(`⚠️ Session ${store.sessionId}: could not start on ${start.instance}/${start.project}: ${e.message}`);
       }
     }
-    this.sessionClients.set(store.sessionId, { client, createdAt: now, lastActivity: now });
-    return client;
+    const now = new Date();
+    const entry: SessionClientEntry = {
+      client,
+      createdAt: now,
+      lastActivity: now,
+      userId: store.userId,
+      username: store.username,
+      clientId: store.clientId,
+    };
+    this.sessionClients.set(store.sessionId, entry);
+    return entry;
+  }
+
+  /**
+   * Before a tool call: record the caller's user on the session entry, and on the session's
+   * first call restore the user's saved project. No token check here: the pooled auth client
+   * tests a cached SkySpark token on first use (getAuthToken → testToken).
+   */
+  private async prepareSessionClient(): Promise<void> {
+    const store = this.sessionScope.getStore();
+    if (!store?.sessionId || store.client || !this.configManager || !this.defaultSkysparkClient) return;
+
+    let entry = this.sessionClients.get(store.sessionId);
+    if (!entry && store.userId) {
+      let restored: { instance: string; project: string } | null = null;
+      try {
+        restored = await loadScope(store.userId, store.clientId);
+      } catch (e: any) {
+        console.error(`⚠️ Could not load saved scope for user ${store.userId}: ${e.message}`);
+      }
+      // Another call in this session may have created the entry while we waited
+      entry = this.sessionClients.get(store.sessionId);
+      if (!entry) {
+        entry = this.createSessionClient({ ...store, sessionId: store.sessionId }, restored);
+        if (restored) {
+          console.error(`Session ${store.sessionId}: restored ${restored.instance}/${restored.project} for ${store.username ?? store.userId}`);
+        }
+      }
+    }
+    // Keep the first identity seen on this session
+    if (entry && !entry.userId && store.userId) {
+      entry.userId = store.userId;
+      entry.username = store.username;
+      entry.clientId = store.clientId;
+    }
+  }
+
+  /** Save the session's current project for its user, so it survives a restart. Fire and forget. */
+  private persistSessionScope(): void {
+    const store = this.sessionScope.getStore();
+    if (!store?.sessionId || !store.userId) return;
+    const config = this.sessionClients.get(store.sessionId)?.client.getCurrentConfig();
+    if (!config?.instance || !config.project) return;
+    saveScope(store.userId, store.clientId, config.instance, config.project).catch((e: any) =>
+      console.error(`⚠️ Could not save scope for user ${store.userId}: ${e.message}`)
+    );
   }
 
   private set skysparkClient(client: HaystackSkySparkClient | undefined) {
@@ -531,7 +620,9 @@ class AxonMCPServer {
             project: config?.project,
             createdAt: createdAt.toISOString(),
             lastActivity: (entry?.lastActivity ?? createdAt).toISOString(),
-            userId: undefined as string | undefined,
+            userId: entry?.userId,
+            username: entry?.username,
+            clientId: entry?.clientId,
           };
         });
       },
@@ -1612,7 +1703,15 @@ Response includes 'operation': "added" or "updated".`,
     // Handle tool calls
     server.setRequestHandler(CallToolRequestSchema, async (request, extra) =>
       // Run the call in its MCP session's scope, so this.skysparkClient is that session's client
-      this.sessionScope.run({ sessionId: extra?.sessionId }, async () => {
+      this.sessionScope.run(
+        {
+          sessionId: extra?.sessionId,
+          userId: extra?.authInfo?.extra?.userId as string | undefined,
+          username: extra?.authInfo?.extra?.username as string | undefined,
+          clientId: extra?.authInfo?.clientId,
+        },
+        async () => {
+      await this.prepareSessionClient();
       const { name, arguments: args } = request.params;
 
       // Track the tool call
@@ -1768,7 +1867,11 @@ Response includes 'operation': "added" or "updated".`,
               'Missing required parameter: instanceName'
             );
           }
-          return await this.switchProject(args);
+          {
+            const result = await this.switchProject(args);
+            this.persistSessionScope();
+            return result;
+          }
 
         case 'reauthenticateSkySparkProject':
           if (!args || !args.instanceName) {
@@ -1812,7 +1915,11 @@ Response includes 'operation': "added" or "updated".`,
               'Missing required parameters: instanceName and projectName'
             );
           }
-          return await this.setPrimaryProject(args as { instanceName: string; projectName: string });
+          {
+            const result = await this.setPrimaryProject(args as { instanceName: string; projectName: string });
+            this.persistSessionScope();
+            return result;
+          }
 
         case 'getPrimaryProject':
           return await this.getPrimaryProject();
@@ -5412,6 +5519,7 @@ end`;
 
     // Initialize OAuth if enabled
     const oauthEnabled = this.config.oauth?.enabled !== false;
+    const mcpRequireAuth = this.config.mcpRequireAuth === true;
     if (oauthEnabled) {
       // Initialize Prisma client for OAuth
       const { PrismaClient } = await import('./generated/prisma/client.js');
@@ -5425,6 +5533,7 @@ end`;
       const prisma = new PrismaClient({ adapter });
       await prisma.$connect();
       this.prisma = prisma;
+      initScopeStore(prisma);
 
       // Initialize user store for OAuth authentication
       const configDir = path.join(PROJECT_ROOT, 'config');
@@ -5525,12 +5634,32 @@ end`;
         initialized: this.initializationComplete,
         uptime: process.uptime(),
         functionsIndexed: this.codeIndex.functions.size,
-        activeSessions: this.httpTransports.size
+        activeSessions: this.httpTransports.size,
+        mcpRequireAuth,
       });
     });
 
+    // Auth on /mcp. Required: the SDK's requireBearerAuth (401 + WWW-Authenticate without a
+    // valid token). Optional: verify a token if one is sent, else go on anonymously.
+    // Either way req.auth reaches the tool handlers as extra.authInfo.
+    const bearerAuth = this.oauthProvider
+      ? requireBearerAuth({
+          verifier: this.oauthProvider,
+          resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(issuerUrl),
+        })
+      : undefined;
+    const mcpAuth: RequestHandler = (req, res, next) => {
+      if (!bearerAuth) {
+        if (!mcpRequireAuth) return next();
+        res.status(503).json({ error: 'server_error', error_description: 'mcpRequireAuth is on but OAuth is disabled' });
+        return;
+      }
+      if (mcpRequireAuth || req.headers.authorization) return bearerAuth(req, res, next);
+      next();
+    };
+
     // MCP endpoint - handles POST (messages), GET (SSE stream), DELETE (terminate)
-    app.post('/mcp', async (req: Request, res: Response) => {
+    app.post('/mcp', mcpAuth, async (req: Request, res: Response) => {
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
       console.error(`POST /mcp - session: ${sessionId || 'new'}, body: ${JSON.stringify(req.body).substring(0, 200)}`);
 
@@ -5607,7 +5736,7 @@ end`;
     });
 
     // GET /mcp - SSE stream for server-to-client notifications
-    app.get('/mcp', async (req: Request, res: Response) => {
+    app.get('/mcp', mcpAuth, async (req: Request, res: Response) => {
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
       console.error(`GET /mcp - session: ${sessionId || 'none'}`);
 
@@ -5625,7 +5754,7 @@ end`;
     });
 
     // DELETE /mcp - terminate session
-    app.delete('/mcp', async (req: Request, res: Response) => {
+    app.delete('/mcp', mcpAuth, async (req: Request, res: Response) => {
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
       console.error(`DELETE /mcp - session: ${sessionId || 'none'}`);
 

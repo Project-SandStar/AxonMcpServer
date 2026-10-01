@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, type AuthClientState } from '@/lib/api';
+import { api, type AuthClientState, type McpSession } from '@/lib/api';
 import {
   Server, Plus, Trash2, Edit2, Save, X, RefreshCw,
   ChevronDown, ChevronRight, FolderOpen, Check, AlertCircle,
@@ -58,6 +58,18 @@ function AuthStateChip({ state }: { state: AuthClientState }) {
       {state}
     </span>
   );
+}
+
+// Group sessions by logged-in user; sessions without a user go under "Anonymous".
+function groupSessionsByUser(sessions: McpSession[]): Array<{ key: string; label: string; sessions: McpSession[] }> {
+  const groups = new Map<string, { key: string; label: string; sessions: McpSession[] }>();
+  for (const s of sessions) {
+    const key = s.userId || '';
+    if (!groups.has(key)) groups.set(key, { key, label: s.userId ? (s.username || s.userId) : 'Anonymous', sessions: [] });
+    groups.get(key)!.sessions.push(s);
+  }
+  // Named users first (by label), Anonymous last
+  return [...groups.values()].sort((a, b) => (a.key ? 0 : 1) - (b.key ? 0 : 1) || a.label.localeCompare(b.label));
 }
 
 function timeAgo(iso?: string): string {
@@ -444,12 +456,12 @@ export default function ConnectionsPage() {
         </div>
       )}
 
-      {/* MCP Sessions */}
+      {/* Logged-in users and their MCP sessions */}
       <div className="rounded-xl bg-white p-4 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
           <Users className="h-4 w-4 text-gray-500" />
-          <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide">Sessions</h2>
-          <span className="text-xs text-gray-400">({sessions.length})</span>
+          <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide">Logged-in users</h2>
+          <span className="text-xs text-gray-400">({sessions.length} session{sessions.length === 1 ? '' : 's'})</span>
         </div>
         {sessions.length === 0 ? (
           <p className="text-sm text-gray-400 text-center py-4">No active MCP sessions</p>
@@ -459,49 +471,59 @@ export default function ConnectionsPage() {
               <thead>
                 <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
                   <th className="py-2 pr-4 font-medium">Session</th>
-                  <th className="py-2 pr-4 font-medium">User</th>
+                  <th className="py-2 pr-4 font-medium">App</th>
                   <th className="py-2 pr-4 font-medium">Project</th>
                   <th className="py-2 pr-4 font-medium">Connected since</th>
                   <th className="py-2 pr-4 font-medium">Last activity</th>
                   <th className="py-2 font-medium text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody>
-                {sessions.map((s) => {
-                  const busy = busySessions.has(s.sessionId);
-                  const hasProject = Boolean(s.instance && s.project);
-                  return (
-                    <tr key={s.sessionId} className="border-b border-gray-100 last:border-0">
-                      <td className="py-2 pr-4 font-mono text-xs text-gray-700" title={s.sessionId}>{s.sessionId.slice(0, 8)}</td>
-                      <td className="py-2 pr-4 text-gray-700">{s.userId || '—'}</td>
-                      <td className="py-2 pr-4 text-gray-700">{hasProject ? `${s.instance}/${s.project}` : 'default'}</td>
-                      <td className="py-2 pr-4 text-gray-500" title={s.createdAt}>{new Date(s.createdAt).toLocaleString()}</td>
-                      <td className="py-2 pr-4 text-gray-500" title={s.lastActivity}>{timeAgo(s.lastActivity)}</td>
-                      <td className="py-2 text-right">
-                        <div className="inline-flex gap-2">
-                          <button
-                            onClick={() => hasProject && handleSessionReauth(s.sessionId, s.instance!, s.project!)}
-                            disabled={!hasProject || busy}
-                            title={hasProject ? 'Log in to SkySpark again' : 'Session has no project'}
-                            className="flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <KeyRound className="h-3 w-3" />}
-                            Reauthenticate
-                          </button>
-                          <button
-                            onClick={() => handleSessionDisconnect(s.sessionId)}
-                            disabled={busy}
-                            className="flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <Unplug className="h-3 w-3" />
-                            Disconnect
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
+              {groupSessionsByUser(sessions).map((group) => (
+                <tbody key={group.key || 'anonymous'}>
+                  <tr className="border-b border-gray-200 bg-gray-50">
+                    <td colSpan={6} className="py-2 px-2 text-sm font-medium text-gray-800" title={group.key || undefined}>
+                      {group.label}
+                      <span className="ml-2 text-xs font-normal text-gray-500">
+                        {group.sessions.length} session{group.sessions.length === 1 ? '' : 's'}
+                      </span>
+                    </td>
+                  </tr>
+                  {group.sessions.map((s) => {
+                    const busy = busySessions.has(s.sessionId);
+                    const hasProject = Boolean(s.instance && s.project);
+                    return (
+                      <tr key={s.sessionId} className="border-b border-gray-100 last:border-0">
+                        <td className="py-2 pr-4 pl-4 font-mono text-xs text-gray-700" title={s.sessionId}>{s.sessionId.slice(0, 8)}</td>
+                        <td className="py-2 pr-4 font-mono text-xs text-gray-700" title={s.clientId}>{s.clientId ? s.clientId.slice(0, 8) : '—'}</td>
+                        <td className="py-2 pr-4 text-gray-700">{hasProject ? `${s.instance}/${s.project}` : 'default'}</td>
+                        <td className="py-2 pr-4 text-gray-500" title={s.createdAt}>{new Date(s.createdAt).toLocaleString()}</td>
+                        <td className="py-2 pr-4 text-gray-500" title={s.lastActivity}>{timeAgo(s.lastActivity)}</td>
+                        <td className="py-2 text-right">
+                          <div className="inline-flex gap-2">
+                            <button
+                              onClick={() => hasProject && handleSessionReauth(s.sessionId, s.instance!, s.project!)}
+                              disabled={!hasProject || busy}
+                              title={hasProject ? 'Log in to SkySpark again' : 'Session has no project'}
+                              className="flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <KeyRound className="h-3 w-3" />}
+                              Reauthenticate
+                            </button>
+                            <button
+                              onClick={() => handleSessionDisconnect(s.sessionId)}
+                              disabled={busy}
+                              className="flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <Unplug className="h-3 w-3" />
+                              Disconnect
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              ))}
             </table>
           </div>
         )}

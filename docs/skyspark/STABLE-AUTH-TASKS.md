@@ -27,11 +27,12 @@ Design: [STABLE-AUTH-MODEL.md](STABLE-AUTH-MODEL.md). Check a box when the task 
 
 ## Phase 2 — OAuth user identity on /mcp
 
-- [ ] **T2.1** `verifyAccessToken` returns `extra.userId`. `src/auth/oauthProvider.ts:325`
-- [ ] **T2.2** Mount `requireBearerAuth` on `/mcp` behind config flag `mcpRequireAuth` (default off). `src/index.ts:5323`
-- [ ] **T2.3** Key user sessions by OAuth `userId`. Fall back to MCP session id when there is no token.
-- [ ] **T2.4** Update `OAuthSession.lastActivity` on each MCP request.
-- [ ] **T2.5** Scope survives restart (decided): add `scopeInstance` / `scopeProject` to `OAuthSession` with a Prisma migration. On restore, check the saved token is valid before use.
+- [x] **T2.1** `verifyAccessToken` returns `extra: { userId, username }` and throws `InvalidTokenError` for bad tokens. `src/auth/oauthProvider.ts`
+- [x] **T2.2** `/mcp` auth middleware. `mcpRequireAuth` (env `MCP_REQUIRE_AUTH=true`) on: `requireBearerAuth`, 401 without token. Off (default): a bearer token is checked if sent, else the request is anonymous. `/health` reports the flag.
+- [x] **T2.3** Session store and `sessionClients` carry `userId`, `username`, `clientId` from `extra.authInfo`; `/admin/sessions` returns them; dashboard groups sessions by user.
+- [x] **T2.4** `OAuthSession.lastActivity` updated at most once per 30 s per token.
+- [x] **T2.5** Scope survives restart: table `user_project_scopes` (migration `20261001160008_user_project_scope`), `src/skyspark/scopeStore.ts`. Saved on switch, restored on a user's first call after reconnect. Keyed by (userId, clientId), falls back to the user's latest scope.
+- [x] **T2.6** Test `scripts/test-user-sessions.mjs`: two real OAuth users, per-user project, 401 with flag on, scope restored after restart (30/30 pass).
 
 Phase 3 (per-user SkySpark credentials) is dropped: MCP user login is enough.
 

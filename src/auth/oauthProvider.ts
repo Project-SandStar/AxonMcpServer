@@ -9,6 +9,7 @@ import { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/
 import { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import { OAuthClientInformationFull, OAuthTokens, OAuthTokenRevocationRequest } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
+import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { PrismaClientsStore } from './prismaClientsStore.js';
 import { renderAuthorizePage, renderErrorPage } from './authorizePage.js';
 import {
@@ -33,6 +34,8 @@ export class AxonOAuthProvider implements OAuthServerProvider {
   private readonly _clientsStore: PrismaClientsStore;
   private readonly accessTokenTtl: number;
   private readonly refreshTokenTtl: number;
+  // Last OAuthSession.lastActivity write per access token (ms), to write at most once per 30 s
+  private readonly activityWrittenAt = new Map<string, number>();
 
   constructor(
     private prisma: PrismaClient,
@@ -320,7 +323,9 @@ export class AxonOAuthProvider implements OAuthServerProvider {
   }
 
   /**
-   * Verify an access token and return auth info
+   * Verify an access token and return auth info. `extra` carries the token's user
+   * (`userId`, `username`) so MCP handlers can tell who sends each request.
+   * Throws InvalidTokenError, so requireBearerAuth answers 401 rather than 500.
    */
   async verifyAccessToken(token: string): Promise<AuthInfo> {
     const tokenRecord = await this.prisma.accessToken.findUnique({
@@ -328,29 +333,50 @@ export class AxonOAuthProvider implements OAuthServerProvider {
     });
 
     if (!tokenRecord) {
-      throw new Error('Invalid access token');
+      throw new InvalidTokenError('Invalid access token');
     }
 
     if (tokenRecord.revokedAt) {
-      throw new Error('Access token has been revoked');
+      throw new InvalidTokenError('Access token has been revoked');
     }
 
     if (isExpired(tokenRecord.expiresAt)) {
-      throw new Error('Access token has expired');
+      throw new InvalidTokenError('Access token has expired');
     }
 
-    // Update session last activity
-    await this.prisma.oAuthSession.updateMany({
-      where: { sessionId: token },
-      data: { lastActivity: new Date() },
-    });
+    this.touchSession(token);
+
+    const userId = tokenRecord.userId ?? undefined;
+    const username = userId
+      ? this.userStore.getAllUsers().find((u) => u.id === userId)?.username
+      : undefined;
 
     return {
       token,
       clientId: tokenRecord.clientId,
       scopes: parseScope(tokenRecord.scope || ''),
       expiresAt: Math.floor(tokenRecord.expiresAt.getTime() / 1000),
+      extra: { userId, username },
     };
+  }
+
+  /** Update the token's OAuthSession.lastActivity, at most once per 30 s per token. */
+  private touchSession(token: string): void {
+    const now = Date.now();
+    const last = this.activityWrittenAt.get(token);
+    if (last !== undefined && now - last < 30_000) return;
+    this.activityWrittenAt.set(token, now);
+
+    // Drop stale entries so the map does not grow with old tokens
+    if (this.activityWrittenAt.size > 1000) {
+      for (const [t, at] of this.activityWrittenAt) {
+        if (now - at > 30_000) this.activityWrittenAt.delete(t);
+      }
+    }
+
+    this.prisma.oAuthSession
+      .updateMany({ where: { sessionId: token }, data: { lastActivity: new Date(now) } })
+      .catch((e: any) => console.error(`[OAuth] Could not update session activity: ${e.message}`));
   }
 
   /**
