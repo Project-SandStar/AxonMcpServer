@@ -201,7 +201,7 @@ export class HaystackSkySparkClient {
     if (expectedProject && !this.validateProjectContext(expectedProject)) {
       throw new Error(
         `Project mismatch: expected "${expectedProject}" but active project is "${this.project}". ` +
-        `Use switchTo() or setPrimaryProject to change the active project.`
+        `Use switchSkySparkProject to change this session's project.`
       );
     }
     return this.evalAxon(code);

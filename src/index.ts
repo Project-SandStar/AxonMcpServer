@@ -42,6 +42,7 @@ import { HtmlDocument, DocSearchOptions, DocSearchResult } from './types/documen
 import { HaystackSkySparkClient } from './skyspark/haystackClient.js';
 import { initScopeStore, loadScope, saveScope } from './skyspark/scopeStore.js';
 import { startAuthHealthCheck, listSharedAuthClients } from './skyspark/haystackAuth.js';
+import { selectGridColumns } from './skyspark/selectColumns.js';
 import { SkySparkConfigManager } from './config/skysparkConfig.js';
 import { TypedAxonGenerator } from './generation/typedAxonGenerator.js';
 import { TemplateLoader } from './templates/templateLoader.js';
@@ -78,7 +79,12 @@ interface SessionClientEntry {
   userId?: string;
   username?: string;
   clientId?: string;
+  /** How and when the session's project was last set */
+  setBy: SessionSetBy;
+  setAt: Date;
 }
+
+type SessionSetBy = 'default' | 'restored' | 'switchSkySparkProject' | 'setPrimaryProject';
 
 class AxonMCPServer {
   private server: Server;
@@ -429,10 +435,12 @@ class AxonMCPServer {
     const client = new HaystackSkySparkClient(this.configManager!);
     const fallback = this.primaryContext ?? this.defaultSkysparkClient!.getCurrentConfig();
     const starts = restored ? [restored, fallback] : [fallback];
+    let setBy: SessionSetBy = 'default';
     for (const start of starts) {
       if (!start.instance || !start.project) continue;
       try {
         client.switchTo(start.instance, start.project);
+        if (start === restored) setBy = 'restored';
         break;
       } catch (e: any) {
         console.error(`⚠️ Session ${store.sessionId}: could not start on ${start.instance}/${start.project}: ${e.message}`);
@@ -446,6 +454,8 @@ class AxonMCPServer {
       userId: store.userId,
       username: store.username,
       clientId: store.clientId,
+      setBy,
+      setAt: now,
     };
     this.sessionClients.set(store.sessionId, entry);
     return entry;
@@ -483,6 +493,15 @@ class AxonMCPServer {
       entry.username = store.username;
       entry.clientId = store.clientId;
     }
+  }
+
+  /** Record how and when the calling session's project was last set. */
+  private markSessionProject(setBy: SessionSetBy): void {
+    const sessionId = this.sessionScope.getStore()?.sessionId;
+    const entry = sessionId ? this.sessionClients.get(sessionId) : undefined;
+    if (!entry) return;
+    entry.setBy = setBy;
+    entry.setAt = new Date();
   }
 
   /** Save the session's current project for its user, so it survives a restart. Fire and forget. */
@@ -623,6 +642,8 @@ class AxonMCPServer {
             userId: entry?.userId,
             username: entry?.username,
             clientId: entry?.clientId,
+            setBy: entry?.setBy,
+            setAt: entry?.setAt.toISOString(),
           };
         });
       },
@@ -1231,9 +1252,9 @@ class AxonMCPServer {
 
 ROUTING: code runs against the ACTIVE project. The response includes 'activeProject' and 'url' so you can verify routing. Call getPrimaryProject first if unsure — wrong-project execution is the most common cause of duplicate or missing records.
 
-The 'project' parameter is a PER-CALL override only. It does NOT change the active/primary project for subsequent calls. Format: "instance/project" (preferred, unambiguous) or just "project" (auto-resolved if unique across instances). Use setPrimaryProject to switch persistently.
+The 'project' parameter overrides the project for THIS CALL only. It does NOT change this session's project. Format: "instance/project" (preferred, unambiguous) or just "project" (auto-resolved if unique across instances). Use switchSkySparkProject to change this session's project.
 
-For mutations (commit/diff/remove), strongly prefer setPrimaryProject + verify with getPrimaryProject, rather than relying on the override.`,
+For mutations (commit/diff/remove), prefer switchSkySparkProject + verify with getPrimaryProject, rather than relying on the override.`,
           inputSchema: {
             type: 'object',
             properties: {
@@ -1247,7 +1268,7 @@ For mutations (commit/diff/remove), strongly prefer setPrimaryProject + verify w
               },
               project: {
                 type: 'string',
-                description: 'Per-call project override as "instance/project" or "project". Does NOT change the active project. Omit to use the current primary project.',
+                description: 'One-call project override as "instance/project" or "project". Does NOT change this session\'s project. Omit to use this session\'s project.',
               },
             },
             required: ['code'],
@@ -1869,6 +1890,7 @@ Response includes 'operation': "added" or "updated".`,
           }
           {
             const result = await this.switchProject(args);
+            this.markSessionProject('switchSkySparkProject');
             this.persistSessionScope();
             return result;
           }
@@ -1917,6 +1939,7 @@ Response includes 'operation': "added" or "updated".`,
           }
           {
             const result = await this.setPrimaryProject(args as { instanceName: string; projectName: string });
+            this.markSessionProject('setPrimaryProject');
             this.persistSessionScope();
             return result;
           }
@@ -3216,24 +3239,25 @@ Response includes 'operation': "added" or "updated".`,
     try {
       // this.skysparkClient already points at this call's project (session or default client)
       // Execute query
-      const grid = await this.skysparkClient.readAll(filter);
-      
-      // Apply limit
-      let rows = Array.from(grid).slice(0, limit);
-      
+      const fullGrid = await this.skysparkClient.readAll(filter);
+
+      // Apply limit and select (column subset, in select order) for every format
+      const grid = selectGridColumns(fullGrid, select, limit);
+      const rows = grid.getRows();
+
       // Format output
       let output;
       switch (format) {
         case 'zinc':
           output = grid.toZinc();
           break;
-          
+
         case 'csv':
           // Simple CSV formatting
-          const headers = Array.from(grid.getColumns()).map(col => (col as any).name || col.toString());
-          const csvRows = rows.filter(row => row !== undefined).map(row => {
+          const headers = grid.getColumnNames();
+          const csvRows = rows.map(row => {
             return headers.map(h => {
-              const val = row!.get(h);
+              const val = row.get(h);
               return val ? val.toString() : '';
             }).join(',');
           });
@@ -3247,13 +3271,12 @@ Response includes 'operation': "added" or "updated".`,
             url: cfg.url,
             meta: {
               ver: '3.0',
-              cols: Array.from(grid.getColumns()).map(col => ({ name: (col as any).name || col.toString() }))
+              cols: grid.getColumnNames().map(name => ({ name }))
             },
-            rows: rows.filter(row => row !== undefined).map(row => {
+            rows: rows.map(row => {
               const obj: any = {};
-              for (const col of grid.getColumns()) {
-                const colName = (col as any).name || col.toString();
-                const val = row!.get(colName);
+              for (const colName of grid.getColumnNames()) {
+                const val = row.get(colName);
                 obj[colName] = val ? val.toJSON() : null;
               }
               return obj;
@@ -3434,7 +3457,7 @@ Response includes 'operation': "added" or "updated".`,
               url: activeConfig.url,
               overrideUsed: !!projectOverride,
               note: projectOverride
-                ? 'Per-call override; primary project unchanged. Use setPrimaryProject to switch persistently.'
+                ? 'One-call override; this session\'s project is unchanged. Use switchSkySparkProject to change this session\'s project.'
                 : undefined,
               result: result.toJSON(),
               zinc: result.toZinc(),
@@ -3998,7 +4021,7 @@ Response includes 'operation': "added" or "updated".`,
   }
 
   /**
-   * Get the current primary project context.
+   * Get the session's active project, how it was set, and the default for new sessions.
    */
   private async getPrimaryProject() {
     const scope = this.activeScope ?? this.skysparkClient?.getCurrentConfig();
@@ -4018,15 +4041,17 @@ Response includes 'operation': "added" or "updated".`,
           {
             type: 'text',
             text: JSON.stringify({
-              error: 'No primary project set',
-              message: 'Use setPrimaryProject to set the active project, or configure a default in config files.',
+              error: 'No active project',
+              message: 'Use switchSkySparkProject to set this session\'s project, or configure a default in config files.',
             }, null, 2),
           },
         ],
       };
     }
 
-    const inSession = !!this.sessionScope.getStore()?.sessionId;
+    const sessionId = this.sessionScope.getStore()?.sessionId;
+    const inSession = !!sessionId;
+    const sessionEntry = sessionId ? this.sessionClients.get(sessionId) : undefined;
 
     return {
       content: [
@@ -4037,8 +4062,8 @@ Response includes 'operation': "added" or "updated".`,
             project: scope.project,
             url: scope.url,
             scope: inSession ? 'session' : 'default',
-            setBy: defaultProject?.setBy ?? 'startup',
-            timestamp: defaultProject?.timestamp ?? null,
+            setBy: sessionEntry?.setBy ?? defaultProject?.setBy ?? 'startup',
+            timestamp: sessionEntry?.setAt.toISOString() ?? defaultProject?.timestamp ?? null,
             defaultProject,
             message: `Active project is ${scope.instance}/${scope.project}` +
               (inSession ? ' (this MCP session)' : ''),
@@ -4049,7 +4074,7 @@ Response includes 'operation': "added" or "updated".`,
   }
 
   /**
-   * Commit an Axon function to the primary project with backup support.
+   * Commit an Axon function to the session's active project with backup support.
    */
   private async commitAxonFunction(args: { name: string; src: string; doc?: string; project?: string; appName?: string; view?: string; dis?: string; icon?: string; order?: number; extraTags?: Record<string, any> }) {
     const { name, src, doc, project: expectedProject, appName, view, dis, icon, order, extraTags } = args;
@@ -4065,7 +4090,7 @@ Response includes 'operation': "added" or "updated".`,
     if (!config.instance || !config.project) {
       throw new McpError(
         ErrorCode.InvalidRequest,
-        'No active project. Use setPrimaryProject to set one first.'
+        'No active project. Use switchSkySparkProject to set one first.'
       );
     }
 
@@ -4087,7 +4112,7 @@ Response includes 'operation': "added" or "updated".`,
         throw new McpError(
           ErrorCode.InvalidRequest,
           `Project mismatch: expected '${expectedProject}' but active project is '${activeQualified}'. ` +
-          `Refusing to commit to the wrong project. Call setPrimaryProject('${expectedInstance ?? config.instance}', '${expectedProj}') and retry, ` +
+          `Refusing to commit to the wrong project. Call switchSkySparkProject('${expectedInstance ?? config.instance}', '${expectedProj}') and retry, ` +
           `or call getPrimaryProject to confirm intended routing.`
         );
       }

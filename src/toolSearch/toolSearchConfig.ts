@@ -217,7 +217,7 @@ export const TOOL_METADATA: ToolMetadata[] = [
   {
     name: 'commitAxonFunction',
     category: 'generation',
-    description: 'Commit an Axon function to the primary project with backup management',
+    description: "Commit an Axon function to this session's active project with backup management",
     keywords: ['commit', 'save', 'deploy', 'push', 'backup', 'version'],
     core: false,
     tokenCost: 800,
@@ -323,7 +323,7 @@ export const TOOL_METADATA: ToolMetadata[] = [
   {
     name: 'setPrimaryProject',
     category: 'project',
-    description: 'Set the primary active project for execution and commits',
+    description: "Set this session's project and the default for new sessions",
     keywords: ['set', 'primary', 'active', 'project', 'select', 'default'],
     core: false,
     tokenCost: 200,
