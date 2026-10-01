@@ -2,11 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, type AuthClientState } from '@/lib/api';
 import {
   Server, Plus, Trash2, Edit2, Save, X, RefreshCw,
   ChevronDown, ChevronRight, FolderOpen, Check, AlertCircle,
-  Plug, Download, Loader2
+  Plug, Download, Loader2, KeyRound, Users, Unplug
 } from 'lucide-react';
 
 interface Project {
@@ -45,6 +45,31 @@ const emptyProject: Project = {
   password: ''
 };
 
+const authStateStyles: Record<AuthClientState, string> = {
+  connected: 'bg-green-100 text-green-700',
+  idle: 'bg-gray-100 text-gray-600',
+  down: 'bg-amber-100 text-amber-700',
+  failed: 'bg-red-100 text-red-700',
+};
+
+function AuthStateChip({ state }: { state: AuthClientState }) {
+  return (
+    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${authStateStyles[state] ?? authStateStyles.idle}`}>
+      {state}
+    </span>
+  );
+}
+
+function timeAgo(iso?: string): string {
+  if (!iso) return '—';
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (Number.isNaN(seconds)) return '—';
+  if (seconds < 60) return `${seconds} s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`;
+  return `${Math.floor(seconds / 86400)} d ago`;
+}
+
 export default function ConnectionsPage() {
   const queryClient = useQueryClient();
   const [selectedConnection, setSelectedConnection] = useState<string | null>(null);
@@ -56,9 +81,23 @@ export default function ConnectionsPage() {
   const [newProject, setNewProject] = useState<Project>(emptyProject);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [syncingProjects, setSyncingProjects] = useState<Set<string>>(new Set());
+  const [reauthingProjects, setReauthingProjects] = useState<Set<string>>(new Set());
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [connectLog, setConnectLog] = useState<Array<{ level: string; step?: string; message: string; ts?: string }>>([]);
   const [showConnectLog, setShowConnectLog] = useState(false);
+  const [busySessions, setBusySessions] = useState<Set<string>>(new Set());
+
+  // Active MCP sessions and pooled SkySpark logins
+  const { data: sessions = [], refetch: refetchSessions } = useQuery({
+    queryKey: ['mcp-sessions'],
+    queryFn: api.getSessions,
+    refetchInterval: 5000,
+  });
+  const { data: authClients = [] } = useQuery({
+    queryKey: ['auth-clients'],
+    queryFn: api.getAuthClients,
+    refetchInterval: 5000,
+  });
 
   // Fetch all connection files
   const { data: configs, isLoading, refetch } = useQuery({
@@ -207,6 +246,53 @@ export default function ConnectionsPage() {
       });
     }
   };
+
+  const handleReauthProject = async (projectName: string) => {
+    if (!connection) return;
+    setReauthingProjects(prev => new Set(prev).add(projectName));
+    try {
+      const result = await api.reauthenticateProject(connection.name, projectName);
+      setMessage({ type: 'success', text: `${result.message} (${result.durationMs} ms)` });
+      setTimeout(() => setMessage(null), 5000);
+    } catch (error) {
+      setMessage({ type: 'error', text: `Failed to reauthenticate "${projectName}": ${error}` });
+    } finally {
+      setReauthingProjects(prev => {
+        const next = new Set(prev);
+        next.delete(projectName);
+        return next;
+      });
+    }
+  };
+
+  const runSessionAction = async (sessionId: string, action: () => Promise<string>, failure: string) => {
+    setBusySessions(prev => new Set(prev).add(sessionId));
+    try {
+      setMessage({ type: 'success', text: await action() });
+      setTimeout(() => setMessage(null), 5000);
+    } catch (error) {
+      setMessage({ type: 'error', text: `${failure}: ${error}` });
+    } finally {
+      setBusySessions(prev => {
+        const next = new Set(prev);
+        next.delete(sessionId);
+        return next;
+      });
+    }
+  };
+
+  const handleSessionReauth = (sessionId: string, instance: string, project: string) =>
+    runSessionAction(sessionId, async () => {
+      const result = await api.reauthenticateProject(instance, project);
+      return `${result.message} (${result.durationMs} ms)`;
+    }, `Failed to reauthenticate "${instance}/${project}"`);
+
+  const handleSessionDisconnect = (sessionId: string) =>
+    runSessionAction(sessionId, async () => {
+      await api.disconnectSession(sessionId);
+      await refetchSessions();
+      return `Disconnected session ${sessionId.slice(0, 8)}`;
+    }, `Failed to disconnect session ${sessionId.slice(0, 8)}`);
 
   const toggleExpanded = (name: string) => {
     const newExpanded = new Set(expandedConnections);
@@ -357,6 +443,99 @@ export default function ConnectionsPage() {
           {message.text}
         </div>
       )}
+
+      {/* MCP Sessions */}
+      <div className="rounded-xl bg-white p-4 shadow-sm">
+        <div className="mb-4 flex items-center gap-2">
+          <Users className="h-4 w-4 text-gray-500" />
+          <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide">Sessions</h2>
+          <span className="text-xs text-gray-400">({sessions.length})</span>
+        </div>
+        {sessions.length === 0 ? (
+          <p className="text-sm text-gray-400 text-center py-4">No active MCP sessions</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
+                  <th className="py-2 pr-4 font-medium">Session</th>
+                  <th className="py-2 pr-4 font-medium">User</th>
+                  <th className="py-2 pr-4 font-medium">Project</th>
+                  <th className="py-2 pr-4 font-medium">Connected since</th>
+                  <th className="py-2 pr-4 font-medium">Last activity</th>
+                  <th className="py-2 font-medium text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sessions.map((s) => {
+                  const busy = busySessions.has(s.sessionId);
+                  const hasProject = Boolean(s.instance && s.project);
+                  return (
+                    <tr key={s.sessionId} className="border-b border-gray-100 last:border-0">
+                      <td className="py-2 pr-4 font-mono text-xs text-gray-700" title={s.sessionId}>{s.sessionId.slice(0, 8)}</td>
+                      <td className="py-2 pr-4 text-gray-700">{s.userId || '—'}</td>
+                      <td className="py-2 pr-4 text-gray-700">{hasProject ? `${s.instance}/${s.project}` : 'default'}</td>
+                      <td className="py-2 pr-4 text-gray-500" title={s.createdAt}>{new Date(s.createdAt).toLocaleString()}</td>
+                      <td className="py-2 pr-4 text-gray-500" title={s.lastActivity}>{timeAgo(s.lastActivity)}</td>
+                      <td className="py-2 text-right">
+                        <div className="inline-flex gap-2">
+                          <button
+                            onClick={() => hasProject && handleSessionReauth(s.sessionId, s.instance!, s.project!)}
+                            disabled={!hasProject || busy}
+                            title={hasProject ? 'Log in to SkySpark again' : 'Session has no project'}
+                            className="flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <KeyRound className="h-3 w-3" />}
+                            Reauthenticate
+                          </button>
+                          <button
+                            onClick={() => handleSessionDisconnect(s.sessionId)}
+                            disabled={busy}
+                            className="flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <Unplug className="h-3 w-3" />
+                            Disconnect
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {authClients.length > 0 && (
+          <div className="mt-6">
+            <h3 className="mb-2 text-xs font-medium text-gray-500 uppercase tracking-wide">SkySpark logins</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
+                    <th className="py-2 pr-4 font-medium">Server</th>
+                    <th className="py-2 pr-4 font-medium">Username</th>
+                    <th className="py-2 pr-4 font-medium">State</th>
+                    <th className="py-2 pr-4 font-medium">Last OK</th>
+                    <th className="py-2 font-medium">Error</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {authClients.map((c) => (
+                    <tr key={`${c.baseUrl}|${c.username}`} className="border-b border-gray-100 last:border-0">
+                      <td className="py-2 pr-4 font-mono text-xs text-gray-700">{c.baseUrl}</td>
+                      <td className="py-2 pr-4 text-gray-700">{c.username}</td>
+                      <td className="py-2 pr-4"><AuthStateChip state={c.state} /></td>
+                      <td className="py-2 pr-4 text-gray-500" title={c.okAt}>{timeAgo(c.okAt)}</td>
+                      <td className="py-2 text-xs text-red-600 truncate max-w-xs" title={c.error}>{c.error || ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Connection List */}
@@ -655,6 +834,18 @@ export default function ConnectionsPage() {
                                 <Loader2 className="h-4 w-4 animate-spin text-green-600" />
                               ) : (
                                 <Download className="h-4 w-4" />
+                              )}
+                            </button>
+                            <button
+                              onClick={() => handleReauthProject(project.name)}
+                              disabled={reauthingProjects.has(project.name)}
+                              className="p-2 text-gray-400 hover:text-amber-600 disabled:opacity-50"
+                              title="Reauthenticate (fresh SkySpark login)"
+                            >
+                              {reauthingProjects.has(project.name) ? (
+                                <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
+                              ) : (
+                                <KeyRound className="h-4 w-4" />
                               )}
                             </button>
                             <button

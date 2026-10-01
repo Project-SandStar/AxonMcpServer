@@ -261,12 +261,22 @@ export const TOOL_METADATA: ToolMetadata[] = [
   {
     name: 'switchSkySparkProject',
     category: 'skyspark',
-    description: 'Switch the active SkySpark project context for subsequent operations',
+    description: 'Switch the SkySpark project for this MCP session only; other sessions are not affected',
     keywords: ['switch', 'change', 'project', 'context', 'select', 'active'],
     core: false,
     tokenCost: 180,
     usageFrequency: 'high',
     requiresSkySpark: false,
+  },
+  {
+    name: 'reauthenticateSkySparkProject',
+    category: 'skyspark',
+    description: 'Reauthenticate (re-login, refresh token) to a SkySpark project without changing the active project',
+    keywords: ['reauthenticate', 'reauth', 'login', 'relogin', 're-login', 'authenticate', 'token', 'refresh', '401', '403', 'session', 'expired'],
+    core: false,
+    tokenCost: 160,
+    usageFrequency: 'medium',
+    requiresSkySpark: true,
   },
   {
     name: 'discoverInstanceProjects',
@@ -303,7 +313,7 @@ export const TOOL_METADATA: ToolMetadata[] = [
   {
     name: 'getPrimaryProject',
     category: 'project',
-    description: 'Get the current primary project',
+    description: "Get this MCP session's current project and the default project for new sessions",
     keywords: ['get', 'current', 'active', 'primary', 'project', 'context'],
     core: true,
     tokenCost: 100,

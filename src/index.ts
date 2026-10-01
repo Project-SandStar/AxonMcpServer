@@ -10,6 +10,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import express, { Application, Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
@@ -39,6 +40,7 @@ import { HtmlDocument, DocSearchOptions, DocSearchResult } from './types/documen
 
 // New imports for validation and generation
 import { HaystackSkySparkClient } from './skyspark/haystackClient.js';
+import { startAuthHealthCheck, listSharedAuthClients } from './skyspark/haystackAuth.js';
 import { SkySparkConfigManager } from './config/skysparkConfig.js';
 import { TypedAxonGenerator } from './generation/typedAxonGenerator.js';
 import { TemplateLoader } from './templates/templateLoader.js';
@@ -77,12 +79,18 @@ class AxonMCPServer {
   private config: AxonServerConfig;
   
   // New components for validation and generation
-  private skysparkClient?: HaystackSkySparkClient;  // For MCP queries - always uses primaryContext
+  // Default client for stdio, admin routes and startup. HTTP MCP sessions each get their own
+  // client (see the skysparkClient getter), so one session's project does not leak into another.
+  private defaultSkysparkClient?: HaystackSkySparkClient;
+  private sessionScope = new AsyncLocalStorage<{ sessionId?: string; client?: HaystackSkySparkClient }>();
+  private sessionClients = new Map<string, { client: HaystackSkySparkClient; createdAt: Date; lastActivity: Date }>();
+  private sessionStartedAt = new Map<string, Date>();
+  // One validator per project, so its function-signature cache matches the project it checks
+  private semanticValidators = new Map<string, SemanticValidator>();
   private syncClient?: HaystackSkySparkClient;       // For sync operations - can switch between projects
   private configManager?: SkySparkConfigManager;
   private templateLoader: TemplateLoader;
   private axonGenerator: TypedAxonGenerator;
-  private semanticValidator?: SemanticValidator;
   private bestPracticesChecker: BestPracticesChecker;
   private performanceAnalyzer: PerformanceAnalyzer;
   private errorRecovery: ErrorRecovery;
@@ -368,6 +376,79 @@ class AxonMCPServer {
   }
 
   /**
+   * SkySpark client for the current call. Inside an HTTP MCP session it is that session's own
+   * client (created on first use, starting on the default project); a per-call override wins.
+   * Outside a session (stdio, admin routes, startup) it is the default client.
+   */
+  private get skysparkClient(): HaystackSkySparkClient | undefined {
+    const store = this.sessionScope.getStore();
+    if (store?.client) return store.client;
+    if (!store?.sessionId || !this.configManager || !this.defaultSkysparkClient) {
+      return this.defaultSkysparkClient;
+    }
+
+    const now = new Date();
+    const entry = this.sessionClients.get(store.sessionId);
+    if (entry) {
+      entry.lastActivity = now;
+      return entry.client;
+    }
+
+    const client = new HaystackSkySparkClient(this.configManager);
+    const start = this.primaryContext ?? this.defaultSkysparkClient.getCurrentConfig();
+    if (start.instance && start.project) {
+      try {
+        client.switchTo(start.instance, start.project);
+      } catch (e: any) {
+        console.error(`⚠️ Session ${store.sessionId}: could not start on ${start.instance}/${start.project}: ${e.message}`);
+      }
+    }
+    this.sessionClients.set(store.sessionId, { client, createdAt: now, lastActivity: now });
+    return client;
+  }
+
+  private set skysparkClient(client: HaystackSkySparkClient | undefined) {
+    this.defaultSkysparkClient = client;
+  }
+
+  /**
+   * Project the current call runs against: where the current client points (the session's
+   * client inside an MCP session, else the default client), falling back to primaryContext.
+   * Only explicit switches move a client, so a switchSkySparkProject is never undone here.
+   */
+  private get activeScope(): { instance: string; project: string; url?: string } | null {
+    const config = this.skysparkClient?.getCurrentConfig();
+    if (config?.instance && config.project) {
+      return { instance: config.instance, project: config.project, url: config.url };
+    }
+    return this.primaryContext;
+  }
+
+  /**
+   * Semantic validator for the current call's project. Each one owns a client pinned to its
+   * project, so a later project switch in the session cannot change what it validates against.
+   */
+  private getSemanticValidator(): SemanticValidator | undefined {
+    const config = this.skysparkClient?.getCurrentConfig();
+    if (!config || !this.configManager || !config.instance) return undefined;
+    const key = `${config.instance}/${config.project}`;
+    let validator = this.semanticValidators.get(key);
+    if (!validator) {
+      const client = new HaystackSkySparkClient(this.configManager);
+      client.switchTo(config.instance, config.project);
+      validator = new SemanticValidator(client);
+      this.semanticValidators.set(key, validator);
+    }
+    return validator;
+  }
+
+  /** Drop a closed MCP session's client. */
+  private forgetSession(sessionId: string) {
+    this.sessionClients.delete(sessionId);
+    this.sessionStartedAt.delete(sessionId);
+  }
+
+  /**
    * Create admin context for routes
    */
   private createAdminContext() {
@@ -406,6 +487,10 @@ class AxonMCPServer {
           }
         }
       },
+      reauthenticateProject: async (instance: string, project?: string) => {
+        return this.reauthenticateSkySparkProject(instance, project);
+      },
+      getAuthClients: () => listSharedAuthClients(),
       triggerSync: async (instance: string, project: string) => {
         if (!this.syncClient || !this.configManager) {
           throw new Error('SkySpark not configured');
@@ -434,6 +519,33 @@ class AxonMCPServer {
         }
       },
       getLogBuffer: () => this.logBuffer,
+      getSessions: () => {
+        const ids = new Set([...this.httpTransports.keys(), ...this.sessionClients.keys()]);
+        return [...ids].map((sessionId) => {
+          const entry = this.sessionClients.get(sessionId);
+          const config = entry?.client.getCurrentConfig();
+          const createdAt = this.sessionStartedAt.get(sessionId) ?? entry?.createdAt ?? new Date();
+          return {
+            sessionId,
+            instance: config?.instance,
+            project: config?.project,
+            createdAt: createdAt.toISOString(),
+            lastActivity: (entry?.lastActivity ?? createdAt).toISOString(),
+            userId: undefined as string | undefined,
+          };
+        });
+      },
+      disconnectSession: async (sessionId: string) => {
+        const transport = this.httpTransports.get(sessionId);
+        const known = !!transport || this.sessionClients.has(sessionId);
+        if (transport) {
+          await transport.close();
+        }
+        this.httpTransports.delete(sessionId);
+        this.httpSessions.delete(sessionId);
+        this.forgetSession(sessionId);
+        return known;
+      },
       getPrimaryProject: () => {
         if (!this.primaryContext) {
           return null;
@@ -1065,9 +1177,9 @@ For mutations (commit/diff/remove), strongly prefer setPrimaryProject + verify w
         },
         {
           name: 'switchSkySparkProject',
-          description: `Switch the active SkySpark project context for subsequent operations. Use this when you need to work with a different project.
+          description: `Switch the active SkySpark project context for subsequent operations. Switches the project for THIS MCP session only; other sessions are not affected.
 
-After switching, all executeAxonCode calls will use the new active project by default (unless project parameter is explicitly specified).
+After switching, all executeAxonCode calls in this session will use the new active project by default (unless project parameter is explicitly specified).
 
 Instance name can be from filename (e.g., "demoInstance" for demoInstance.json) or JSON name field. If projectName omitted, uses default or first project.
 
@@ -1085,6 +1197,28 @@ Common workflow:
               projectName: {
                 type: 'string',
                 description: 'Project name to switch to (e.g., "demo"). Optional - defaults to defaultProjName or first project',
+              },
+            },
+            required: ['instanceName'],
+          },
+        },
+        {
+          name: 'reauthenticateSkySparkProject',
+          description: `Reauthenticate (re-login, refresh token) to a SkySpark project. Deletes the cached session token and does a fresh SCRAM login.
+
+Use when SkySpark calls fail with 401/403 or "auth" errors, e.g. after a SkySpark restart. Does NOT change the active project, unlike switchSkySparkProject.
+
+To reauthenticate several projects, call once per project.`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              instanceName: {
+                type: 'string',
+                description: 'Instance name (filename or JSON name field, e.g., "demoInstance", "local")',
+              },
+              projectName: {
+                type: 'string',
+                description: 'Project name. Optional - defaults to the active project on that instance, else defaultProjName or first project',
               },
             },
             required: ['instanceName'],
@@ -1183,7 +1317,7 @@ Examples:
         },
         {
           name: 'setPrimaryProject',
-          description: 'Set the primary active project. All evalAxon and commits will use this project. Called by VSCode extension or Dashboard when user selects a project.',
+          description: 'Set the active project for THIS MCP session (evalAxon and commits in this session use it) and save it as the default project for NEW sessions. Other open sessions are not affected. Called by VSCode extension or Dashboard when user selects a project.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -1201,7 +1335,7 @@ Examples:
         },
         {
           name: 'getPrimaryProject',
-          description: `Get the currently active project (instance, project, URL). Returns where executeAxonCode and commitAxonFunction will route by default.
+          description: `Get the currently active project of THIS MCP session (instance, project, URL), plus defaultProject (used by new sessions). Returns where executeAxonCode and commitAxonFunction will route by default.
 
 ALWAYS call this before any mutation (commitAxonFunction, commit/diff/remove via executeAxonCode) when you are not certain which project is active. Cheap, idempotent, no side effects.`,
           inputSchema: {
@@ -1476,7 +1610,9 @@ Response includes 'operation': "added" or "updated".`,
     }));
 
     // Handle tool calls
-    server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    server.setRequestHandler(CallToolRequestSchema, async (request, extra) =>
+      // Run the call in its MCP session's scope, so this.skysparkClient is that session's client
+      this.sessionScope.run({ sessionId: extra?.sessionId }, async () => {
       const { name, arguments: args } = request.params;
 
       // Track the tool call
@@ -1633,7 +1769,24 @@ Response includes 'operation': "added" or "updated".`,
             );
           }
           return await this.switchProject(args);
-        
+
+        case 'reauthenticateSkySparkProject':
+          if (!args || !args.instanceName) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              'Missing required parameter: instanceName'
+            );
+          }
+          try {
+            const result = await this.reauthenticateSkySparkProject(
+              String(args.instanceName),
+              args.projectName ? String(args.projectName) : undefined
+            );
+            return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+          } catch (error: any) {
+            throw new McpError(ErrorCode.InvalidRequest, `Failed to reauthenticate: ${error.message}`);
+          }
+
         case 'discoverProjectFunctions':
           return await this.discoverFunctions(args);
         
@@ -1713,7 +1866,7 @@ Response includes 'operation': "added" or "updated".`,
         completeTracking(false, error instanceof Error ? error.message : String(error));
         throw error;
       }
-    });
+    }));
 
     // Handle resource listing
     server.setRequestHandler(ListResourcesRequestSchema, async () => {
@@ -2856,8 +3009,9 @@ Response includes 'operation': "added" or "updated".`,
       }
       
       // Semantic validation
-      if (includeSemantics && this.semanticValidator) {
-        result.semantic = await this.semanticValidator.validate(code);
+      const semanticValidator = includeSemantics ? this.getSemanticValidator() : undefined;
+      if (semanticValidator) {
+        result.semantic = await semanticValidator.validate(code);
       }
     } else {
       result.syntax = { 
@@ -2953,15 +3107,7 @@ Response includes 'operation': "added" or "updated".`,
     }
 
     try {
-      // Ensure we're using the primary project for queries
-      if (this.primaryContext) {
-        const currentConfig = this.skysparkClient.getCurrentConfig();
-        if (currentConfig.instance !== this.primaryContext.instance ||
-            currentConfig.project !== this.primaryContext.project) {
-          this.skysparkClient.switchTo(this.primaryContext.instance, this.primaryContext.project);
-        }
-      }
-
+      // this.skysparkClient already points at this call's project (session or default client)
       // Execute query
       const grid = await this.skysparkClient.readAll(filter);
       
@@ -3081,7 +3227,7 @@ Response includes 'operation': "added" or "updated".`,
       );
     }
 
-    // Resolve the target project: explicit override first, then primaryContext, else current client state.
+    // Resolve the target project: explicit override first, then the active scope, else current client state.
     let targetInstance: string | undefined;
     let targetProject: string | undefined;
 
@@ -3113,20 +3259,61 @@ Response includes 'operation': "added" or "updated".`,
       } else {
         targetProject = projectOverride;
       }
-    } else if (this.primaryContext) {
-      targetInstance = this.primaryContext.instance;
-      targetProject = this.primaryContext.project;
+    } else {
+      const scope = this.activeScope;
+      if (scope) {
+        targetInstance = scope.instance;
+        targetProject = scope.project;
+      }
     }
 
     const originalConfig = this.skysparkClient.getCurrentConfig();
     const needSwitch = !!(targetInstance && targetProject &&
       (originalConfig.instance !== targetInstance || originalConfig.project !== targetProject));
 
-    try {
-      if (needSwitch) {
-        this.skysparkClient.switchTo(targetInstance!, targetProject!);
+    if (needSwitch) {
+      // Run on a throwaway client pinned to the target, so the session's client never changes
+      // (parallel calls in one session cannot race on a switch-and-restore)
+      let tempClient: HaystackSkySparkClient;
+      try {
+        if (!this.configManager) {
+          throw new Error('Cannot switch projects without SkySpark config files.');
+        }
+        tempClient = new HaystackSkySparkClient(this.configManager);
+        tempClient.switchTo(targetInstance!, targetProject!);
+      } catch (error: any) {
+        // Same failure shape as an eval error
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                activeProject: `${originalConfig.instance}/${originalConfig.project}`,
+                url: originalConfig.url,
+                error: error.message,
+                recovery: this.errorRecovery.recover(code, { valid: false, error: error.message, category: 'runtime_error' as any })
+              }, null, 2)
+            }
+          ]
+        };
       }
+      return await this.sessionScope.run(
+        { ...this.sessionScope.getStore(), client: tempClient },
+        () => this.evalOnActiveClient(code, projectOverride)
+      );
+    }
 
+    return await this.evalOnActiveClient(code, projectOverride);
+  }
+
+  /** Eval Axon on this.skysparkClient as resolved for the current scope. */
+  private async evalOnActiveClient(code: string, projectOverride: unknown) {
+    if (!this.skysparkClient) {
+      throw new McpError(ErrorCode.InvalidRequest, 'SkySpark connection not available.');
+    }
+
+    try {
       const activeConfig = this.skysparkClient.getCurrentConfig();
       const result = await this.skysparkClient.evalAxon(code);
 
@@ -3172,15 +3359,6 @@ Response includes 'operation': "added" or "updated".`,
           }
         ]
       };
-    } finally {
-      // Restore the original context so per-call overrides don't leak.
-      if (needSwitch && originalConfig.instance && originalConfig.project) {
-        try {
-          this.skysparkClient.switchTo(originalConfig.instance, originalConfig.project);
-        } catch (e: any) {
-          console.error(`⚠️ Failed to restore project after override: ${e.message}`);
-        }
-      }
     }
   }
   
@@ -3196,10 +3374,8 @@ Response includes 'operation': "added" or "updated".`,
     const projects = this.configManager.getAllProjects();
     const instances = this.configManager.getInstances();
 
-    // Use primaryContext for current active project (the user's chosen project)
-    const current = this.primaryContext
-      ? { instance: this.primaryContext.instance, project: this.primaryContext.project, url: this.primaryContext.url }
-      : this.skysparkClient.getCurrentConfig();
+    // Current project for this call (session scope, else the user's chosen project)
+    const current = this.activeScope ?? this.skysparkClient.getCurrentConfig();
 
     // Filter by instance if requested
     const filtered = instanceName
@@ -3246,13 +3422,14 @@ Response includes 'operation': "added" or "updated".`,
     const { instanceName, projectName } = args;
 
     try {
-      // Use flexible instance lookup (supports both JSON name and filename)
-      const activeConfig = this.configManager.switchToInstance(instanceName, projectName);
-      this.skysparkClient.switchTo(activeConfig.instance.name, activeConfig.project.name);
+      // Flexible instance lookup (JSON name or filename); does not touch shared config state
+      const target = this.configManager.resolveInstanceProject(instanceName, projectName);
+      // Switches this session's client only (the default client outside a session)
+      this.skysparkClient.switchTo(target.instance.name, target.project.name);
       const config = this.skysparkClient.getCurrentConfig();
 
       // Clear in-memory cache for the new project (keeps file caches)
-      this.cacheManager.clearProjectCache(activeConfig.instance.name, activeConfig.project.name);
+      this.cacheManager.clearProjectCache(target.instance.name, target.project.name);
 
       return {
         content: [
@@ -3265,7 +3442,8 @@ Response includes 'operation': "added" or "updated".`,
                 project: config.project,
                 url: config.url
               },
-              message: `Switched to ${config.instance}/${config.project}`,
+              scope: 'session',
+              message: `Switched to ${config.instance}/${config.project} for this MCP session only; other sessions are not affected.`,
               note: projectName
                 ? 'In-memory cache cleared for this project'
                 : `Used default project. In-memory cache cleared.`
@@ -3279,6 +3457,48 @@ Response includes 'operation': "added" or "updated".`,
         `Failed to switch project: ${error.message}`
       );
     }
+  }
+
+  /**
+   * Fresh SkySpark login for one project, without changing the active project.
+   * Uses a throwaway client so skysparkClient/syncClient keep their context;
+   * it shares the pooled auth client, so they pick up the new token too.
+   */
+  private async reauthenticateSkySparkProject(instanceName: string, projectName?: string) {
+    if (!this.configManager) {
+      throw new Error('SkySpark not configured. Create config files in the config/ directory.');
+    }
+
+    let project = projectName;
+    if (!project) {
+      const current = this.skysparkClient?.getCurrentConfig();
+      if (current?.instance?.toLowerCase() === instanceName.toLowerCase()) {
+        project = current.project;
+      } else {
+        const instance = this.configManager.getInstance(instanceName)
+          || this.configManager.getInstances().find(i => i.name.toLowerCase() === instanceName.toLowerCase());
+        project = instance?.defaultProjName || instance?.projects?.[0]?.name;
+        if (!project) {
+          throw new Error(`No projects available in instance ${instanceName}`);
+        }
+      }
+    }
+
+    const started = Date.now();
+    const client = new HaystackSkySparkClient(this.configManager);
+    client.switchTo(instanceName, project);
+    await client.reauthenticate();
+    const target = client.getCurrentConfig();
+
+    return {
+      success: true,
+      instance: target.instance,
+      project: target.project,
+      url: target.url,
+      durationMs: Date.now() - started,
+      active: this.skysparkClient?.getCurrentConfig(),
+      message: `Reauthenticated to ${target.instance}/${target.project}. Active project unchanged.`,
+    };
   }
   
   private async discoverFunctions(args: any) {
@@ -3442,11 +3662,6 @@ Response includes 'operation': "added" or "updated".`,
         throw new Error(`Instance not found: ${instanceName}`);
       }
       
-      // Temporarily switch to the instance to discover projects
-      const currentConfig = this.skysparkClient.getCurrentConfig();
-      const originalInstance = currentConfig.instance;
-      const originalProject = currentConfig.project;
-      
       // Get credentials (instance-level or first project)
       const credentials = instance.username && instance.password
         ? { username: instance.username, password: instance.password }
@@ -3526,11 +3741,6 @@ Response includes 'operation': "added" or "updated".`,
             console.error(`  ⚠️  ${errorMsg}`);
           }
         }
-      }
-      
-      // Restore original project
-      if (originalInstance && originalProject) {
-        this.skysparkClient.switchTo(originalInstance, originalProject);
       }
       
       return {
@@ -3620,7 +3830,7 @@ Response includes 'operation': "added" or "updated".`,
   }
 
   /**
-   * Set the primary active project. All evalAxon and commits will use this project.
+   * Set this session's project and save it as the default for new sessions.
    */
   private async setPrimaryProject(args: { instanceName: string; projectName: string }) {
     const { instanceName, projectName } = args;
@@ -3633,9 +3843,13 @@ Response includes 'operation': "added" or "updated".`,
     }
 
     try {
-      // Switch the shared client to the new project
+      // Switch this session's client (the default client outside a session)
       this.skysparkClient.switchTo(instanceName, projectName);
       const config = this.skysparkClient.getCurrentConfig();
+      // Keep the default client on the new default project, as before
+      if (this.defaultSkysparkClient && this.defaultSkysparkClient !== this.skysparkClient) {
+        this.defaultSkysparkClient.switchTo(instanceName, projectName);
+      }
 
       // Update primary context with URL
       this.primaryContext = {
@@ -3660,8 +3874,10 @@ Response includes 'operation': "added" or "updated".`,
               instance: instanceName,
               project: projectName,
               url: config.url,
+              scope: 'session',
+              defaultForNewSessions: `${instanceName}/${projectName}`,
               timestamp: this.primaryContext.timestamp.toISOString(),
-              message: `Primary project set to ${instanceName}/${projectName}. All evalAxon and commits will use this project. (Persisted to config)`,
+              message: `Project set to ${instanceName}/${projectName} for this session; evalAxon and commits here use it. Also saved as the default for new sessions. Other open sessions are not affected.`,
             }, null, 2),
           },
         ],
@@ -3678,27 +3894,18 @@ Response includes 'operation': "added" or "updated".`,
    * Get the current primary project context.
    */
   private async getPrimaryProject() {
-    if (!this.primaryContext) {
-      // If no explicit primary context, use current client config
-      if (this.skysparkClient) {
-        const config = this.skysparkClient.getCurrentConfig();
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                instance: config.instance,
-                project: config.project,
-                url: config.url,
-                setBy: 'startup',
-                timestamp: null,
-                message: 'Using default project from startup configuration',
-              }, null, 2),
-            },
-          ],
-        };
-      }
+    const scope = this.activeScope ?? this.skysparkClient?.getCurrentConfig();
+    const defaultProject = this.primaryContext
+      ? {
+          instance: this.primaryContext.instance,
+          project: this.primaryContext.project,
+          url: this.primaryContext.url,
+          setBy: this.primaryContext.setBy,
+          timestamp: this.primaryContext.timestamp.toISOString(),
+        }
+      : null;
 
+    if (!scope?.instance) {
       return {
         content: [
           {
@@ -3712,19 +3919,22 @@ Response includes 'operation': "added" or "updated".`,
       };
     }
 
-    const config = this.skysparkClient?.getCurrentConfig();
+    const inSession = !!this.sessionScope.getStore()?.sessionId;
 
     return {
       content: [
         {
           type: 'text',
           text: JSON.stringify({
-            instance: this.primaryContext.instance,
-            project: this.primaryContext.project,
-            url: config?.url,
-            setBy: this.primaryContext.setBy,
-            timestamp: this.primaryContext.timestamp.toISOString(),
-            message: `Primary project is ${this.primaryContext.instance}/${this.primaryContext.project}`,
+            instance: scope.instance,
+            project: scope.project,
+            url: scope.url,
+            scope: inSession ? 'session' : 'default',
+            setBy: defaultProject?.setBy ?? 'startup',
+            timestamp: defaultProject?.timestamp ?? null,
+            defaultProject,
+            message: `Active project is ${scope.instance}/${scope.project}` +
+              (inSession ? ' (this MCP session)' : ''),
           }, null, 2),
         },
       ],
@@ -3976,13 +4186,13 @@ end`;
       }
       
       // Create clients with ConfigManager for multi-instance support
-      // skysparkClient: for MCP queries (always uses primaryContext)
+      // skysparkClient: default client for MCP queries outside a session (starts on primaryContext)
       // syncClient: for sync operations (can switch between projects independently)
       this.skysparkClient = new HaystackSkySparkClient(this.configManager);
       this.syncClient = new HaystackSkySparkClient(this.configManager);
 
-      // Initialize semantic validator
-      this.semanticValidator = new SemanticValidator(this.skysparkClient);
+      // Every 60 s, test pooled SkySpark tokens; log in again after a SkySpark restart
+      startAuthHealthCheck(60_000);
 
       // Check if there's a persisted primary project in config
       const savedPrimaryProject = appConfig.primaryProject;
@@ -5352,6 +5562,7 @@ end`;
               console.error(`Session initialized: ${sid}`);
               this.httpTransports.set(sid, transport);
               this.httpSessions.set(sid, sessionServer);
+              this.sessionStartedAt.set(sid, new Date());
             }
           });
 
@@ -5362,6 +5573,7 @@ end`;
               console.error(`Session closed: ${sid}`);
               this.httpTransports.delete(sid);
               this.httpSessions.delete(sid);
+              this.forgetSession(sid);
             }
           };
 

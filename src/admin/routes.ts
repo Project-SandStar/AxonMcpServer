@@ -48,6 +48,10 @@ interface AdminContext {
   getCacheInfo: () => CacheInfo[];
   clearCache: (name?: string) => Promise<void>;
   triggerSync: (instance: string, project: string) => Promise<{ downloaded: number; updated: number; deleted: number }>;
+  reauthenticateProject: (instance: string, project?: string) => Promise<{ success: boolean; instance?: string; project: string; durationMs: number; message: string }>;
+  getAuthClients?: () => Array<{ baseUrl: string; username: string; state: string; checkedAt?: Date; okAt?: Date; reauthAt?: Date; error?: string }>;
+  getSessions?: () => Array<{ sessionId: string; instance?: string; project?: string; createdAt: string; lastActivity: string; userId?: string }>;
+  disconnectSession?: (sessionId: string) => Promise<boolean>;
   triggerDiscover: (instance: string) => Promise<{ projects: string[] }>;
   triggerDiscoverWithProgress: (
     instance: string,
@@ -478,6 +482,35 @@ export function createAdminRouter(context: AdminContext): Router {
       res.json(projects);
     } catch (error) {
       res.status(500).json({ error: 'Failed to get projects' });
+    }
+  });
+
+  router.get('/connections/auth', (_req: Request, res: Response) => {
+    res.json(context.getAuthClients ? context.getAuthClients() : []);
+  });
+
+  router.get('/sessions', (_req: Request, res: Response) => {
+    res.json(context.getSessions?.() ?? []);
+  });
+
+  router.post('/sessions/:sessionId/disconnect', requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const ok = context.disconnectSession ? await context.disconnectSession(req.params.sessionId) : false;
+      if (!ok) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+      return res.json({ success: true });
+    } catch (error) {
+      return res.status(500).json({ error: 'Failed to disconnect session', details: String(error) });
+    }
+  });
+
+  router.post('/connections/:instance/:project/reauth', async (req: Request, res: Response) => {
+    try {
+      const result = await context.reauthenticateProject(req.params.instance, req.params.project);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to reauthenticate', details: String(error) });
     }
   });
 

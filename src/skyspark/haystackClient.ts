@@ -12,7 +12,7 @@ import {
   valueToZinc
 } from 'haystack-core';
 import { SkySparkConfigManager, ActiveConfig } from '../config/skysparkConfig.js';
-import { HaystackAuthClient } from './haystackAuth.js';
+import { HaystackAuthClient, getSharedAuthClient } from './haystackAuth.js';
 
 export interface SkySparkConfig {
   host: string;
@@ -80,9 +80,10 @@ export class HaystackSkySparkClient {
     this.baseUrl = newBaseUrl;
     this.project = newProject;
 
-    // Always create a new auth client when switching projects
-    // because the authPath includes the project name
-    this.authClient = new HaystackAuthClient(
+    // Reuse the pooled auth client for this server + user: one token covers
+    // every project, so a switch does not log in again. The pooled client keeps
+    // the authPath of the first project it was created for.
+    this.authClient = getSharedAuthClient(
       {
         baseUrl: this.baseUrl,
         username,
@@ -161,6 +162,20 @@ export class HaystackSkySparkClient {
         url: `${this.baseUrl}/api/${this.project}`
       };
     }
+  }
+
+  /**
+   * Force a fresh SkySpark login for this client's current project
+   */
+  async reauthenticate(): Promise<void> {
+    await this.authClient.forceReauthenticate();
+  }
+
+  /**
+   * Drop the in-memory token so the next request reloads it from the session cache file
+   */
+  clearAuthToken(): void {
+    this.authClient.clearToken();
   }
 
   /**

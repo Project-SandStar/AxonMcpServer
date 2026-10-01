@@ -146,6 +146,27 @@ export interface PrimaryProject {
   timestamp: string | null;
 }
 
+export interface McpSession {
+  sessionId: string;
+  instance?: string;
+  project?: string;
+  createdAt: string;
+  lastActivity: string;
+  userId?: string;
+}
+
+export type AuthClientState = 'idle' | 'connected' | 'down' | 'failed';
+
+export interface AuthClientInfo {
+  baseUrl: string;
+  username: string;
+  state: AuthClientState;
+  checkedAt?: string;
+  okAt?: string;
+  reauthAt?: string;
+  error?: string;
+}
+
 // API functions
 export const api = {
   // Status
@@ -165,6 +186,18 @@ export const api = {
 
   // Projects
   getProjects: () => apiRequest<ProjectInfo[]>('/projects'),
+  reauthenticateProject: (instance: string, project: string) =>
+    apiRequest<{ success: boolean; instance?: string; project: string; durationMs: number; message: string }>(
+      `/connections/${encodeURIComponent(instance)}/${encodeURIComponent(project)}/reauth`,
+      { method: 'POST' }
+    ),
+  getAuthClients: () => apiRequest<AuthClientInfo[]>('/connections/auth'),
+
+  // MCP sessions
+  getSessions: () => apiRequest<McpSession[]>('/sessions'),
+  disconnectSession: (sessionId: string) =>
+    apiRequest<{ success: boolean }>(`/sessions/${encodeURIComponent(sessionId)}/disconnect`, { method: 'POST' }),
+
   syncProject: (instance: string, project: string) =>
     apiRequest<{ downloaded: number; updated: number; deleted: number }>(
       `/projects/${instance}/${project}/sync`,

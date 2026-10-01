@@ -364,6 +364,37 @@ export class SkySparkConfigManager {
   }
   
   /**
+   * Resolve instance and project like switchToInstance, without changing the active config.
+   * Instance: filename or JSON name (case-insensitive). Project: given name, else
+   * defaultProjName, else the first project.
+   */
+  resolveInstanceProject(instanceName: string, projectName?: string): { instance: SkySparkInstance; project: SkySparkProject } {
+    const instance = this.findInstanceByName(instanceName);
+    if (!instance) {
+      const availableInstances = Array.from(this.instances.keys()).join(', ');
+      const availableFilenames = Array.from(this.filenameToInstance.keys()).join(', ');
+      throw new Error(`Instance not found: ${instanceName}. Available instances: ${availableInstances}. Available filenames: ${availableFilenames}`);
+    }
+
+    const projects = instance.projects || [];
+    const wanted = projectName ?? instance.defaultProjName;
+    if (!wanted) {
+      if (projects.length === 0) {
+        throw new Error(`No projects available in instance ${instance.name}`);
+      }
+      return { instance, project: projects[0] };
+    }
+
+    const project = projects.find(p => p.name === wanted);
+    if (!project) {
+      throw new Error(projectName
+        ? `Project not found: ${projectName} in instance ${instance.name}`
+        : `Default project not found: ${wanted} in instance ${instance.name}`);
+    }
+    return { instance, project };
+  }
+
+  /**
    * Add a new instance configuration
    */
   addInstance(instance: SkySparkInstance) {

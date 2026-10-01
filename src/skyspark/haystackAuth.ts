@@ -227,6 +227,7 @@ class ScramAuth {
 export class HaystackAuthClient {
   private config: AuthConfig;
   private authToken?: AuthToken;
+  private pendingToken?: Promise<string>;
   private cacheDir: string;
   private sessionMaxAge: number; // in milliseconds
   private instanceName?: string;
@@ -369,7 +370,17 @@ export class HaystackAuthClient {
     if (this.hasValidToken()) {
       return this.authToken!.token;
     }
-    
+
+    // Concurrent callers share one in-flight lookup/login instead of each doing SCRAM
+    if (!this.pendingToken) {
+      this.pendingToken = this.loadOrLogin().finally(() => {
+        this.pendingToken = undefined;
+      });
+    }
+    return this.pendingToken;
+  }
+
+  private async loadOrLogin(): Promise<string> {
     // 2. Try to load cached session
     const cachedSession = await this.loadCachedSession();
     if (cachedSession) {
@@ -558,4 +569,119 @@ export class HaystackAuthClient {
   clearToken(): void {
     this.authToken = undefined;
   }
+
+  /**
+   * Drop the in-memory token AND the session cache file, then do a full
+   * SCRAM login. clearToken() alone is not enough: getAuthToken() would
+   * reuse the cached file token if it still tests valid.
+   */
+  async forceReauthenticate(): Promise<void> {
+    this.authToken = undefined;
+    await fs.unlink(this.getCacheFilePath()).catch(() => {});
+    await this.authenticate();
+  }
+
+  private health: AuthHealth = { state: 'idle' };
+
+  getHealth(): AuthHealth {
+    return { ...this.health };
+  }
+
+  /**
+   * Check the in-memory token against the server. A 401/403 means the token
+   * died (e.g. SkySpark restarted), so log in again. A network error means
+   * the server is down: keep the token and retry on the next check.
+   * Clients that never logged in stay idle; they log in on first use.
+   */
+  async checkHealth(): Promise<AuthHealth> {
+    if (!this.authToken) {
+      return this.getHealth();
+    }
+    const checkedAt = new Date();
+    let status: number;
+    try {
+      const response = await fetch(`${this.config.baseUrl}${this.config.authPath}`, {
+        method: 'GET',
+        headers: { 'Authorization': `BEARER authToken=${this.authToken.token}` }
+      });
+      status = response.status;
+    } catch (error: any) {
+      this.health = { ...this.health, state: 'down', checkedAt, error: error.message };
+      return this.getHealth();
+    }
+
+    if (status === 200) {
+      this.health = { state: 'connected', checkedAt, okAt: checkedAt };
+    } else if (status === 401 || status === 403) {
+      try {
+        await this.forceReauthenticate();
+        this.health = { state: 'connected', checkedAt, okAt: new Date(), reauthAt: new Date() };
+      } catch (error: any) {
+        this.health = { ...this.health, state: 'failed', checkedAt, error: error.message };
+      }
+    } else {
+      this.health = { ...this.health, state: 'down', checkedAt, error: `HTTP ${status}` };
+    }
+    return this.getHealth();
+  }
+}
+
+export interface AuthHealth {
+  state: 'idle' | 'connected' | 'down' | 'failed';
+  checkedAt?: Date;
+  okAt?: Date;
+  reauthAt?: Date;
+  error?: string;
+}
+
+/**
+ * Process-wide pool of auth clients, one per (server, username).
+ * A SkySpark token is valid for every project on the server, so switching
+ * projects reuses the pooled client and its in-memory token instead of
+ * re-reading the session file, re-testing the token, or logging in again.
+ */
+const sharedAuthClients = new Map<string, { client: HaystackAuthClient; password: string }>();
+
+export function getSharedAuthClient(
+  config: AuthConfig,
+  options?: { cacheDir?: string; sessionMaxAge?: number; instanceName?: string; projectName?: string }
+): HaystackAuthClient {
+  const key = `${config.baseUrl}|${config.username}`;
+  const entry = sharedAuthClients.get(key);
+  if (entry && entry.password === config.password) {
+    return entry.client;
+  }
+  // New server/user, or the password changed in config: start a fresh client
+  const client = new HaystackAuthClient(config, options);
+  sharedAuthClients.set(key, { client, password: config.password });
+  return client;
+}
+
+/**
+ * List pooled auth clients with their last health result (for the dashboard)
+ */
+export function listSharedAuthClients(): Array<{ baseUrl: string; username: string } & AuthHealth> {
+  return [...sharedAuthClients.entries()].map(([key, { client }]) => {
+    const [baseUrl, username] = key.split('|');
+    return { baseUrl, username, ...client.getHealth() };
+  });
+}
+
+/**
+ * Check every pooled auth client on an interval. Returns the timer so the
+ * caller can stop it on shutdown.
+ */
+export function startAuthHealthCheck(intervalMs = 60_000): NodeJS.Timeout {
+  let running = false;
+  const timer = setInterval(async () => {
+    if (running) return; // a slow server must not stack checks
+    running = true;
+    try {
+      await Promise.all([...sharedAuthClients.values()].map(({ client }) => client.checkHealth()));
+    } finally {
+      running = false;
+    }
+  }, intervalMs);
+  timer.unref();
+  return timer;
 }
