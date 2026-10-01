@@ -43,6 +43,7 @@ import { HaystackSkySparkClient } from './skyspark/haystackClient.js';
 import { initScopeStore, loadScope, saveScope } from './skyspark/scopeStore.js';
 import { startAuthHealthCheck, listSharedAuthClients } from './skyspark/haystackAuth.js';
 import { selectGridColumns } from './skyspark/selectColumns.js';
+import { gridToCsv } from './skyspark/gridCsv.js';
 import { SkySparkConfigManager } from './config/skysparkConfig.js';
 import { TypedAxonGenerator } from './generation/typedAxonGenerator.js';
 import { TemplateLoader } from './templates/templateLoader.js';
@@ -3253,15 +3254,7 @@ Response includes 'operation': "added" or "updated".`,
           break;
 
         case 'csv':
-          // Simple CSV formatting
-          const headers = grid.getColumnNames();
-          const csvRows = rows.map(row => {
-            return headers.map(h => {
-              const val = row.get(h);
-              return val ? val.toString() : '';
-            }).join(',');
-          });
-          output = [headers.join(','), ...csvRows].join('\n');
+          output = gridToCsv(grid);
           break;
           
         default: { // json
