@@ -44,6 +44,7 @@ import { initScopeStore, loadScope, saveScope } from './skyspark/scopeStore.js';
 import { startAuthHealthCheck, listSharedAuthClients } from './skyspark/haystackAuth.js';
 import { selectGridColumns } from './skyspark/selectColumns.js';
 import { gridToCsv } from './skyspark/gridCsv.js';
+import { connectionProject, CONNECTION_PROJECT_HEADER, proxyConnection } from './skyspark/connectionProject.js';
 import { SkySparkConfigManager } from './config/skysparkConfig.js';
 import { TypedAxonGenerator } from './generation/typedAxonGenerator.js';
 import { TemplateLoader } from './templates/templateLoader.js';
@@ -69,6 +70,10 @@ interface SessionStore {
   userId?: string;
   username?: string;
   clientId?: string;
+  /** Project pinned by the connection (?project= or X-Axon-Project); wins over the saved scope */
+  pinned?: { instance: string; project: string } | null;
+  /** Owner key for the saved scope when there is no user (one per mcp-proxy client) */
+  scopeKey?: string;
   client?: HaystackSkySparkClient;
 }
 
@@ -85,7 +90,7 @@ interface SessionClientEntry {
   setAt: Date;
 }
 
-type SessionSetBy = 'default' | 'restored' | 'switchSkySparkProject' | 'setPrimaryProject';
+type SessionSetBy = 'default' | 'connection' | 'restored' | 'switchSkySparkProject' | 'setPrimaryProject';
 
 class AxonMCPServer {
   private server: Server;
@@ -426,8 +431,9 @@ class AxonMCPServer {
   }
 
   /**
-   * Create the session's client. It starts on `restored` (a user's saved scope) if that
-   * instance/project still exists in config, else on the default project.
+   * Create the session's client. It starts on the connection's pinned project, else on
+   * `restored` (a user's saved scope), else on the default project. A start is skipped if
+   * that instance/project is not in config.
    */
   private createSessionClient(
     store: SessionStore & { sessionId: string },
@@ -435,13 +441,17 @@ class AxonMCPServer {
   ): SessionClientEntry {
     const client = new HaystackSkySparkClient(this.configManager!);
     const fallback = this.primaryContext ?? this.defaultSkysparkClient!.getCurrentConfig();
-    const starts = restored ? [restored, fallback] : [fallback];
+    const pinned = store.pinned ?? null;
+    const starts = [pinned, restored, fallback].filter(
+      (s): s is { instance: string; project: string } => !!s
+    );
     let setBy: SessionSetBy = 'default';
     for (const start of starts) {
       if (!start.instance || !start.project) continue;
       try {
         client.switchTo(start.instance, start.project);
-        if (start === restored) setBy = 'restored';
+        if (start === pinned) setBy = 'connection';
+        else if (start === restored) setBy = 'restored';
         break;
       } catch (e: any) {
         console.error(`⚠️ Session ${store.sessionId}: could not start on ${start.instance}/${start.project}: ${e.message}`);
@@ -472,19 +482,25 @@ class AxonMCPServer {
     if (!store?.sessionId || store.client || !this.configManager || !this.defaultSkysparkClient) return;
 
     let entry = this.sessionClients.get(store.sessionId);
-    if (!entry && store.userId) {
+    const owner = store.userId ?? store.scopeKey;
+    if (!entry && owner) {
       let restored: { instance: string; project: string } | null = null;
-      try {
-        restored = await loadScope(store.userId, store.clientId);
-      } catch (e: any) {
-        console.error(`⚠️ Could not load saved scope for user ${store.userId}: ${e.message}`);
+      // A pinned connection does not need the saved scope
+      if (!store.pinned) {
+        try {
+          restored = await loadScope(owner, store.clientId);
+        } catch (e: any) {
+          console.error(`⚠️ Could not load saved scope for ${owner}: ${e.message}`);
+        }
       }
       // Another call in this session may have created the entry while we waited
       entry = this.sessionClients.get(store.sessionId);
       if (!entry) {
         entry = this.createSessionClient({ ...store, sessionId: store.sessionId }, restored);
-        if (restored) {
-          console.error(`Session ${store.sessionId}: restored ${restored.instance}/${restored.project} for ${store.username ?? store.userId}`);
+        if (entry.setBy === 'connection') {
+          console.error(`Session ${store.sessionId}: pinned to ${store.pinned!.instance}/${store.pinned!.project} by the connection`);
+        } else if (restored) {
+          console.error(`Session ${store.sessionId}: restored ${restored.instance}/${restored.project} for ${store.username ?? owner}`);
         }
       }
     }
@@ -494,6 +510,28 @@ class AxonMCPServer {
       entry.username = store.username;
       entry.clientId = store.clientId;
     }
+  }
+
+  /**
+   * Scope for one tool call. Behind mcp-proxy, all clients share one upstream session, so
+   * the proxy's per-client session id (from `_meta`) keys the scope instead, and the saved
+   * project is kept per proxy client.
+   */
+  private callScope(meta: Record<string, unknown> | undefined, extra: any): SessionStore {
+    const store: SessionStore = {
+      sessionId: extra?.sessionId,
+      userId: extra?.authInfo?.extra?.userId as string | undefined,
+      username: extra?.authInfo?.extra?.username as string | undefined,
+      clientId: extra?.authInfo?.clientId,
+      pinned: connectionProject(extra?.requestInfo?.headers),
+    };
+    const proxied = proxyConnection(meta);
+    if (proxied) {
+      store.sessionId = `proxy:${proxied.sessionId}`;
+      store.scopeKey = store.sessionId;
+      store.pinned = proxied.pinned ?? store.pinned;
+    }
+    return store;
   }
 
   /** Record how and when the calling session's project was last set. */
@@ -508,11 +546,12 @@ class AxonMCPServer {
   /** Save the session's current project for its user, so it survives a restart. Fire and forget. */
   private persistSessionScope(): void {
     const store = this.sessionScope.getStore();
-    if (!store?.sessionId || !store.userId) return;
+    const owner = store?.userId ?? store?.scopeKey;
+    if (!store?.sessionId || !owner) return;
     const config = this.sessionClients.get(store.sessionId)?.client.getCurrentConfig();
     if (!config?.instance || !config.project) return;
-    saveScope(store.userId, store.clientId, config.instance, config.project).catch((e: any) =>
-      console.error(`⚠️ Could not save scope for user ${store.userId}: ${e.message}`)
+    saveScope(owner, store.clientId, config.instance, config.project).catch((e: any) =>
+      console.error(`⚠️ Could not save scope for ${owner}: ${e.message}`)
     );
   }
 
@@ -1726,12 +1765,7 @@ Response includes 'operation': "added" or "updated".`,
     server.setRequestHandler(CallToolRequestSchema, async (request, extra) =>
       // Run the call in its MCP session's scope, so this.skysparkClient is that session's client
       this.sessionScope.run(
-        {
-          sessionId: extra?.sessionId,
-          userId: extra?.authInfo?.extra?.userId as string | undefined,
-          username: extra?.authInfo?.extra?.username as string | undefined,
-          clientId: extra?.authInfo?.clientId,
-        },
+        this.callScope(request.params._meta, extra),
         async () => {
       await this.prepareSessionClient();
       const { name, arguments: args } = request.params;
@@ -5680,6 +5714,10 @@ end`;
     app.post('/mcp', mcpAuth, async (req: Request, res: Response) => {
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
       console.error(`POST /mcp - session: ${sessionId || 'new'}, body: ${JSON.stringify(req.body).substring(0, 200)}`);
+      // ?project=instance/project in the MCP URL pins the connection's project; tool calls read it as a header
+      if (typeof req.query.project === 'string' && !req.headers[CONNECTION_PROJECT_HEADER]) {
+        req.headers[CONNECTION_PROJECT_HEADER] = req.query.project;
+      }
 
       try {
         // Check for existing session
