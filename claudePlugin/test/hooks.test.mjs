@@ -199,6 +199,7 @@ test('build: one wf- skill per workflow, frontmatter carried over, single frontm
     assert.doesNotMatch(m[2].replace(/^\s*<!--.*-->\s*/, ''), /^---\n/, `${name}: workflow frontmatter leaked into the body`);
     const desc = text.match(/^description: (.*)$/m)[1];
     assert.ok(JSON.parse(desc).length > 10, `${name}: description`);
+    assert.ok(JSON.parse(desc).length <= 120, `${name}: description over 120 chars`);
   }
   assert.ok(build.workflows.includes('wf-cur-rule-computed-points'));
 });

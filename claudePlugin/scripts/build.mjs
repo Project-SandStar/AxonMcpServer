@@ -67,6 +67,10 @@ function stripMd(s) {
   return s.replace(/[`*_>#]/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/\s+/g, ' ').trim();
 }
 
+// Skill descriptions load in every session; keep them short (same cap as
+// the Fantom MCP plugin). The full workflow loads only when the skill runs.
+const MAX_DESC = 120;
+
 function describe(slug, meta, body) {
   let d = meta.description ? stripMd(meta.description) : '';
   if (!d) {
@@ -74,8 +78,8 @@ function describe(slug, meta, body) {
     const title = stripMd((lines.find(l => l.startsWith('# ')) || slug).replace(/^#\s*/, ''));
     const first = lines.find(l => l.trim() && !l.startsWith('#') && !l.startsWith('>') && !l.startsWith('```'));
     d = first ? `${title}: ${stripMd(first)}` : title;
-  } else if (meta.title) d = `${stripMd(meta.title)}: ${d}`;
-  return d.length > 200 ? d.slice(0, 197).replace(/\s+\S*$/, '') + '...' : d;
+  } else if (meta.title && stripMd(meta.title).length + d.length + 2 <= MAX_DESC) d = `${stripMd(meta.title)}: ${d}`;
+  return d.length > MAX_DESC ? d.slice(0, MAX_DESC - 3).replace(/[\s,;:—-]+\S*$/, '') + '...' : d;
 }
 
 const yamlStr = s => JSON.stringify(s);
