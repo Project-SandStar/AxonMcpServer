@@ -1,0 +1,24 @@
+{
+  "name": "axon-mcp",
+  "version": "1.1.0",
+  "description": "SkySpark Axon from the Axon MCP server: examples, patterns, docs, call graph, semantic search, Haystack queries, and running and committing Axon in the active SkySpark project. Workflow guides ship as skills.",
+  "author": {
+    "name": "Project Sandstar"
+  },
+  "license": "SEE LICENSE IN LICENSE",
+  "keywords": ["mcp", "axon", "skyspark", "haystack", "folio", "code-graph", "semantic-search"],
+  "userConfig": {
+    "mcp_url": {
+      "type": "string",
+      "title": "Axon MCP endpoint",
+      "description": "Streamable HTTP MCP URL. Default goes through the local mcp-proxy on :9191 so the connector stays up while the server restarts.",
+      "default": "http://localhost:9191/axon/mcp"
+    },
+    "server_url": {
+      "type": "string",
+      "title": "Axon MCP server URL",
+      "description": "Base URL of the server itself (health check). No trailing slash.",
+      "default": "http://localhost:3847"
+    }
+  }
+}
