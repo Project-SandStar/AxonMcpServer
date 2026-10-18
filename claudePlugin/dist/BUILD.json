@@ -1,0 +1,18 @@
+{
+  "version": "1.1.0",
+  "workflows": [
+    "wf-app-creation",
+    "wf-axon-func-update",
+    "wf-axon-lang-information",
+    "wf-cur-rule-computed-points",
+    "wf-html-email-skyspark",
+    "wf-job-status-check",
+    "wf-mobilytik-dashboard-generation",
+    "wf-mobilytik-pod-release",
+    "wf-opc-connector-workflow",
+    "wf-recform-template-design",
+    "wf-spark-rule-creation",
+    "wf-task-subscriber-permissions",
+    "wf-visualytik-mcp-authoring"
+  ]
+}

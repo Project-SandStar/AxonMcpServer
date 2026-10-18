@@ -36,6 +36,16 @@ removal of a local entry by direct edit makes a backup of `~/.claude.json` first
 Then start a new session, or run `/reload-plugins`. `/mcp` shows the server as
 `plugin:axon-mcp:axon`.
 
+From another machine, without a checkout:
+
+```bash
+claude plugin marketplace add <git url of this repo>   # or the sandstar marketplace repo
+claude plugin install axon-mcp@axon-mcp                # axon-mcp@sandstar from sandstar
+```
+
+`dist/` is committed and the repo root holds the marketplace, so the clone has
+the built plugin. Use one marketplace per plugin, not both.
+
 ## Settings
 
 | Option | Default | Use |
@@ -57,6 +67,7 @@ npm run plugin:test       # build, unit tests with a fake server, live checks wh
   File names change to kebab case: `curRule-computed-points.md` becomes
   `wf-cur-rule-computed-points`.
 - The version comes from the root `package.json`.
+- Commit `claudePlugin/dist` with every change: git installs use it as is.
 
 ## Remove
 

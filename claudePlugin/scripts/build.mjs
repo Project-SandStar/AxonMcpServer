@@ -36,11 +36,18 @@ const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 manifest.version = version;
 fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
 
-const marketPath = path.join(PLUGIN, '.claude-plugin', 'marketplace.json');
-const market = JSON.parse(fs.readFileSync(marketPath, 'utf8'));
-market.metadata = { ...(market.metadata || {}), version };
-for (const p of market.plugins) if (p.name === manifest.name) p.version = version;
-fs.writeFileSync(marketPath, JSON.stringify(market, null, 2) + '\n');
+// Two marketplaces: claudePlugin/ (local installs, source ./dist) and the
+// repo root (git installs, source ./claudePlugin/dist).
+for (const marketPath of [
+  path.join(PLUGIN, '.claude-plugin', 'marketplace.json'),
+  path.join(REPO, '.claude-plugin', 'marketplace.json'),
+]) {
+  if (!fs.existsSync(marketPath)) continue;
+  const market = JSON.parse(fs.readFileSync(marketPath, 'utf8'));
+  market.metadata = { ...(market.metadata || {}), version };
+  for (const p of market.plugins) if (p.name === manifest.name) p.version = version;
+  fs.writeFileSync(marketPath, JSON.stringify(market, null, 2) + '\n');
+}
 
 // 4. LICENSE
 fs.copyFileSync(path.join(REPO, 'LICENSE'), path.join(DIST, 'LICENSE'));

@@ -1,0 +1,29 @@
+{
+  "description": "Axon MCP hooks: SessionStart server check, UserPromptSubmit tool hints. Both fail open: a server that is down never blocks a prompt.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/prompt-hint.mjs\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

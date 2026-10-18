@@ -1,1 +1,3 @@
-dist/
+# dist/ is the plugin and is committed: git marketplaces install it as is.
+# The root .gitignore drops every dist/, so let this one back in.
+!dist/

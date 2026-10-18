@@ -1,0 +1,414 @@
+Project Sandstar Source-Available License (PSSL)
+Version 1.1
+Effective Date: June 21 2024
+Copyright (c) 2026 Anka Labs, Inc. All rights reserved.
+
+================================================================================
+PREAMBLE
+================================================================================
+
+Project Sandstar merges two open-source technologies — the Sedona Framework and
+Project Haystack — into a unified, hardware-agnostic control and data platform
+for smart buildings and IoT devices. Anka Labs, Inc. ("Licensor") has developed
+a suite of applications that operate northbound of this open foundation.
+
+This license governs the use of those northbound applications. It is designed to
+keep the Sandstar ecosystem open and accessible to those who build within it,
+while requiring a commercial arrangement for those who use these applications to
+consume, display, or interact with data that did not originate from the Project
+Sandstar hardware-agnostic controls ecosystem.
+
+This is a Source-Available License. It is not an Open Source license as defined
+by the Open Source Initiative (OSI). The source code is visible, readable, and
+modifiable, but usage rights are conditional based on the origin of data consumed
+by the Licensed Software.
+
+================================================================================
+1. DEFINITIONS
+================================================================================
+
+1.1 "Licensed Software" means the following applications, including their source
+code, binaries, documentation, and any updates published by the Licensor under
+this license:
+  (a) Mobilytik — Mobile application for Haystack data browsing, dashboard
+      building, equipment barcode scanning, and offline metering.
+  (b) Visualytik — Dashboard and visualization builder utilizing Haystack block
+      programming methodologies.
+  (c) Sandstar Port Manager — Hardware I/O abstraction, record editing, and
+      channel-to-tag mapping tool.
+  (d) Sandstar Web Editor — Browser-based Sedona block programming environment
+      utilizing WebSocket communication.
+  (e) Sandstar Sox WebSocket Apps — Sox UDP-to-WebSocket bridge and real-time
+      device communication applications.
+
+1.2 "Project Sandstar" means the open-source control engine that merges the
+Sedona Framework with Project Haystack, as maintained at the official Project
+Sandstar repositories, including the Sandstar C/C++ engine, the eacio Sedona kit,
+device templates, and Zinc grid configurations.
+
+1.3 "Sedona Framework" means the open-source software environment for building
+smart, networked, embedded devices, including the Sedona Virtual Machine (SVM),
+the Sox protocol, Sedona component model, and associated kits, as maintained by
+the Sedona Alliance or its successors.
+
+1.4 "Project Haystack" means the open-source semantic data modeling standard for
+IoT data, including Haystack tag definitions, Zinc data format, filter syntax,
+and the Haystack REST API (Ops), as maintained by Project Haystack or its
+successors.
+
+1.5 "Sandstar-Origin Data" means any data packet, record, point value, command,
+or data stream that originates from a controller or device running the Project
+Sandstar engine with both:
+  (a) The Sedona Framework (SVM) for control programming; and
+  (b) Project Haystack tags and the Haystack REST API as the data model and
+      communication interface; and
+  (c) Hardware-agnostic control logic consistent with the eacio kit model, where
+      control programming is separated from hardware-specific definitions.
+For a data packet to qualify as Sandstar-Origin Data, the physical device or
+controller that generated the underlying sensor reading, control output, or
+computed value must itself be running the Project Sandstar engine with Sedona and
+Haystack as specified above.
+
+1.6 "Non-Sandstar Data" means any data packet, record, point value, command, or
+data stream that originates from a device, controller, or system that is NOT
+running the Project Sandstar engine with Sedona and Haystack — regardless of
+whether that data has been subsequently converted, translated, imported, proxied,
+or re-tagged into Haystack format by an intermediary system. Non-Sandstar Data
+includes, but is not limited to, data originating from:
+  (a) BACnet controllers or devices (BACnet/IP, BACnet MS/TP, BACnet SC)
+  (b) Modbus controllers or devices (Modbus TCP, Modbus RTU)
+  (c) LonWorks / LonTalk devices
+  (d) KNX devices
+  (e) Niagara Framework controllers (when operating as the primary control
+      platform rather than as a transparent pass-through for Sandstar controllers)
+  (f) Any proprietary or vendor-specific controller or device
+  (g) Any device communicating via MQTT, OPC-UA, or other protocols as its
+      primary control interface, where the device itself does not run the
+      Sandstar engine
+
+1.7 "Qualifying Use" means use of the Licensed Software in which the Licensed
+Software exclusively consumes, displays, interacts with, and operates upon
+Sandstar-Origin Data. A deployment constitutes Qualifying Use when every data
+packet rendered, visualized, browsed, edited, or acted upon by the Licensed
+Software can be traced back to a Project Sandstar hardware-agnostic controller
+running Sedona and Haystack.
+
+1.8 "Non-Qualifying Use" means any use of the Licensed Software in which the
+Licensed Software consumes, displays, interacts with, or operates upon any
+Non-Sandstar Data — whether exclusively or in combination with Sandstar-Origin
+Data. This includes, without limitation:
+  (a) Displaying Non-Sandstar Data on a Mobilytik dashboard alongside
+      Sandstar-Origin Data.
+  (b) Creating a unified visualization in Visualytik that includes data points
+      from both Sandstar controllers and BACnet or Modbus devices.
+  (c) Routing Non-Sandstar Data through a Haystack server (such as SkySpark) and
+      then consuming that re-tagged data in the Licensed Software.
+  (d) Using the Licensed Software as a single-pane-of-glass view that aggregates
+      data from both Sandstar and non-Sandstar systems.
+  (e) Feeding data from legacy protocols into the Licensed Software via any
+      translation, gateway, or proxy layer.
+
+1.9 "You" / "Licensee" means the individual or legal entity exercising rights
+under this license.
+
+1.10 "Licensor" means Anka Labs, Inc., or its authorized successors and assigns.
+
+================================================================================
+2. GRANT OF RIGHTS — QUALIFYING USE
+================================================================================
+
+Subject to the terms of this license, the Licensor grants You a worldwide,
+non-exclusive, royalty-free, non-transferable right to:
+
+(a) Use the Licensed Software for any purpose, including commercial purposes,
+    provided the Licensed Software exclusively consumes Sandstar-Origin Data
+    (Qualifying Use).
+(b) Study the source code of the Licensed Software, inspect its operation, and
+    learn from its design.
+(c) Modify the Licensed Software and create derivative works for use within
+    Qualifying Use deployments.
+(d) Distribute the Licensed Software and derivative works to third parties,
+    provided that:
+      (i)   This license (PSSL v1.1) is included with all copies and derivative
+            works.
+      (ii)  The recipient's use also constitutes Qualifying Use.
+      (iii) You do not misrepresent the origin of the Licensed Software.
+      (iv)  You include prominent notice of any modifications You have made.
+(e) Deploy the Licensed Software on an unlimited number of devices and servers
+    within a Qualifying Use deployment at no charge.
+
+================================================================================
+3. COMMERCIAL LICENSE REQUIREMENT — NON-QUALIFYING USE
+================================================================================
+
+3.1 Any use of the Licensed Software that does NOT meet the definition of
+Qualifying Use (Section 1.7) requires a separate commercial license from Anka
+Labs, Inc.
+
+3.2 The Packet Rule. The determining factor for whether a deployment requires a
+commercial license is the origin of data consumed by the Licensed Software — not
+the mere presence of non-Sandstar devices in the same building or facility.
+Specifically:
+  (a) Non-Sandstar devices (BACnet chillers, Modbus meters, legacy controllers,
+      etc.) may coexist in the same building as Sandstar controllers without
+      triggering a commercial license requirement — provided that data from those
+      non-Sandstar devices does not flow into the Licensed Software.
+  (b) However, if any Non-Sandstar Data reaches the Licensed Software — whether
+      directly, through a gateway, through a Haystack server that aggregated the
+      data, or through any other intermediary — the use of the Licensed Software
+      becomes Non-Qualifying Use, and a commercial license is required.
+  (c) The test is applied at the data consumption layer: if the Licensed Software
+      renders, displays, browses, or acts upon a data packet, that packet must
+      trace its origin to a Sandstar hardware-agnostic controller.
+
+3.3 No Unified View Without Full Sandstar Ecosystem. The Licensed Software may
+not be used as a single-pane-of-glass interface that unifies data from both
+Sandstar and non-Sandstar systems without a commercial license. If a Licensee
+desires a unified view across heterogeneous systems (Sandstar controllers
+alongside BACnet, Modbus, or other protocol devices), that Licensee must enter
+into a commercial license agreement with the Licensor.
+
+3.4 For clarity, the following scenarios require a commercial license:
+  (a) A building has 20 Sandstar controllers and 5 legacy BACnet controllers.
+      Mobilytik is used to browse data from all 25. Commercial license required
+      (Non-Sandstar Data is consumed by the Licensed Software).
+  (b) Same building. Mobilytik is configured to only display data from the 20
+      Sandstar controllers. The 5 BACnet controllers are managed through separate
+      tools. Qualifying Use. No license fee.
+  (c) A SkySpark instance aggregates data from both Sandstar controllers and
+      Modbus devices. Visualytik connects to SkySpark and creates dashboards
+      showing all points. Commercial license required (Non-Sandstar Data reaches
+      Visualytik through SkySpark).
+  (d) A SkySpark instance aggregates data from both Sandstar controllers and
+      Modbus devices. Visualytik is configured to only query and display records
+      tagged as originating from Sandstar controllers, and no Non-Sandstar Data
+      is rendered. Qualifying Use. No license fee.
+  (e) A gateway converts BACnet data into Haystack-tagged records and serves them
+      via Haystack REST API. Mobilytik consumes those records. Commercial license
+      required (the origin of the data is a BACnet device, not a Sandstar
+      controller; re-tagging does not change origin).
+
+3.5 To obtain a commercial license, contact: Anka Labs, Inc. — 6800 West Gate
+Blvd, Suite 132-577, Austin, TX 78745, USA — Email: licensing@ankalabs.com —
+Phone: +1 (512) 540-3010
+
+3.6 Commercial license terms, including pricing, deployment scope, support, and
+SLA provisions, are negotiated separately and are not governed by this document.
+
+================================================================================
+4. DATA ORIGIN VERIFICATION
+================================================================================
+
+4.1 The Licensor may, at its sole discretion, define technical mechanisms within
+the Licensed Software or the Project Sandstar engine to verify the origin of data
+packets consumed by the Licensed Software. Such mechanisms may include, but are
+not limited to:
+  (a) Origin tagging at the Sandstar engine level.
+  (b) Cryptographic signing of data packets by the Sandstar engine.
+  (c) Verification queries against the source controller's Haystack REST API to
+      confirm it is running the Sandstar engine.
+
+4.2 Licensees shall not circumvent, disable, modify, or bypass any data origin
+verification mechanism implemented in the Licensed Software or the Project
+Sandstar engine. Circumvention of such mechanisms constitutes a material breach
+of this license.
+
+4.3 In the absence of technical verification mechanisms, Licensees are
+responsible for ensuring that their deployment meets Qualifying Use conditions
+through architectural controls, configuration, and operational procedures.
+
+================================================================================
+5. MODIFICATION AND ENHANCEMENT RIGHTS
+================================================================================
+
+5.1 Licensees operating under Qualifying Use may freely modify, extend, enhance,
+and customize the Licensed Software without restriction on the nature of their
+modifications, provided the resulting deployment continues to meet Qualifying Use
+conditions (i.e., the Licensed Software continues to exclusively consume
+Sandstar-Origin Data).
+
+5.2 There is no obligation to contribute modifications back to the Licensor or to
+the Project Sandstar community. Contributions are welcome but voluntary.
+
+5.3 If a modification causes the Licensed Software to consume Non-Sandstar Data,
+the deployment immediately becomes Non-Qualifying Use and is subject to the
+Commercial License Requirement (Section 3).
+
+5.4 Modifications must not remove, alter, or obscure this license, any copyright
+notices, or any attribution to the Licensor.
+
+================================================================================
+6. NO TIME-BASED CONVERSION
+================================================================================
+
+6.1 This license does NOT include any provision for automatic conversion to a
+permissive open-source license (such as MIT, Apache 2.0, or similar) after any
+period of time.
+
+6.2 The Qualifying Use condition applies permanently to every version of the
+Licensed Software released under this license, without exception.
+
+6.3 The Licensor reserves the right to release future versions under different
+license terms at its sole discretion, but such changes will not retroactively
+alter the terms of previously released versions.
+
+================================================================================
+7. ATTRIBUTION AND NOTICES
+================================================================================
+
+7.1 All copies of the Licensed Software, whether original or modified, must
+include:
+  (a) This license in its entirety.
+  (b) The following copyright notice: "Copyright (c) 2026 Anka Labs, Inc.
+      Licensed under the Project Sandstar Source-Available License (PSSL v1.1)."
+  (c) The following acknowledgment: "Project Sandstar integrates the Sedona
+      Framework and Project Haystack, which are independent open-source projects."
+
+7.2 You may not use the names "Anka Labs," "Project Sandstar," "Mobilytik,"
+"Visualytik," "Ankalytik," or related trademarks to endorse or promote derivative
+works without prior written permission from the Licensor.
+
+================================================================================
+8. INTELLECTUAL PROPERTY
+================================================================================
+
+8.1 The Licensor retains all right, title, and interest in and to the Licensed
+Software, including all intellectual property rights.
+
+8.2 This license does not grant any rights to patents, trademarks, trade secrets,
+or other intellectual property of the Licensor except the limited rights
+expressly stated herein.
+
+8.3 If You create modifications or derivative works, You own the intellectual
+property in Your original contributions, but the underlying Licensed Software
+remains the property of the Licensor.
+
+================================================================================
+9. COMPLIANCE AND ENFORCEMENT
+================================================================================
+
+9.1 Self-Assessment. Licensees are responsible for determining whether their
+deployment constitutes Qualifying Use or requires a commercial license. The test
+is whether any Non-Sandstar Data is consumed by the Licensed Software. In cases
+of uncertainty, Licensees should contact the Licensor for clarification prior to
+deployment.
+
+9.2 Audit Right. The Licensor reserves the right, upon reasonable notice, to
+verify that deployments using the Licensed Software comply with the terms of this
+license. Verification may include inspection of data flows into the Licensed
+Software, review of system architecture, and confirmation of data origins. Such
+verification shall be conducted in a commercially reasonable manner with minimal
+disruption.
+
+9.3 Cure Period. If the Licensor determines that a deployment is in violation of
+this license, the Licensee will be notified in writing and granted a period of
+sixty (60) days to either:
+  (a) Reconfigure the deployment so that the Licensed Software exclusively
+      consumes Sandstar-Origin Data (Qualifying Use);
+  (b) Enter into a commercial license agreement with the Licensor; or
+  (c) Cease all use of the Licensed Software.
+
+9.4 Failure to cure within the 60-day period constitutes copyright infringement
+and the Licensor may pursue all remedies available under applicable law.
+
+================================================================================
+10. DISCLAIMER OF WARRANTY
+================================================================================
+
+THE LICENSED SOFTWARE IS PROVIDED "AS IS," WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM,
+OUT OF, OR IN CONNECTION WITH THE LICENSED SOFTWARE OR THE USE OR OTHER DEALINGS
+IN THE LICENSED SOFTWARE.
+
+================================================================================
+11. LIMITATION OF LIABILITY
+================================================================================
+
+IN NO EVENT SHALL THE LICENSOR'S TOTAL LIABILITY UNDER THIS LICENSE EXCEED THE
+AMOUNT OF LICENSE FEES ACTUALLY PAID BY THE LICENSEE TO THE LICENSOR IN THE
+TWELVE (12) MONTHS PRECEDING THE CLAIM. FOR QUALIFYING USE DEPLOYMENTS WHERE NO
+FEES HAVE BEEN PAID, THE LICENSOR'S LIABILITY SHALL NOT EXCEED ZERO DOLLARS ($0).
+
+================================================================================
+12. TERMINATION
+================================================================================
+
+12.1 This license is effective until terminated.
+
+12.2 Your rights under this license terminate automatically if You fail to comply
+with any of its terms and do not cure the non-compliance within the period
+specified in Section 9.3.
+
+12.3 Upon termination, You must cease all use and distribution of the Licensed
+Software and destroy all copies in Your possession or control.
+
+12.4 Sections 7 (Attribution), 8 (Intellectual Property), 10 (Disclaimer),
+11 (Limitation of Liability), and 13 (General) survive termination.
+
+================================================================================
+13. GENERAL PROVISIONS
+================================================================================
+
+13.1 Governing Law. This license is governed by the laws of the State of Texas,
+United States of America, without regard to conflict of laws principles.
+
+13.2 Dispute Resolution. Any dispute arising under this license shall be subject
+to the exclusive jurisdiction of the state and federal courts located in Travis
+County, Texas.
+
+13.3 Severability. If any provision of this license is held to be unenforceable,
+the remaining provisions shall continue in full force and effect.
+
+13.4 Entire Agreement. This license constitutes the entire agreement between the
+parties with respect to the Licensed Software and supersedes all prior
+agreements. Commercial license agreements entered into under Section 3 are
+separate and supplementary.
+
+13.5 No Waiver. The failure of the Licensor to enforce any provision of this
+license shall not constitute a waiver of that provision or any other provision.
+
+13.6 Assignment. You may not assign or transfer this license without the prior
+written consent of the Licensor. The Licensor may assign this license in
+connection with a merger, acquisition, or sale of substantially all of its
+assets.
+
+================================================================================
+QUICK REFERENCE: THE PACKET TEST
+================================================================================
+
+DATA PACKET enters Licensed Software (Mobilytik, Visualytik, etc.)
+  -- Was this packet generated by a controller running
+     Project Sandstar + Sedona + Haystack?
+       -- If YES: FREE USE
+       -- If NO:  COMMERCIAL LICENSE REQUIRED
+
+Scenario Guide
+  - Building has only Sandstar controllers, app shows all data
+        => YES - Free
+  - Building has Sandstar + BACnet, app shows ONLY Sandstar data
+        => YES - Free
+  - Building has Sandstar + BACnet, app shows ALL data (unified view)
+        => NO - Commercial license
+  - BACnet data re-tagged as Haystack, fed to the app
+        => NO - Commercial license (origin matters, not format)
+  - SkySpark mixes sources, app queries ONLY Sandstar-origin records
+        => YES - Free
+  - SkySpark mixes sources, app queries all records
+        => NO - Commercial license
+
+================================================================================
+CONTACT
+================================================================================
+
+Anka Labs, Inc.
+6800 West Gate Blvd, Suite 132-577, Austin, TX 78745, USA
+  - General:   info@ankalabs.com
+  - Licensing: licensing@ankalabs.com
+  - Phone:     +1 (512) 540-3010
+  - Web:       https://ankalabs.com
+
+Project Sandstar Source-Available License (PSSL) v1.1 -- Drafted February 2026
