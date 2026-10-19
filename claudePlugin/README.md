@@ -39,8 +39,8 @@ Then start a new session, or run `/reload-plugins`. `/mcp` shows the server as
 From another machine, without a checkout:
 
 ```bash
-claude plugin marketplace add <git url of this repo>   # or the sandstar marketplace repo
-claude plugin install axon-mcp@axon-mcp                # axon-mcp@sandstar from sandstar
+claude plugin marketplace add <git url of this repo>   # or the Project Sandstar MCP marketplace repo
+claude plugin install axon-mcp@axon-mcp                # axon-mcp@project-sandstar-mcp from project-sandstar-mcp
 ```
 
 `dist/` is committed and the repo root holds the marketplace, so the clone has
