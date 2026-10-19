@@ -6,7 +6,54 @@
       "package-name": "axon-mcp-server",
       "changelog-path": "CHANGELOG.md",
       "include-component-in-tag": false,
-      "bump-minor-pre-major": false
+      "bump-minor-pre-major": false,
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "claudePlugin/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "claudePlugin/src/.claude-plugin/plugin.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "claudePlugin/dist/.claude-plugin/plugin.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "claudePlugin/dist/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "claudePlugin/dist/BUILD.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "claudePlugin/.claude-plugin/marketplace.json",
+          "jsonpath": "$.metadata.version"
+        },
+        {
+          "type": "json",
+          "path": "claudePlugin/.claude-plugin/marketplace.json",
+          "jsonpath": "$.plugins[0].version"
+        },
+        {
+          "type": "json",
+          "path": ".claude-plugin/marketplace.json",
+          "jsonpath": "$.metadata.version"
+        },
+        {
+          "type": "json",
+          "path": ".claude-plugin/marketplace.json",
+          "jsonpath": "$.plugins[0].version"
+        }
+      ]
     }
   }
 }
