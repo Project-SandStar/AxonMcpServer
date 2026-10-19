@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/Project-SandStar/AxonMcpServer/compare/v1.1.0...v1.1.1) (2026-10-19)
+
+
+### Features
+
+* **plugin:** Claude Code plugin, installable from git and the Project Sandstar MCP marketplace ([ee8a2f4](https://github.com/Project-SandStar/AxonMcpServer/commit/ee8a2f46e88d932e214109adf539408556613d2f))
+
 ## [1.1.0](https://github.com/Project-SandStar/AxonMcpServer/compare/v1.0.0...v1.1.0) (2026-10-01)
 
 
