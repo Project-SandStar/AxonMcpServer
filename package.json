@@ -1,6 +1,6 @@
 {
   "name": "axon-mcp-server",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "MCP server providing Axon code examples and patterns",
   "main": "dist/index.js",
   "type": "module",
@@ -23,7 +23,10 @@
     "daemon:delete": "pm2 delete axon-mcp",
     "dashboard:dev": "cd dashboard && npm run dev",
     "dashboard:build": "cd dashboard && npm run build",
-    "dashboard:install": "cd dashboard && npm install", "plugin:build": "node claudePlugin/scripts/build.mjs --check", "plugin:test": "bash claudePlugin/scripts/test.sh", "plugin:install": "bash claudePlugin/scripts/install-local.sh"
+    "dashboard:install": "cd dashboard && npm install",
+    "plugin:build": "node claudePlugin/scripts/build.mjs --check",
+    "plugin:test": "bash claudePlugin/scripts/test.sh",
+    "plugin:install": "bash claudePlugin/scripts/install-local.sh"
   },
   "keywords": [
     "axon",

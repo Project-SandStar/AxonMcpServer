@@ -1,6 +1,6 @@
 {
   "name": "axon-mcp",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "SkySpark Axon from the Axon MCP server: examples, patterns, docs, call graph, semantic search, Haystack queries, and running and committing Axon in the active SkySpark project. Workflow guides ship as skills.",
   "author": {
     "name": "Project Sandstar"
