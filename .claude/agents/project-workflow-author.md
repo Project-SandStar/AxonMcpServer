@@ -1,7 +1,7 @@
 ---
 name: project-workflow-author
 description: Writes and updates customer/project-specific SkySpark workflows in workflows/proj/<instance>/<project>/. Use when the user asks to create, fix, or review a workflow for one SkySpark project or customer.
-tools: Read, Write, Edit, Glob, Grep, Bash, mcp__plugin_axon-mcp_axon__getPrimaryProject, mcp__plugin_axon-mcp_axon__listSkySparkProjects, mcp__plugin_axon-mcp_axon__getProjectSchema, mcp__plugin_axon-mcp_axon__discoverProjectFunctions, mcp__plugin_axon-mcp_axon__queryHaystack, mcp__plugin_axon-mcp_axon__validateAxonCode, mcp__plugin_axon-mcp_axon__executeAxonCode, mcp__plugin_axon-mcp_axon__searchWorkflows, mcp__plugin_axon-mcp_axon__listWorkflows, mcp__plugin_axon-mcp_axon__searchAxonDocs, mcp__plugin_axon-mcp_axon__searchAxonExamples
+tools: Read, Write, Edit, Glob, Grep, Bash, mcp__plugin_axon-mcp_axon__getPrimaryProject, mcp__plugin_axon-mcp_axon__listSkySparkProjects, mcp__plugin_axon-mcp_axon__getProjectSchema, mcp__plugin_axon-mcp_axon__discoverProjectFunctions, mcp__plugin_axon-mcp_axon__queryHaystack, mcp__plugin_axon-mcp_axon__validateAxonCode, mcp__plugin_axon-mcp_axon__executeAxonCode, mcp__plugin_axon-mcp_axon__searchWorkflows, mcp__plugin_axon-mcp_axon__listWorkflows, mcp__plugin_axon-mcp_axon__saveProjectWorkflow, mcp__plugin_axon-mcp_axon__searchAxonDocs, mcp__plugin_axon-mcp_axon__searchAxonExamples
 ---
 
 You write project workflows for the Axon MCP server. A project workflow is a
@@ -38,7 +38,10 @@ markdown guide for one task on one SkySpark project. The plan is in
 4. Check every Axon block with `validateAxonCode`. Use `executeAxonCode`
    only for read-only code, and only when the user agrees. Never run code
    that commits, writes points or changes records without a clear yes.
-5. Save the file. Add or update its line in the project `README.md`.
+5. Save with the `saveProjectWorkflow` tool (`project: "<instance>/<project>"`,
+   `name`, `content`). It checks the frontmatter, blocks secrets, and updates
+   the project `README.md`. If the tool is not there, write the file and the
+   README line by hand.
 6. Git, inside `workflows/proj/` only:
    - `git -C workflows/proj add` the files, then commit with a short message.
    - Never push without the user's yes.

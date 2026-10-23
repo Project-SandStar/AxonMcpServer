@@ -432,6 +432,107 @@ export class WorkflowManager {
   }
 
   /**
+   * Write a project workflow to workflows/proj/<instance>/<project>/<name>.md,
+   * add it to that folder's README.md index, and reload. Never commits.
+   * Throws an Error with a plain message when the input is not valid.
+   */
+  async saveProjectWorkflow(opts: {
+    instance: string;
+    project: string;
+    name: string;
+    content: string;
+    overwrite?: boolean;
+  }): Promise<{ id: string; filePath: string; created: boolean; warnings: string[] }> {
+    const { instance, project, content } = opts;
+    const name = opts.name.replace(/\.md$/, '');
+    const warnings: string[] = [];
+
+    for (const [label, v] of [['instance', instance], ['project', project]] as const) {
+      if (!v || v.includes('/') || v.includes('\\') || v.startsWith('.') || v.startsWith('_')) {
+        throw new Error(`Bad ${label} name: "${v}"`);
+      }
+    }
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(name) || NON_WORKFLOW_FILES.has(`${name}.md`)) {
+      throw new Error(`Bad workflow name "${opts.name}". Use kebab-case, e.g. "pump-reset".`);
+    }
+
+    const match = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
+    if (!match) throw new Error('Content must start with YAML frontmatter (--- ... ---).');
+    let meta: any;
+    try {
+      meta = yaml.parse(match[1]) ?? {};
+    } catch (e: any) {
+      throw new Error(`Frontmatter is not valid YAML: ${e?.message || e}`);
+    }
+    for (const key of ['title', 'description', 'category']) {
+      if (!meta[key]) throw new Error(`Frontmatter needs "${key}".`);
+    }
+    if (meta.instance && String(meta.instance) !== instance) {
+      throw new Error(`Frontmatter instance "${meta.instance}" does not match "${instance}".`);
+    }
+    if (meta.project && String(meta.project) !== project) {
+      throw new Error(`Frontmatter project "${meta.project}" does not match "${project}".`);
+    }
+    if (meta.scope && meta.scope !== 'project') warnings.push('scope is not "project"; it is saved as a project workflow anyway.');
+    if (!meta.lastVerified) warnings.push('No lastVerified date.');
+
+    const secret = findSecret(content);
+    if (secret) throw new Error(`Content looks like it has a secret (${secret}). Remove it first.`);
+
+    const dir = path.join(this.workflowsDir, 'proj', instance, project);
+    const filePath = path.join(dir, `${name}.md`);
+    const exists = fs.existsSync(filePath);
+    if (exists && !opts.overwrite) {
+      throw new Error(`Workflow exists: ${filePath}. Set overwrite: true to replace it.`);
+    }
+
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(filePath, content.endsWith('\n') ? content : content + '\n', 'utf8');
+    await this.addToProjectIndex(dir, instance, project, name, String(meta.title), String(meta.description));
+
+    const id = this.idFor(filePath);
+    this.summaryCache.invalidate(id);
+    await this.loadWorkflows();
+    return { id, filePath, created: !exists, warnings };
+  }
+
+  /** Add or refresh one line in the project README.md index. */
+  private async addToProjectIndex(dir: string, instance: string, project: string, name: string, title: string, description: string) {
+    const readme = path.join(dir, 'README.md');
+    let text = fs.existsSync(readme)
+      ? await fs.promises.readFile(readme, 'utf8')
+      : `# ${project} workflows\n\nInstance: \`${instance}\`\n\nRead \`RULES.md\` first.\n\n## Workflows\n\n`;
+    const line = `- [${title}](${name}.md) — ${description}`;
+    const lines = text.split('\n');
+    const at = lines.findIndex(l => l.includes(`](${name}.md)`));
+    if (at >= 0) {
+      lines[at] = line;
+      text = lines.join('\n');
+    } else if (text.includes('_None yet._')) {
+      text = text.replace('_None yet._', line);
+    } else {
+      text = text.replace(/\n*$/, '\n') + line + '\n';
+    }
+    await fs.promises.writeFile(readme, text, 'utf8');
+  }
+
+  /**
+   * Titles of one project's workflows, for the project switch response.
+   */
+  getProjectWorkflowList(instance: string, project: string): Array<{ id: string; title: string; lastVerified?: string }> {
+    return this.getWorkflowList()
+      .filter(w => w.metadata.scope === 'project' && w.metadata.instance === instance && w.metadata.project === project)
+      .map(w => ({ id: w.metadata.id, title: w.metadata.title, lastVerified: w.metadata.lastVerified }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  /** Path to a project's RULES.md, if it exists. */
+  getProjectRulesPath(instance: string, project: string): string | undefined {
+    const p = path.join(this.workflowsDir, 'proj', instance, project, 'RULES.md');
+    return fs.existsSync(p) ? p : undefined;
+  }
+
+  /**
    * Return summaries for every loaded workflow (cached or freshly generated).
    */
   getAllSummaries(project: ProjectFilter = '*'): WorkflowSearchHit[] {
@@ -540,4 +641,17 @@ function str(v: unknown): string | undefined {
   if (v === undefined || v === null || v === '') return undefined;
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   return String(v);
+}
+
+/** Name of the first secret-looking pattern in text, or undefined. */
+function findSecret(text: string): string | undefined {
+  const checks: Array<[string, RegExp]> = [
+    ['password value', /\b(password|passwd|pwd)\s*[:=]\s*["']?[^\s"'<>{}]{4,}/i],
+    ['token or key value', /\b(api[_-]?key|secret|token|bearer)\s*[:=]\s*["']?[A-Za-z0-9_\-.]{16,}/i],
+    ['GitLab token', /\bglpat-[A-Za-z0-9_\-]{16,}/],
+    ['private key', /-----BEGIN [A-Z ]*PRIVATE KEY-----/],
+    ['URL with login', /https?:\/\/[^\s:@\/]+:[^\s@\/]+@/],
+  ];
+  for (const [label, re] of checks) if (re.test(text)) return label;
+  return undefined;
 }

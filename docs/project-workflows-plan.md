@@ -1,6 +1,6 @@
 # Plan: Project-Based Workflows
 
-Status: phase 1 done (2026-10-23)
+Status: phases 1-3 done (2026-10-23)
 
 ## Goal
 

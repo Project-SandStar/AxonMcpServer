@@ -1013,6 +1013,20 @@ class AxonMCPServer {
           },
         },
         {
+          name: 'saveProjectWorkflow',
+          description: 'Save a private project workflow to workflows/proj/<instance>/<project>/<name>.md and add it to that project\'s README.md index. Checks frontmatter (title, description, category) and blocks content that looks like a secret. Does NOT commit or push. Read the project RULES.md first.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              project: { type: 'string', description: 'Target as "instance/project". Default: this session\'s active project.' },
+              name: { type: 'string', description: 'File name in kebab-case, without .md (e.g. "pump-reset").' },
+              content: { type: 'string', description: 'Full markdown, starting with YAML frontmatter.' },
+              overwrite: { type: 'boolean', description: 'Replace an existing workflow (default: false).' },
+            },
+            required: ['name', 'content'],
+          },
+        },
+        {
           name: 'getWorkflowSummary',
           description: 'Return the cached short summary for a single workflow by id. Cheaper than reading the full workflow:// resource.',
           inputSchema: {
@@ -1808,6 +1822,9 @@ Response includes 'operation': "added" or "updated".`,
         case 'searchWorkflows':
           return await this.searchWorkflowsTool(args);
 
+        case 'saveProjectWorkflow':
+          return await this.saveProjectWorkflowTool(args);
+
         case 'getWorkflowSummary':
           if (!args || !args.id) {
             throw new McpError(ErrorCode.InvalidParams, 'Missing required parameter: id');
@@ -2512,6 +2529,38 @@ Response includes 'operation': "added" or "updated".`,
         }, null, 2),
       }],
     };
+  }
+
+  private async saveProjectWorkflowTool(args: any) {
+    if (!args?.name || !args?.content) {
+      throw new McpError(ErrorCode.InvalidParams, 'Missing required parameters: name and content');
+    }
+    const target = this.resolveWorkflowProject(args.project);
+    if (!target || target === '*') {
+      throw new McpError(ErrorCode.InvalidParams, 'No target project. Pass project as "instance/project", or call switchSkySparkProject first.');
+    }
+    try {
+      const result = await this.workflowManager.saveProjectWorkflow({
+        instance: target.instance,
+        project: target.project,
+        name: String(args.name),
+        content: String(args.content),
+        overwrite: Boolean(args.overwrite),
+      });
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            ...result,
+            project: `${target.instance}/${target.project}`,
+            next: 'Not committed. Commit in workflows/proj/ (its own git repo) when the user agrees.',
+          }, null, 2),
+        }],
+      };
+    } catch (error: any) {
+      throw new McpError(ErrorCode.InvalidParams, `saveProjectWorkflow failed: ${error?.message || error}`);
+    }
   }
 
   private async getWorkflowSummaryTool(id: string) {
@@ -3619,6 +3668,10 @@ Response includes 'operation': "added" or "updated".`,
       // Clear in-memory cache for the new project (keeps file caches)
       this.cacheManager.clearProjectCache(target.instance.name, target.project.name);
 
+      // Show this project's private workflows so the AI sees them at once.
+      const projectWorkflows = this.workflowManager.getProjectWorkflowList(target.instance.name, target.project.name);
+      const rulesPath = this.workflowManager.getProjectRulesPath(target.instance.name, target.project.name);
+
       return {
         content: [
           {
@@ -3634,7 +3687,15 @@ Response includes 'operation': "added" or "updated".`,
               message: `Switched to ${config.instance}/${config.project} for this MCP session only; other sessions are not affected.`,
               note: projectName
                 ? 'In-memory cache cleared for this project'
-                : `Used default project. In-memory cache cleared.`
+                : `Used default project. In-memory cache cleared.`,
+              projectWorkflows: {
+                count: projectWorkflows.length,
+                rules: rulesPath ? path.relative(PROJECT_ROOT, rulesPath) : null,
+                workflows: projectWorkflows,
+                hint: projectWorkflows.length
+                  ? 'Use these before generic workflows. Read the full text via the workflow:// resource or searchWorkflows.'
+                  : 'No project workflows yet. Read the rules file before you add one with saveProjectWorkflow.',
+              },
             }, null, 2)
           }
         ]
