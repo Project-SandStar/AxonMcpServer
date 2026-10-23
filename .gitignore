@@ -54,3 +54,6 @@ load-project-caches.log
 
 # ── VSCode extension packaging ──────────────────────────────
 *.vsix
+
+# ── Private project workflows (own repo on gitlab.bas.co) ───
+workflows/proj/
