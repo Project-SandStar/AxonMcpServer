@@ -79,7 +79,7 @@ frontmatter does not give them.
 ## Git and GitLab
 
 - `workflows/proj/` is its own git repo, like `proj/`.
-- Remote: one repo for all projects, https://gitlab.bas.co/skyspark/AxonProjWorkflows
+- Remote: one repo for all projects, https://gitlab.bas.co/openbassg/skyspark/AxonProjWorkflows
 - Each project folder has a `RULES.md` (rules for reading and adding
   workflows) and a `README.md` (index). `sync-folders.sh <instance>` adds
   folders for new projects.
@@ -119,5 +119,5 @@ File: `.claude/agents/project-workflow-author.md`. It:
 
 ## Decisions
 
-1. One GitLab repo for all projects: `skyspark/AxonProjWorkflows`.
+1. One GitLab repo for all projects: `openbassg/skyspark/AxonProjWorkflows`.
 2. The agent file and this plan go to GitHub. They have no customer data.
