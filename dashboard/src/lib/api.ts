@@ -469,11 +469,11 @@ export const api = {
       };
       summary: any;
       fullContent: string;
-    }>(`/workflows/${id}`),
+    }>(`/workflows/${encodeURIComponent(id)}`),
   summarizeWorkflow: (id: string, provider: 'local' | 'claude') =>
-    apiRequest<any>(`/workflows/${id}/summarize`, { method: 'POST', body: { provider } }),
+    apiRequest<any>(`/workflows/${encodeURIComponent(id)}/summarize`, { method: 'POST', body: { provider } }),
   saveWorkflow: (id: string, content: string) =>
-    apiRequest<{ workflow: any; summary: any }>(`/workflows/${id}`, { method: 'PUT', body: { content } }),
+    apiRequest<{ workflow: any; summary: any }>(`/workflows/${encodeURIComponent(id)}`, { method: 'PUT', body: { content } }),
   regenerateAllWorkflows: () =>
     apiRequest<{ regenerated: number }>('/workflows/regenerate-all', { method: 'POST' }),
   reindexWorkflows: () =>

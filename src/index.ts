@@ -56,7 +56,7 @@ import { FunctionSyncManagerEnhanced } from './sync/functionSyncManagerEnhanced.
 import { createAdminRouter } from './admin/routes.js';
 import { getUsageTracker } from './usage/usageTracker.js';
 import { ServerStatus, InstanceInfo, ProjectInfo, CacheInfo } from './admin/types.js';
-import { WorkflowManager } from './workflows/workflowManager.js';
+import { WorkflowManager, type ProjectFilter } from './workflows/workflowManager.js';
 import { WorkflowVectorIndex } from './workflows/workflowVectorIndex.js';
 import { AxonOAuthProvider, TokenCleanupJob, renderAuthorizePage, renderErrorPage } from './auth/index.js';
 import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
@@ -989,10 +989,12 @@ class AxonMCPServer {
         },
         {
           name: 'listWorkflows',
-          description: 'List every loaded workflow with a short summary (id, title, description, category, tags, summary). Cheap discovery surface — call this before reading the full workflow:// resource.',
+          description: 'List loaded workflows with a short summary (id, title, description, category, tags, scope, summary). Includes generic workflows plus the active project\'s own workflows (listed first). Cheap discovery surface — call this before reading the full workflow:// resource.',
           inputSchema: {
             type: 'object',
-            properties: {},
+            properties: {
+              project: { type: 'string', description: 'Which project workflows to include: "instance/project", "*" for all, or "none" for generic only. Default: this session\'s active project (its workflows rank first).' },
+            },
           },
         },
         {
@@ -1006,6 +1008,7 @@ class AxonMCPServer {
               tags: { type: 'array', items: { type: 'string' }, description: 'Require all of these tags.' },
               semantic: { type: 'boolean', description: 'Include vector semantic search results (default: true when query is set).' },
               limit: { type: 'number', description: 'Maximum results (default: 10).' },
+              project: { type: 'string', description: 'Which project workflows to include: "instance/project", "*" for all, or "none" for generic only. Default: this session\'s active project (its workflows rank first).' },
             },
           },
         },
@@ -1800,7 +1803,7 @@ Response includes 'operation': "added" or "updated".`,
           return await this.listCategories();
 
         case 'listWorkflows':
-          return await this.listWorkflowsTool();
+          return await this.listWorkflowsTool(args);
 
         case 'searchWorkflows':
           return await this.searchWorkflowsTool(args);
@@ -2421,19 +2424,44 @@ Response includes 'operation': "added" or "updated".`,
     };
   }
 
-  private async listWorkflowsTool() {
-    const summaries = this.workflowManager.getAllSummaries();
+  /**
+   * Turn the tools' `project` argument into a filter. Default: the session's
+   * active project, so its private workflows show up next to the generic ones.
+   */
+  private resolveWorkflowProject(arg: unknown): ProjectFilter {
+    if (arg === '*') return '*';
+    if (arg === 'none') return undefined;
+    if (typeof arg === 'string' && arg.includes('/')) {
+      const i = arg.indexOf('/');
+      return { instance: arg.slice(0, i), project: arg.slice(i + 1) };
+    }
+    if (typeof arg === 'string' && arg) {
+      // Bare project name: match any instance that has it.
+      const hit = this.workflowManager.getWorkflowList()
+        .find(w => w.metadata.scope === 'project' && w.metadata.project === arg);
+      return hit?.metadata.instance ? { instance: hit.metadata.instance, project: arg } : undefined;
+    }
+    const scope = this.activeScope;
+    return scope?.instance && scope.project ? { instance: scope.instance, project: scope.project } : undefined;
+  }
+
+  private async listWorkflowsTool(args?: any) {
+    const project = this.resolveWorkflowProject(args?.project);
+    const summaries = this.workflowManager.getAllSummaries(project);
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({
           count: summaries.length,
+          project: project === '*' ? '*' : project ? `${project.instance}/${project.project}` : null,
           workflows: summaries.map(s => ({
             id: s.id,
             title: s.title,
             description: s.description,
             category: s.category,
             tags: s.tags,
+            scope: s.scope,
+            ...(s.scope === 'project' ? { instance: s.instance, project: s.project, lastVerified: s.lastVerified } : {}),
             uri: s.uri,
             summary: s.summary,
             mode: s.mode,
@@ -2457,8 +2485,9 @@ Response includes 'operation': "added" or "updated".`,
       });
     }
 
+    const project = this.resolveWorkflowProject(args?.project);
     const hits = this.workflowManager.searchSummaries(
-      { query, category: args?.category, tags: args?.tags, limit },
+      { query, category: args?.category, tags: args?.tags, limit, project },
       semanticHits,
     );
 
@@ -2473,6 +2502,8 @@ Response includes 'operation': "added" or "updated".`,
             description: h.description,
             category: h.category,
             tags: h.tags,
+            scope: h.scope,
+            ...(h.scope === 'project' ? { instance: h.instance, project: h.project, lastVerified: h.lastVerified } : {}),
             uri: h.uri,
             summary: h.summary,
             mode: h.mode,

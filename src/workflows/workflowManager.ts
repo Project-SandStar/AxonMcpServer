@@ -14,7 +14,25 @@ export interface WorkflowMetadata {
   category: string;
   tags: string[];
   version: string;
+  /** 'generic' for workflows/*.md, 'project' for workflows/proj/<instance>/<project>/*.md */
+  scope: 'generic' | 'project';
+  instance?: string;
+  project?: string;
+  customer?: string;
+  funcs?: string[];
+  lastVerified?: string;
 }
+
+/**
+ * Which workflows a list/search may return.
+ * - undefined: generic workflows only
+ * - { instance, project }: generic + that project's workflows (project first)
+ * - '*': every workflow
+ */
+export type ProjectFilter = { instance: string; project: string } | '*' | undefined;
+
+/** Files in project folders that are not workflows. */
+const NON_WORKFLOW_FILES = new Set(['README.md', 'RULES.md']);
 
 /**
  * Complete workflow with metadata and content
@@ -33,6 +51,10 @@ export interface WorkflowSearchHit extends WorkflowSummary {
   tags: string[];
   description: string;
   uri: string;
+  scope: 'generic' | 'project';
+  instance?: string;
+  project?: string;
+  lastVerified?: string;
   score?: number;
 }
 
@@ -42,7 +64,11 @@ export interface SearchOptions {
   tags?: string[];
   semantic?: boolean;
   limit?: number;
+  project?: ProjectFilter;
 }
+
+/** Score bonus so the active project's workflows rank above generic ones. */
+const PROJECT_BOOST = 1;
 
 /**
  * Manages workflow documentation files for MCP resources
@@ -89,7 +115,8 @@ export class WorkflowManager {
     }
 
     try {
-      this.watcher = fs.watch(this.workflowsDir, { persistent: false }, (_eventType, filename) => {
+      // recursive: also watch workflows/proj/<instance>/<project>/ (macOS + Windows; Linux on Node 20+)
+      this.watcher = fs.watch(this.workflowsDir, { persistent: false, recursive: true }, (_eventType, filename) => {
         if (!filename || !filename.endsWith('.md')) return;
         if (this.watchDebounce) clearTimeout(this.watchDebounce);
         this.watchDebounce = setTimeout(async () => {
@@ -134,16 +161,50 @@ export class WorkflowManager {
       return;
     }
 
-    const files = await fs.promises.readdir(this.workflowsDir);
-
-    for (const file of files) {
-      if (file.endsWith('.md')) {
-        const filePath = path.join(this.workflowsDir, file);
-        await this.loadWorkflow(filePath);
-      }
+    for (const filePath of await this.findWorkflowFiles(this.workflowsDir, true)) {
+      await this.loadWorkflow(filePath);
     }
 
     console.error(`Loaded ${this.workflows.size} workflows`);
+  }
+
+  /**
+   * Find workflow .md files. Top level: every .md. Sub-folders: skip README.md,
+   * RULES.md, and files or folders that start with '_' or '.'.
+   */
+  private async findWorkflowFiles(dir: string, topLevel: boolean): Promise<string[]> {
+    const out: string[] = [];
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name.startsWith('_')) continue;
+        out.push(...await this.findWorkflowFiles(full, false));
+      } else if (e.isFile() && e.name.endsWith('.md')) {
+        if (!topLevel && (NON_WORKFLOW_FILES.has(e.name) || e.name.startsWith('_'))) continue;
+        out.push(full);
+      }
+    }
+    return out.sort();
+  }
+
+  /**
+   * Workflow id: file name for generic workflows (unchanged), and the path
+   * relative to workflowsDir for sub-folders, e.g. proj/<instance>/<project>/<file>.
+   */
+  private idFor(filePath: string): string {
+    const rel = path.relative(this.workflowsDir, filePath).split(path.sep).join('/');
+    return rel.replace(/\.md$/, '');
+  }
+
+  /** instance/project from a proj/<instance>/<project>/<file>.md path. */
+  private projectFromPath(id: string): { instance?: string; project?: string } {
+    const parts = id.split('/');
+    if (parts[0] === 'proj' && parts.length >= 4) {
+      return { instance: parts[1], project: parts[2] };
+    }
+    return {};
   }
 
   /**
@@ -176,7 +237,9 @@ export class WorkflowManager {
    * Parse workflow file, extracting frontmatter and content
    */
   private parseWorkflow(filePath: string, fullContent: string, mtimeMs: number): Workflow {
-    const filename = path.basename(filePath, '.md');
+    const filename = this.idFor(filePath);
+    const fromPath = this.projectFromPath(filename);
+    const inProjFolder = fromPath.instance !== undefined;
 
     // Extract frontmatter (YAML between --- delimiters)
     const frontmatterRegex = /^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/;
@@ -196,7 +259,13 @@ export class WorkflowManager {
         description: parsedMeta.description || '',
         category: parsedMeta.category || 'general',
         tags: parsedMeta.tags || [],
-        version: parsedMeta.version || '1.0',
+        version: String(parsedMeta.version ?? '1.0'),
+        scope: inProjFolder || parsedMeta.scope === 'project' ? 'project' : 'generic',
+        instance: str(parsedMeta.instance) ?? fromPath.instance,
+        project: str(parsedMeta.project) ?? fromPath.project,
+        customer: str(parsedMeta.customer),
+        funcs: Array.isArray(parsedMeta.funcs) ? parsedMeta.funcs.map(String) : undefined,
+        lastVerified: str(parsedMeta.lastVerified),
       };
 
       content = match[2].trim();
@@ -209,6 +278,8 @@ export class WorkflowManager {
         category: 'general',
         tags: [],
         version: '1.0',
+        scope: inProjFolder ? 'project' : 'generic',
+        ...fromPath,
       };
 
       content = fullContent.trim();
@@ -224,6 +295,16 @@ export class WorkflowManager {
       filePath,
       mtimeMs,
     };
+  }
+
+  /**
+   * True if the project filter lets this workflow through.
+   */
+  static matchesProject(meta: WorkflowMetadata, filter: ProjectFilter): boolean {
+    if (meta.scope === 'generic') return true;
+    if (filter === '*') return true;
+    if (!filter) return false;
+    return meta.instance === filter.instance && meta.project === filter.project;
   }
 
   /**
@@ -353,12 +434,15 @@ export class WorkflowManager {
   /**
    * Return summaries for every loaded workflow (cached or freshly generated).
    */
-  getAllSummaries(): WorkflowSearchHit[] {
+  getAllSummaries(project: ProjectFilter = '*'): WorkflowSearchHit[] {
     const out: WorkflowSearchHit[] = [];
     for (const workflow of this.workflows.values()) {
+      if (!WorkflowManager.matchesProject(workflow.metadata, project)) continue;
       const summary = this.getSummary(workflow.metadata.id)!;
       out.push(this.toHit(workflow, summary));
     }
+    // Project workflows first, then generic, then by id.
+    out.sort((a, b) => (a.scope === b.scope ? a.id.localeCompare(b.id) : a.scope === 'project' ? -1 : 1));
     return out;
   }
 
@@ -376,6 +460,7 @@ export class WorkflowManager {
 
     for (const workflow of this.workflows.values()) {
       const meta = workflow.metadata;
+      if (!WorkflowManager.matchesProject(meta, opts.project)) continue;
       if (opts.category && meta.category !== opts.category) continue;
       if (tagFilter.length > 0) {
         const lower = meta.tags.map(t => t.toLowerCase());
@@ -409,9 +494,17 @@ export class WorkflowManager {
         if (candidates.some(c => c.id === sh.id)) continue;
         const workflow = this.workflows.get(sh.id);
         if (!workflow) continue;
+        if (!WorkflowManager.matchesProject(workflow.metadata, opts.project)) continue;
         if (opts.category && workflow.metadata.category !== opts.category) continue;
         const summary = this.getSummary(sh.id)!;
         candidates.push({ ...this.toHit(workflow, summary), score: sh.score });
+      }
+    }
+
+    // Rank the active project's workflows above generic ones.
+    if (opts.project && opts.project !== '*') {
+      for (const hit of candidates) {
+        if (hit.scope === 'project') hit.score = (hit.score ?? 0) + PROJECT_BOOST;
       }
     }
 
@@ -426,6 +519,10 @@ export class WorkflowManager {
       tags: workflow.metadata.tags,
       description: workflow.metadata.description,
       uri: workflow.uri,
+      scope: workflow.metadata.scope,
+      instance: workflow.metadata.instance,
+      project: workflow.metadata.project,
+      lastVerified: workflow.metadata.lastVerified,
     };
   }
 
@@ -436,4 +533,11 @@ export class WorkflowManager {
     const validIds = new Set(this.workflows.keys());
     this.summaryCache.prune(validIds);
   }
+}
+
+/** Non-empty string, or undefined. YAML can give dates or numbers. */
+function str(v: unknown): string | undefined {
+  if (v === undefined || v === null || v === '') return undefined;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return String(v);
 }
