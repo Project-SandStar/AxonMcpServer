@@ -1,6 +1,6 @@
 # Plan: Project-Based Workflows
 
-Status: phases 1-3 done (2026-10-23)
+Status: phases 1-3 and 5 done, 4 started (2026-10-23)
 
 ## Goal
 
@@ -28,7 +28,12 @@ workflows/
   proj/                                 own git repo -> gitlab.bas.co
     README.md
     _template.md                        copy this to start a new workflow
+    <instance>/globalWorkflow/
+      RULES.md                          rules for all projects of the instance
+      README.md                         shared workflows index
+      <topic>.md                        workflow for ALL projects of the instance
     <instance>/<project>/
+      RULES.md                          project rules (win over instance rules)
       README.md                         project index: site, key funcs, links
       <topic>.md                        one workflow per task
 ```
@@ -57,6 +62,18 @@ lastVerified: 2026-10-23       # date someone last ran it with success
 
 The server takes `instance` and `project` from the folder path if the
 frontmatter does not give them.
+
+## Instance workflows
+
+A workflow in `workflows/proj/<instance>/globalWorkflow/` applies to every project of that
+instance (`scope: instance`, no `project` field, optional `projects: [...]`
+list of projects it was checked on).
+
+- Lists and searches for project `<instance>/<project>` return: project
+  workflows, then instance workflows, then generic ones.
+- `switchSkySparkProject` lists both levels and both `RULES.md` files.
+- `saveProjectWorkflow` with `level: "instance"` saves at this level.
+- Agent: `.claude/agents/instance-workflow-author.md`.
 
 ## Server changes (`src/workflows/`)
 
@@ -116,6 +133,7 @@ File: `.claude/agents/project-workflow-author.md`. It:
 | 2 | Recursive loader, metadata, project filter, tests | MCP tools find them |
 | 3 | `saveProjectWorkflow`, list on project switch | Less manual work |
 | 4 | Write the first workflows per project | Real content |
+| 5 | Instance level: loader, save tool, rules, agent | Shared workflows per instance |
 
 ## Decisions
 

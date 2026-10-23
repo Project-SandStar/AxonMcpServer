@@ -22,8 +22,12 @@ markdown guide for one task on one SkySpark project. The plan is in
    the folder name exists under `proj/`. If the workflow folder is missing,
    run `workflows/proj/sync-folders.sh <instance>`.
 2. Read what exists:
-   - `workflows/proj/<instance>/<project>/RULES.md` FIRST. Its rules win
-     over the rules in this file.
+   - `workflows/proj/<instance>/globalWorkflow/RULES.md` (rules for all projects of the
+     instance), then `workflows/proj/<instance>/<project>/RULES.md`. The
+     project rules win over the instance rules and over this file.
+   - Instance workflows in `workflows/proj/<instance>/globalWorkflow/*.md`. If one covers
+     the task, link to it and write only the project differences. If the
+     task applies to 2 or more projects, hand it to `instance-workflow-author`.
    - `workflows/proj/<instance>/<project>/README.md` and other workflows there.
    - Funcs in `proj/<instance>/<project>/func/*.axon` that the task uses.
    - Generic workflows that apply (`searchWorkflows`). Link to them; do not

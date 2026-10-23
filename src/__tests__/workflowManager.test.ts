@@ -99,4 +99,49 @@ describe('WorkflowManager project workflows', () => {
         .rejects.toThrow(/secret/);
     });
   });
+
+  describe('instance workflows', () => {
+    const inst = '---\ntitle: Shared door rule\ndescription: Door rule for all projects\ncategory: rules\n---\n\n# Door\n';
+
+    test('proj/<instance>/globalWorkflow/<file>.md applies to every project of that instance only', async () => {
+      write(root, 'workflows/proj/instA/globalWorkflow/RULES.md', '# instance rules');
+      const r = await wm.saveProjectWorkflow({ instance: 'instA', name: 'door-rule', content: inst });
+      expect(r.id).toBe('proj/instA/globalWorkflow/door-rule');
+      expect(r.scope).toBe('instance');
+      const w = wm.getWorkflow('proj/instA/globalWorkflow/door-rule')!;
+      expect(w.metadata.scope).toBe('instance');
+      expect(w.metadata.project).toBeUndefined();
+
+      const a = wm.getAllSummaries({ instance: 'instA', project: 'projA' }).map(h => h.id);
+      const b = wm.getAllSummaries({ instance: 'instA', project: 'projB' }).map(h => h.id);
+      const other = wm.getAllSummaries({ instance: 'instZ', project: 'p' }).map(h => h.id);
+      expect(a).toContain('proj/instA/globalWorkflow/door-rule');
+      expect(b).toContain('proj/instA/globalWorkflow/door-rule');
+      expect(other).not.toContain('proj/instA/globalWorkflow/door-rule');
+      // order: project, instance, generic
+      expect(a.indexOf('proj/instA/projA/pump-reset')).toBeLessThan(a.indexOf('proj/instA/globalWorkflow/door-rule'));
+      expect(a.indexOf('proj/instA/globalWorkflow/door-rule')).toBeLessThan(a.indexOf('generic-one'));
+    });
+
+    test('switch helpers list instance workflows and both RULES files', () => {
+      const list = wm.getProjectWorkflowList('instA', 'projB');
+      expect(list.map(w => w.scope)).toEqual(['project', 'instance']);
+      const rules = wm.getProjectRulesPaths('instA', 'projA').map(p => path.relative(root, p));
+      expect(rules).toEqual(['workflows/proj/instA/globalWorkflow/RULES.md', 'workflows/proj/instA/projA/RULES.md']);
+    });
+
+    test('rejects a project in frontmatter and globalWorkflow as a project', async () => {
+      await expect(wm.saveProjectWorkflow({ instance: 'instA', name: 'x', content: inst.replace('category: rules\n', 'category: rules\nproject: projA\n') }))
+        .rejects.toThrow(/all projects/);
+      await expect(wm.saveProjectWorkflow({ instance: 'instA', project: 'globalWorkflow', name: 'x', content: inst.replace('category: rules\n', 'category: rules\n') }))
+        .rejects.toThrow(/not a project/);
+    });
+
+    test('loose files in proj/<instance>/ are not loaded', async () => {
+      write(root, 'workflows/proj/instA/loose.md', inst);
+      await wm.loadWorkflows();
+      expect(wm.getWorkflow('proj/instA/loose')).toBeUndefined();
+      expect(wm.getWorkflow('proj/instA/globalWorkflow/door-rule')).toBeDefined();
+    });
+  });
 });

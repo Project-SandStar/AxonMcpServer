@@ -14,8 +14,12 @@ export interface WorkflowMetadata {
   category: string;
   tags: string[];
   version: string;
-  /** 'generic' for workflows/*.md, 'project' for workflows/proj/<instance>/<project>/*.md */
-  scope: 'generic' | 'project';
+  /**
+   * 'generic'  workflows/*.md (public)
+   * 'instance' workflows/proj/<instance>/globalWorkflow/*.md (all projects of one instance)
+   * 'project'  workflows/proj/<instance>/<project>/*.md
+   */
+  scope: WorkflowScope;
   instance?: string;
   project?: string;
   customer?: string;
@@ -23,13 +27,19 @@ export interface WorkflowMetadata {
   lastVerified?: string;
 }
 
+export type WorkflowScope = 'generic' | 'instance' | 'project';
+
 /**
  * Which workflows a list/search may return.
  * - undefined: generic workflows only
- * - { instance, project }: generic + that project's workflows (project first)
+ * - { instance, project }: generic + that instance's + that project's workflows
+ *   (project first, then instance, then generic)
  * - '*': every workflow
  */
 export type ProjectFilter = { instance: string; project: string } | '*' | undefined;
+
+/** Folder in workflows/proj/<instance>/ for workflows shared by all its projects. */
+export const GLOBAL_WORKFLOW_DIR = 'globalWorkflow';
 
 /** Files in project folders that are not workflows. */
 const NON_WORKFLOW_FILES = new Set(['README.md', 'RULES.md']);
@@ -51,7 +61,7 @@ export interface WorkflowSearchHit extends WorkflowSummary {
   tags: string[];
   description: string;
   uri: string;
-  scope: 'generic' | 'project';
+  scope: WorkflowScope;
   instance?: string;
   project?: string;
   lastVerified?: string;
@@ -67,8 +77,9 @@ export interface SearchOptions {
   project?: ProjectFilter;
 }
 
-/** Score bonus so the active project's workflows rank above generic ones. */
-const PROJECT_BOOST = 1;
+/** Score bonus so project workflows rank first, then instance, then generic. */
+const SCOPE_BOOST: Record<WorkflowScope, number> = { project: 1, instance: 0.5, generic: 0 };
+const SCOPE_ORDER: Record<WorkflowScope, number> = { project: 0, instance: 1, generic: 2 };
 
 /**
  * Manages workflow documentation files for MCP resources
@@ -198,11 +209,18 @@ export class WorkflowManager {
     return rel.replace(/\.md$/, '');
   }
 
-  /** instance/project from a proj/<instance>/<project>/<file>.md path. */
-  private projectFromPath(id: string): { instance?: string; project?: string } {
+  /**
+   * Scope, instance and project from the path:
+   * proj/<instance>/globalWorkflow/<file> -> instance,
+   * proj/<instance>/<project>/<file> -> project. Other files under proj/ get no scope.
+   */
+  private projectFromPath(id: string): { scope?: WorkflowScope; instance?: string; project?: string } {
     const parts = id.split('/');
+    if (parts[0] === 'proj' && parts.length >= 4 && parts[2] === GLOBAL_WORKFLOW_DIR) {
+      return { scope: 'instance', instance: parts[1] };
+    }
     if (parts[0] === 'proj' && parts.length >= 4) {
-      return { instance: parts[1], project: parts[2] };
+      return { scope: 'project', instance: parts[1], project: parts[2] };
     }
     return {};
   }
@@ -217,6 +235,12 @@ export class WorkflowManager {
         fs.promises.stat(filePath),
       ]);
       const workflow = this.parseWorkflow(filePath, fullContent, stat.mtimeMs);
+      // Files under proj/ outside a project or globalWorkflow folder are private but
+      // have no owner; never load them (they would show as generic to everyone).
+      if (workflow.metadata.id.startsWith('proj/') && workflow.metadata.scope === 'generic') {
+        console.error(`Skipped workflow outside a project or ${GLOBAL_WORKFLOW_DIR} folder: ${filePath}`);
+        return;
+      }
 
       // Store workflow
       this.workflows.set(workflow.metadata.id, workflow);
@@ -239,7 +263,6 @@ export class WorkflowManager {
   private parseWorkflow(filePath: string, fullContent: string, mtimeMs: number): Workflow {
     const filename = this.idFor(filePath);
     const fromPath = this.projectFromPath(filename);
-    const inProjFolder = fromPath.instance !== undefined;
 
     // Extract frontmatter (YAML between --- delimiters)
     const frontmatterRegex = /^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/;
@@ -260,9 +283,10 @@ export class WorkflowManager {
         category: parsedMeta.category || 'general',
         tags: parsedMeta.tags || [],
         version: String(parsedMeta.version ?? '1.0'),
-        scope: inProjFolder || parsedMeta.scope === 'project' ? 'project' : 'generic',
+        // The folder decides the scope. Files under proj/ are never generic.
+        scope: fromPath.scope ?? (parsedMeta.scope === 'project' ? 'project' : 'generic'),
         instance: str(parsedMeta.instance) ?? fromPath.instance,
-        project: str(parsedMeta.project) ?? fromPath.project,
+        project: fromPath.scope === 'instance' ? undefined : str(parsedMeta.project) ?? fromPath.project,
         customer: str(parsedMeta.customer),
         funcs: Array.isArray(parsedMeta.funcs) ? parsedMeta.funcs.map(String) : undefined,
         lastVerified: str(parsedMeta.lastVerified),
@@ -278,8 +302,9 @@ export class WorkflowManager {
         category: 'general',
         tags: [],
         version: '1.0',
-        scope: inProjFolder ? 'project' : 'generic',
-        ...fromPath,
+        scope: fromPath.scope ?? 'generic',
+        instance: fromPath.instance,
+        project: fromPath.project,
       };
 
       content = fullContent.trim();
@@ -304,6 +329,7 @@ export class WorkflowManager {
     if (meta.scope === 'generic') return true;
     if (filter === '*') return true;
     if (!filter) return false;
+    if (meta.scope === 'instance') return meta.instance === filter.instance;
     return meta.instance === filter.instance && meta.project === filter.project;
   }
 
@@ -438,16 +464,19 @@ export class WorkflowManager {
    */
   async saveProjectWorkflow(opts: {
     instance: string;
-    project: string;
+    /** Leave out to save an instance workflow (all projects of the instance). */
+    project?: string;
     name: string;
     content: string;
     overwrite?: boolean;
-  }): Promise<{ id: string; filePath: string; created: boolean; warnings: string[] }> {
+  }): Promise<{ id: string; filePath: string; created: boolean; scope: WorkflowScope; warnings: string[] }> {
     const { instance, project, content } = opts;
     const name = opts.name.replace(/\.md$/, '');
     const warnings: string[] = [];
 
-    for (const [label, v] of [['instance', instance], ['project', project]] as const) {
+    const checks: Array<[string, string]> = [['instance', instance]];
+    if (project !== undefined) checks.push(['project', project]);
+    for (const [label, v] of checks) {
       if (!v || v.includes('/') || v.includes('\\') || v.startsWith('.') || v.startsWith('_')) {
         throw new Error(`Bad ${label} name: "${v}"`);
       }
@@ -470,16 +499,24 @@ export class WorkflowManager {
     if (meta.instance && String(meta.instance) !== instance) {
       throw new Error(`Frontmatter instance "${meta.instance}" does not match "${instance}".`);
     }
-    if (meta.project && String(meta.project) !== project) {
+    const level: WorkflowScope = project === undefined ? 'instance' : 'project';
+    if (level === 'project' && meta.project && String(meta.project) !== project) {
       throw new Error(`Frontmatter project "${meta.project}" does not match "${project}".`);
     }
-    if (meta.scope && meta.scope !== 'project') warnings.push('scope is not "project"; it is saved as a project workflow anyway.');
+    if (level === 'instance' && meta.project) {
+      throw new Error('Instance workflows apply to all projects. Remove "project" from the frontmatter.');
+    }
+    if (meta.scope && meta.scope !== level) warnings.push(`scope is not "${level}"; it is saved as a ${level} workflow anyway.`);
+
     if (!meta.lastVerified) warnings.push('No lastVerified date.');
 
     const secret = findSecret(content);
     if (secret) throw new Error(`Content looks like it has a secret (${secret}). Remove it first.`);
 
-    const dir = path.join(this.workflowsDir, 'proj', instance, project);
+    if (project === GLOBAL_WORKFLOW_DIR) throw new Error(`"${GLOBAL_WORKFLOW_DIR}" is not a project. Use level "instance".`);
+    const dir = project === undefined
+      ? path.join(this.workflowsDir, 'proj', instance, GLOBAL_WORKFLOW_DIR)
+      : path.join(this.workflowsDir, 'proj', instance, project);
     const filePath = path.join(dir, `${name}.md`);
     const exists = fs.existsSync(filePath);
     if (exists && !opts.overwrite) {
@@ -488,12 +525,12 @@ export class WorkflowManager {
 
     await fs.promises.mkdir(dir, { recursive: true });
     await fs.promises.writeFile(filePath, content.endsWith('\n') ? content : content + '\n', 'utf8');
-    await this.addToProjectIndex(dir, instance, project, name, String(meta.title), String(meta.description));
+    await this.addToProjectIndex(dir, instance, project ?? `${instance} (all projects)`, name, String(meta.title), String(meta.description));
 
     const id = this.idFor(filePath);
     this.summaryCache.invalidate(id);
     await this.loadWorkflows();
-    return { id, filePath, created: !exists, warnings };
+    return { id, filePath, created: !exists, scope: level, warnings };
   }
 
   /** Add or refresh one line in the project README.md index. */
@@ -519,17 +556,19 @@ export class WorkflowManager {
   /**
    * Titles of one project's workflows, for the project switch response.
    */
-  getProjectWorkflowList(instance: string, project: string): Array<{ id: string; title: string; lastVerified?: string }> {
+  getProjectWorkflowList(instance: string, project: string): Array<{ id: string; title: string; scope: WorkflowScope; lastVerified?: string }> {
     return this.getWorkflowList()
-      .filter(w => w.metadata.scope === 'project' && w.metadata.instance === instance && w.metadata.project === project)
-      .map(w => ({ id: w.metadata.id, title: w.metadata.title, lastVerified: w.metadata.lastVerified }))
-      .sort((a, b) => a.id.localeCompare(b.id));
+      .filter(w => w.metadata.scope !== 'generic' && WorkflowManager.matchesProject(w.metadata, { instance, project }))
+      .map(w => ({ id: w.metadata.id, title: w.metadata.title, scope: w.metadata.scope, lastVerified: w.metadata.lastVerified }))
+      .sort((a, b) => SCOPE_ORDER[a.scope] - SCOPE_ORDER[b.scope] || a.id.localeCompare(b.id));
   }
 
-  /** Path to a project's RULES.md, if it exists. */
-  getProjectRulesPath(instance: string, project: string): string | undefined {
-    const p = path.join(this.workflowsDir, 'proj', instance, project, 'RULES.md');
-    return fs.existsSync(p) ? p : undefined;
+  /** RULES.md files that apply to a project, in reading order: instance, then project. */
+  getProjectRulesPaths(instance: string, project: string): string[] {
+    return [
+      path.join(this.workflowsDir, 'proj', instance, GLOBAL_WORKFLOW_DIR, 'RULES.md'),
+      path.join(this.workflowsDir, 'proj', instance, project, 'RULES.md'),
+    ].filter(p => fs.existsSync(p));
   }
 
   /**
@@ -542,8 +581,8 @@ export class WorkflowManager {
       const summary = this.getSummary(workflow.metadata.id)!;
       out.push(this.toHit(workflow, summary));
     }
-    // Project workflows first, then generic, then by id.
-    out.sort((a, b) => (a.scope === b.scope ? a.id.localeCompare(b.id) : a.scope === 'project' ? -1 : 1));
+    // Project workflows first, then instance, then generic, then by id.
+    out.sort((a, b) => SCOPE_ORDER[a.scope] - SCOPE_ORDER[b.scope] || a.id.localeCompare(b.id));
     return out;
   }
 
@@ -602,11 +641,9 @@ export class WorkflowManager {
       }
     }
 
-    // Rank the active project's workflows above generic ones.
+    // Rank project workflows first, then instance, then generic.
     if (opts.project && opts.project !== '*') {
-      for (const hit of candidates) {
-        if (hit.scope === 'project') hit.score = (hit.score ?? 0) + PROJECT_BOOST;
-      }
+      for (const hit of candidates) hit.score = (hit.score ?? 0) + SCOPE_BOOST[hit.scope];
     }
 
     candidates.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
