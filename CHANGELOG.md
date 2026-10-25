@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.0](https://github.com/Project-SandStar/AxonMcpServer/compare/v1.1.1...v1.2.0) (2026-10-25)
+
+
+### Features
+
+* **workflows:** instance-level shared workflows in globalWorkflow/ ([d491cd7](https://github.com/Project-SandStar/AxonMcpServer/commit/d491cd76e5ef1d4979da37d5f3962fae365ae0b0))
+* **workflows:** load per-project workflows from workflows/proj ([a02ba86](https://github.com/Project-SandStar/AxonMcpServer/commit/a02ba863f93f9a3ff842131694789399d554d3f2))
+* **workflows:** saveProjectWorkflow tool; show project workflows on switch ([97c6d87](https://github.com/Project-SandStar/AxonMcpServer/commit/97c6d87d043d1ec4ace301e5c7ec252f6f7e4334))
+
+
+### Bug Fixes
+
+* **plugin:** rebuild dist with the fav-creation and bassgMilesight workflow skills ([4dfa048](https://github.com/Project-SandStar/AxonMcpServer/commit/4dfa048e18237018e58152f608577d4431834101))
+
 ## [1.1.1](https://github.com/Project-SandStar/AxonMcpServer/compare/v1.1.0...v1.1.1) (2026-10-19)
 
 

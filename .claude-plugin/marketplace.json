@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "Claude Code plugin for the Axon MCP server (SkySpark Axon code knowledge and live project access).",
-    "version": "1.1.1"
+    "version": "1.2.0"
   },
   "plugins": [
     {
       "name": "axon-mcp",
       "source": "./claudePlugin/dist",
       "description": "Axon MCP server as a Claude Code plugin: Axon examples, patterns, docs, call graph, semantic search, Haystack queries, and running and committing Axon in the active SkySpark project. Workflow guides ship as skills.",
-      "version": "1.1.1",
+      "version": "1.2.0",
       "category": "development",
       "keywords": [
         "mcp",
