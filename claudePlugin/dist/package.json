@@ -1,6 +1,6 @@
 {
   "name": "axon-mcp-plugin",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "SkySpark Axon from the Axon MCP server: examples, patterns, docs, call graph, semantic search, Haystack queries, and running and committing Axon in the active SkySpark project. Workflow guides ship as skills.",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",

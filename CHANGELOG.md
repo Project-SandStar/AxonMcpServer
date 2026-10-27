@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/Project-SandStar/AxonMcpServer/compare/v1.2.0...v1.2.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **dashboard:** rebuild so project workflow ids (with slashes) are URL-encoded; fixes "API error: Not Found" on /dashboard/workflows
+
 ## [1.2.0](https://github.com/Project-SandStar/AxonMcpServer/compare/v1.1.1...v1.2.0) (2026-10-25)
 
 
