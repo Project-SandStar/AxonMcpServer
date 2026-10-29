@@ -1,0 +1,6 @@
+{
+  "mirrorDir": "/mirror",
+  "roots": [
+    { "sidecar": "mac-alper", "root": "BAS", "project": "mirror/BAS", "path": "/mirror/mac-alper/BAS" }
+  ]
+}

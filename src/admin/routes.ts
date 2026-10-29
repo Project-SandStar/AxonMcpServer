@@ -10,6 +10,7 @@ import { ServerStatus, InstanceInfo, ProjectInfo, CacheInfo, AdminCredentials } 
 import { initUserStore, getUserStore, UserStore, User } from './userStore.js';
 import { AxonOAuthProvider } from '../auth/oauthProvider.js';
 import { BackupManager } from './backupManager.js';
+import { createChangesRouter, loadChangesConfig } from './changesRouter.js';
 import {
   TOOL_METADATA,
   getCoreTools,
@@ -132,6 +133,13 @@ export function createAdminRouter(context: AdminContext): Router {
     }
     return _adminPrisma;
   };
+
+  // Sidecar change hook (Bearer token, not Basic Auth) - fileSystemSideCar Task 8.4
+  const { router: changesRouter } = createChangesRouter({
+    getPrisma: getOrCreatePrisma,
+    config: () => loadChangesConfig(context.configDir),
+  });
+  router.use('/changes', changesRouter);
 
   // Apply Basic Auth to all admin routes
   router.use(basicAuthWithUserStore(userStore));

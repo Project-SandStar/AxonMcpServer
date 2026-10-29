@@ -31,7 +31,7 @@ import * as crypto from 'crypto';
 // ID Generation
 // ============================================
 
-function generateNodeId(filePath: string, qualifiedName: string, line: number): string {
+export function generateNodeId(filePath: string, qualifiedName: string, line: number): string {
   const hash = crypto.createHash('sha256');
   hash.update(`${filePath}:${qualifiedName}:${line}`);
   return hash.digest('hex').substring(0, 32);
@@ -48,6 +48,8 @@ export class GraphBuilder {
   private nodeByQualifiedName: Map<string, string> = new Map();
   private unresolvedRefs: UnresolvedRefCreate[] = [];
   private pendingEdges: CodeEdgeCreate[] = [];
+  // Call edges wait until every file's nodes exist, so cross-file calls resolve.
+  private deferredCalls: Array<{ edge: CodeEdgeCreate; targetName: string }> = [];
 
   private stats = {
     nodesCreated: 0,
@@ -94,6 +96,9 @@ export class GraphBuilder {
           await this.buildFromFile(file);
         }
       }
+
+      // Resolve call edges now that all nodes exist
+      this.resolveDeferredCalls();
 
       // Create edges (after all nodes exist)
       await this.createPendingEdges();
@@ -348,7 +353,7 @@ export class GraphBuilder {
       ? `${call.target}.${call.name}`
       : call.name;
 
-    this.queueEdge({
+    this.deferredCalls.push({ targetName, edge: {
       sourceId,
       targetId: '',
       edgeType: 'calls',
@@ -360,7 +365,13 @@ export class GraphBuilder {
         target: call.target,
         expression: call.expression
       }
-    }, targetName);
+    } });
+  }
+
+  private resolveDeferredCalls(): void {
+    const calls = this.deferredCalls;
+    this.deferredCalls = [];
+    for (const { edge, targetName } of calls) this.queueEdge(edge, targetName);
   }
 
   /**

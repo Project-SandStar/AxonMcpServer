@@ -14,6 +14,8 @@ export default {
     ],
   },
   testMatch: ['**/*.test.ts'],
+  // *.esm.test.ts need ESM (web-tree-sitter): run with `npm run test:esm`
+  testPathIgnorePatterns: ['/node_modules/', '\\.esm\\.test\\.ts$'],
   collectCoverageFrom: [
     'src/**/*.ts',
     '!src/**/*.d.ts',

@@ -26,7 +26,8 @@
     "dashboard:install": "cd dashboard && npm install",
     "plugin:build": "node claudePlugin/scripts/build.mjs --check",
     "plugin:test": "bash claudePlugin/scripts/test.sh",
-    "plugin:install": "bash claudePlugin/scripts/install-local.sh"
+    "plugin:install": "bash claudePlugin/scripts/install-local.sh",
+    "test:esm": "NODE_OPTIONS=--experimental-vm-modules jest -c jest.esm.config.js"
   },
   "keywords": [
     "axon",
