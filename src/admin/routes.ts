@@ -11,6 +11,7 @@ import { initUserStore, getUserStore, UserStore, User } from './userStore.js';
 import { AxonOAuthProvider } from '../auth/oauthProvider.js';
 import { BackupManager } from './backupManager.js';
 import { createChangesRouter, loadChangesConfig } from './changesRouter.js';
+import { createSidecarSyncRouter } from './sidecarSync.js';
 import {
   TOOL_METADATA,
   getCoreTools,
@@ -135,7 +136,7 @@ export function createAdminRouter(context: AdminContext): Router {
   };
 
   // Sidecar change hook (Bearer token, not Basic Auth) - fileSystemSideCar Task 8.4
-  const { router: changesRouter } = createChangesRouter({
+  const { router: changesRouter, queue: changeQueue } = createChangesRouter({
     getPrisma: getOrCreatePrisma,
     config: () => loadChangesConfig(context.configDir),
   });
@@ -143,6 +144,14 @@ export function createAdminRouter(context: AdminContext): Router {
 
   // Apply Basic Auth to all admin routes
   router.use(basicAuthWithUserStore(userStore));
+
+  // "Sidecar sync" page API: root-to-project links, change queue, receiver status
+  router.use('/sidecar', createSidecarSyncRouter({
+    configDir: context.configDir,
+    getPrisma: getOrCreatePrisma,
+    queue: changeQueue,
+    requireAdmin,
+  }));
 
   // ============================================
   // Root endpoint - API index
@@ -226,6 +235,12 @@ export function createAdminRouter(context: AdminContext): Router {
           'POST /admin/graph/projects/register': 'Auto-register projects from proj/ directory',
           'POST /admin/graph/projects/:id/build-graph': 'Build code graph for a project',
           'POST /admin/graph/projects/:id/build-embeddings': 'Build embeddings for a project',
+          'GET /admin/sidecar/links': 'Sidecar sync: root-to-project links, change queue, last update',
+          'POST /admin/sidecar/links': 'Sidecar sync: add a link (admin)',
+          'PUT /admin/sidecar/links/:index': 'Sidecar sync: edit a link (admin)',
+          'DELETE /admin/sidecar/links/:index': 'Sidecar sync: remove a link (admin)',
+          'POST /admin/sidecar/projects/:id/rebuild': 'Sidecar sync: full rebuild of one project (admin)',
+          'GET /admin/sidecar/status': 'Sidecar sync: receiver status, target "axon"',
           'GET /admin/graph/nodes/search?q=name': 'Search graph nodes by name',
           'GET /admin/graph/nodes/:id': 'Get node details with callers/callees',
           'GET /admin/graph/visualize/:id': 'Get subgraph around a node (format=json|dot|d3|cytoscape)',

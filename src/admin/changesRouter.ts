@@ -25,7 +25,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { PrismaClient } from '../generated/prisma/index.js';
 import { ChangeQueue } from '../graph/changeQueue.js';
-import { updateProjectFiles, fullProjectBuild, type UpdateOptions } from '../graph/incrementalUpdater.js';
+import { updateProjectFiles, fullProjectBuild, defaultVectorSink, type UpdateOptions } from '../graph/incrementalUpdater.js';
 
 export interface RootMapEntry {
   sidecar?: string;
@@ -77,14 +77,25 @@ export function createChangesRouter(opts: ChangesRouterOptions): { router: Route
   const getToken = opts.token ?? (() => process.env.AXON_CHANGES_TOKEN);
   const getConfig: () => ChangesConfig = opts.config ?? (() => ({ roots: [] }));
 
-  const queue = new ChangeQueue(async (projectId, paths) => {
+  const queue = new ChangeQueue(async (projectId, paths, jobOpts) => {
     const prisma = await opts.getPrisma();
     const project = await prisma.axonProject.findUnique({ where: { id: projectId } });
     if (!project) throw new Error(`Project not found: ${projectId}`);
     const hasGraph = (await prisma.codeNode.count({ where: { projectId } })) > 0;
-    const result = hasGraph
-      ? await updateProjectFiles(prisma, project, paths, opts.update)
-      : await fullProjectBuild(prisma, project, opts.update);
+    let result;
+    if (hasGraph && !jobOpts.full) {
+      result = await updateProjectFiles(prisma, project, paths, opts.update);
+    } else {
+      if (hasGraph) {
+        // Full rebuild: drop the old vectors first (the graph builder clears the graph rows).
+        const sink = opts.update?.vectors === undefined ? defaultVectorSink(prisma) : opts.update.vectors;
+        if (sink) {
+          const old = await prisma.codeNode.findMany({ where: { projectId }, select: { id: true } });
+          await sink.deleteNodes(old.map(n => n.id));
+        }
+      }
+      result = await fullProjectBuild(prisma, project, opts.update);
+    }
     await prisma.axonProject.update({ where: { id: projectId }, data: { lastIndexed: new Date() } });
     console.error(`[changes] project ${projectId} ${result.mode}: +${result.nodesAdded} -${result.nodesRemoved} nodes, ${result.embedded} vectors, ${result.durationMs}ms`);
     return result;

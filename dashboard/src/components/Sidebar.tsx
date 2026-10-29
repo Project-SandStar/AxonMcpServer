@@ -24,6 +24,7 @@ import {
   FolderTree,
   Sparkles,
   Workflow,
+  FolderSync,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -38,6 +39,7 @@ const navigation = [
   { name: 'Workflows', href: '/workflows', icon: Workflow },
   { name: 'Instances', href: '/instances', icon: Server },
   { name: 'Project Sync', href: '/projects', icon: FolderOpen },
+  { name: 'Sidecar sync', href: '/sidecar', icon: FolderSync },
   { name: 'Usage', href: '/usage', icon: BarChart3 },
   { name: 'Cache', href: '/cache', icon: Database },
   { name: 'Logs', href: '/logs', icon: FileText },
