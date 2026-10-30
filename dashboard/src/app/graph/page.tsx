@@ -1,5 +1,7 @@
 'use client';
 
+import PathInput from '@/components/PathInput';
+
 import { useQuery } from '@tanstack/react-query';
 import { api, GraphNode, GraphProject, GraphNodeDetails, GraphVisualizationData } from '@/lib/api';
 import {
@@ -521,6 +523,7 @@ export default function GraphPage() {
   const [graphDepth, setGraphDepth] = useState(2);
   const [graphType, setGraphType] = useState<GraphType>('subgraph');
   const [actionStatus, setActionStatus] = useState<{ type: string; message: string; isError?: boolean } | null>(null);
+  const [registerPath, setRegisterPath] = useState('');
 
   // Project selector state
   const [selectedProject, setSelectedProject] = useState<GraphProject | null>(null);
@@ -761,12 +764,16 @@ export default function GraphPage() {
                   <p className="text-sm text-gray-500 mb-6">
                     No graph data yet. Register your synced projects, then build the code graph and embeddings.
                   </p>
+                  <div className="mb-4 max-w-xl">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Projects folder (optional)</label>
+                    <PathInput value={registerPath} onChange={setRegisterPath} placeholder="Empty = server proj/ folder" pickerTitle="Choose a proj/ folder" />
+                  </div>
                   <div className="flex flex-wrap gap-3">
                     <button
                       onClick={async () => {
                         setActionStatus({ type: 'loading', message: 'Registering projects from proj/ directory...' });
                         try {
-                          const result = await api.registerProjects();
+                          const result = await api.registerProjects(registerPath.trim() || undefined);
                           setActionStatus({ type: 'success', message: `Registered ${result.totalProjects} projects with ${result.totalFunctions} functions.` });
                           refetchStats();
                         } catch (e: any) {

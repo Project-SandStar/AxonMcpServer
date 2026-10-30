@@ -13,6 +13,7 @@ import { BackupManager } from './backupManager.js';
 import { createChangesRouter, loadChangesConfig } from './changesRouter.js';
 import { createSidecarSyncRouter } from './sidecarSync.js';
 import { createNetbirdRouter } from './netbird.js';
+import { createFsBrowserRouter, resolveRoots, parseRootsEnv, isInside } from './fsBrowser.js';
 import {
   TOOL_METADATA,
   getCoreTools,
@@ -163,6 +164,26 @@ export function createAdminRouter(context: AdminContext): Router {
   // "NetBird" page API: setup key, hostname, status of the NetBird sidecar container
   router.use('/netbird', createNetbirdRouter({ cacheDir: context.cacheDir, requireAdmin }));
 
+  // Folder picker API for the dashboard "Browse…" buttons (directories only, allowlisted roots)
+  let serverConfigMod: typeof import('../config/config.js') | undefined;
+  import('../config/config.js').then(m => { serverConfigMod = m; }).catch(() => {});
+  const browseDeny = () => [path.resolve(context.configDir), path.resolve(context.cacheDir)];
+  const browseDefaultRoots = () => {
+    const cfg = (() => { try { return serverConfigMod?.getConfig() as any; } catch { return undefined; } })();
+    const parentOf = (p?: string) => (p && path.isAbsolute(p) ? path.dirname(p) : undefined);
+    return [
+      loadChangesConfig(context.configDir).mirrorDir,
+      process.env.AXON_MIRROR_DIR || '/mirror',
+      process.env.AXON_PROJ_DIR,
+      '/app/proj',
+      path.join(path.resolve(context.configDir, '..'), 'proj'),
+      parentOf(cfg?.codePath),
+      parentOf(cfg?.docsPath),
+    ];
+  };
+  const browseRoots = () => resolveRoots(parseRootsEnv(process.env.AXON_BROWSE_ROOTS) ?? browseDefaultRoots(), browseDeny());
+  router.use('/fs', createFsBrowserRouter({ requireAdmin, deny: browseDeny, defaultRoots: browseDefaultRoots }));
+
   // ============================================
   // Root endpoint - API index
   // ============================================
@@ -242,7 +263,7 @@ export function createAdminRouter(context: AdminContext): Router {
           'GET /admin/graph/stats': 'Overall graph and vector stats',
           'GET /admin/graph/projects': 'List all Axon projects with graph/vector status',
           'GET /admin/graph/projects/:id/stats': 'Get project graph stats (nodes, edges, vectors)',
-          'POST /admin/graph/projects/register': 'Auto-register projects from proj/ directory',
+          'POST /admin/graph/projects/register': 'Auto-register projects from proj/ directory (body {path?}: another proj folder inside the browse roots)',
           'POST /admin/graph/projects/:id/build-graph': 'Build code graph for a project',
           'POST /admin/graph/projects/:id/build-embeddings': 'Build embeddings for a project',
           'GET /admin/sidecar/links': 'Sidecar sync: root-to-project links, change queue, last update',
@@ -251,6 +272,7 @@ export function createAdminRouter(context: AdminContext): Router {
           'DELETE /admin/sidecar/links/:index': 'Sidecar sync: remove a link (admin)',
           'POST /admin/sidecar/projects/:id/rebuild': 'Sidecar sync: full rebuild of one project (admin)',
           'GET /admin/sidecar/status': 'Sidecar sync: receiver status, target "axon"',
+          'GET /admin/fs/dirs?path=': 'Folder picker: list sub-folders inside allowed roots (admin)',
           'GET /admin/netbird': 'NetBird: settings and status (key hint only) (admin)',
           'PUT /admin/netbird': 'NetBird: save setup key, hostname, management URL, enabled (admin)',
           'DELETE /admin/netbird/key': 'NetBird: remove the setup key and disable (admin)',
@@ -1391,10 +1413,23 @@ export function createAdminRouter(context: AdminContext): Router {
   });
 
   // Auto-register projects from the synced proj/ directory
-  router.post('/graph/projects/register', requireAdmin, async (_req: Request, res: Response) => {
+  router.post('/graph/projects/register', requireAdmin, async (req: Request, res: Response) => {
     try {
+      // Optional body { path }: a proj/ folder picked in the dashboard; must be inside the browse roots
+      let projDir = path.join(path.resolve(context.configDir, '..'), 'proj');
+      const picked = typeof req.body?.path === 'string' ? req.body.path.trim() : '';
+      if (picked) {
+        if (!path.isAbsolute(picked) || picked.split(/[\\/]+/).includes('..')) {
+          return res.status(400).json({ error: 'Path must be absolute, without ".."' });
+        }
+        let real: string;
+        try { real = fs.realpathSync(picked); } catch { return res.status(404).json({ error: 'Folder not found' }); }
+        if (!browseRoots().some(r => isInside(real, r))) {
+          return res.status(403).json({ error: 'Path is outside the allowed roots' });
+        }
+        projDir = real;
+      }
       const prisma = await getOrCreatePrisma();
-      const projDir = path.join(path.resolve(context.configDir, '..'), 'proj');
       const registered: Array<{ name: string; instance: string; path: string; functionCount: number }> = [];
 
       if (!fs.existsSync(projDir)) {

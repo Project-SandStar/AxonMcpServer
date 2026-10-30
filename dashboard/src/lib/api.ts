@@ -170,6 +170,23 @@ export interface AuthClientInfo {
 }
 
 // API functions
+export type DirHint = 'skysparkDocRoot' | 'docLibrary' | 'axonProject' | 'skysparkInstance';
+
+export interface DirEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  hint?: DirHint;
+}
+
+export interface DirListing {
+  path: string;
+  parent: string | null;
+  roots: string[];
+  entries: DirEntry[];
+  truncated: boolean;
+}
+
 export const api = {
   // Status
   getStatus: () => apiRequest<ServerStatus>('/status'),
@@ -374,10 +391,23 @@ export const api = {
   // Graph
   getGraphStats: () => apiRequest<GraphStats>('/graph/stats'),
   getGraphProjects: () => apiRequest<GraphProject[]>('/graph/projects'),
-  registerProjects: () =>
+  registerProjects: (projPath?: string) =>
     apiRequest<{ registered: Array<{ name: string; instance: string; path: string; functionCount: number }>; totalProjects: number; totalFunctions: number }>(
-      '/graph/projects/register', { method: 'POST' }
+      '/graph/projects/register', { method: 'POST', body: projPath ? { path: projPath } : undefined }
     ),
+
+  // Server folder picker (directories only, inside allowed roots)
+  listDirs: async (dirPath?: string): Promise<DirListing> => {
+    const username = typeof window !== 'undefined' ? localStorage.getItem('admin_user') || 'admin' : 'admin';
+    const password = typeof window !== 'undefined' ? localStorage.getItem('admin_pass') || 'admin' : 'admin';
+    const qs = dirPath ? `?path=${encodeURIComponent(dirPath)}` : '';
+    const response = await fetch(`${API_BASE}/admin/fs/dirs${qs}`, {
+      headers: { 'Authorization': 'Basic ' + btoa(`${username}:${password}`) },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data?.error || `API error: ${response.statusText}`);
+    return data as DirListing;
+  },
   getGraphProjectStats: (id: number) => apiRequest<GraphProjectStats>(`/graph/projects/${id}/stats`),
   buildGraph: (id: number) =>
     apiRequest<BuildGraphResult>(`/graph/projects/${id}/build-graph`, { method: 'POST' }),

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import ApiKeysPanel from '@/components/ApiKeysPanel';
 import NetbirdPanel from '@/components/NetbirdPanel';
+import PathInput from '@/components/PathInput';
 import {
   Save, RefreshCw, Globe, FolderOpen, Server, Database,
   Search, HardDrive, Trash2, RotateCcw, Brain, Zap,
@@ -508,17 +509,17 @@ export default function SettingsPage() {
       <div className="space-y-4">
         <div>
           <label className={labelClass}>Code Path</label>
-          <input type="text" value={config.codePath} onChange={e => updateConfig('codePath', e.target.value)} className={`${inputClass} font-mono text-xs`} />
+          <PathInput value={config.codePath || ''} onChange={v => updateConfig('codePath', v)} className={`${inputClass} font-mono text-xs`} pickerTitle="Choose the code folder" />
           <p className={helpClass}>Directory with .axon and .trio files</p>
         </div>
         <div>
           <label className={labelClass}>Docs Path</label>
-          <input type="text" value={config.docsPath} onChange={e => updateConfig('docsPath', e.target.value)} className={`${inputClass} font-mono text-xs`} />
+          <PathInput value={config.docsPath || ''} onChange={v => updateConfig('docsPath', v)} className={`${inputClass} font-mono text-xs`} pickerTitle="Choose the docs folder" />
           <p className={helpClass}>Directory with HTML documentation</p>
         </div>
         <div>
           <label className={labelClass}>SkySpark Home</label>
-          <input type="text" value={config.skyspark.home} onChange={e => updateSkyspark('home', e.target.value)} className={`${inputClass} font-mono text-xs`} />
+          <PathInput value={config.skyspark.home || ''} onChange={v => updateSkyspark('home', v)} className={`${inputClass} font-mono text-xs`} pickerTitle="Choose the SkySpark home folder" />
           <p className={helpClass}>SkySpark installation directory</p>
         </div>
       </div>

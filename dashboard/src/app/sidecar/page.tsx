@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getApiBase } from '@/lib/api';
+import PathInput from '@/components/PathInput';
 import { FolderSync, RefreshCw, Plus, Pencil, Trash2, Hammer, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
 
 // ============================================
@@ -290,6 +291,18 @@ export default function SidecarSyncPage() {
             ] as const).map(([key, label, hint]) => (
               <label key={key} className="block">
                 <span className="text-sm font-medium text-gray-700">{label}</span>
+                {key === 'path' ? (
+                  <div className="mt-1">
+                    <PathInput
+                      value={form.path}
+                      onChange={(v) => setForm({ ...form, path: v })}
+                      placeholder={hint}
+                      startPath={links.data?.mirrorDir || '/mirror'}
+                      pickerTitle="Choose the folder for this link"
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                ) : (
                 <input
                   value={form[key]}
                   onChange={(e) => setForm({ ...form, [key]: e.target.value })}
@@ -297,6 +310,7 @@ export default function SidecarSyncPage() {
                   required={key === 'root' || key === 'project'}
                   className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none"
                 />
+                )}
               </label>
             ))}
           </div>

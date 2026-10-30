@@ -1,5 +1,7 @@
 'use client';
 
+import PathInput from '@/components/PathInput';
+
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, GraphProject } from '@/lib/api';
 import {
@@ -216,6 +218,7 @@ function ProjectDetail({ project }: { project: GraphProject }) {
 export default function ProjectExplorerPage() {
   const [expandedProject, setExpandedProject] = useState<number | null>(null);
   const [registerStatus, setRegisterStatus] = useState<{ type: 'success' | 'error' | 'loading'; message: string } | null>(null);
+  const [registerPath, setRegisterPath] = useState('');
   const [buildAllState, setBuildAllState] = useState<{
     type: 'graph' | 'embeddings';
     current: number;
@@ -486,11 +489,15 @@ export default function ProjectExplorerPage() {
                 {registerStatus.message}
               </div>
             )}
+            <div className="mx-auto mb-4 max-w-xl text-left">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Projects folder (optional)</label>
+              <PathInput value={registerPath} onChange={setRegisterPath} placeholder="Empty = server proj/ folder" pickerTitle="Choose a proj/ folder" />
+            </div>
             <button
               onClick={async () => {
                 setRegisterStatus({ type: 'loading', message: 'Scanning proj/ directory for synced projects...' });
                 try {
-                  const result = await api.registerProjects();
+                  const result = await api.registerProjects(registerPath.trim() || undefined);
                   setRegisterStatus({ type: 'success', message: `Registered ${result.totalProjects} projects with ${result.totalFunctions} total functions.` });
                   refetch();
                 } catch (e: any) {
