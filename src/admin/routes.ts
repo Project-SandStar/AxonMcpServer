@@ -12,6 +12,7 @@ import { AxonOAuthProvider } from '../auth/oauthProvider.js';
 import { BackupManager } from './backupManager.js';
 import { createChangesRouter, loadChangesConfig } from './changesRouter.js';
 import { createSidecarSyncRouter } from './sidecarSync.js';
+import { createNetbirdRouter } from './netbird.js';
 import {
   TOOL_METADATA,
   getCoreTools,
@@ -71,11 +72,11 @@ interface AdminContext {
   searchDocs?: (query: string, options?: { limit?: number; library?: string }) => Promise<any[]>;
   getDocsForEmbedding?: () => Array<{ id: string; title: string; library: string; fullText: string }>;
   getDocsStats?: () => { totalDocuments: number; totalSections: number; libraries: string[] };
-  getWorkflowManager?: () => import('../workflows/workflowManager.js').WorkflowManager;
   /** Sidecar hook: changed paths under a "docs" root (relative to rootPath). */
   onDocsChange?: (paths: string[], rootPath: string) => Record<string, unknown>;
   /** Sidecar hook: changed paths under a "library" root (relative to rootPath). */
   onLibraryChange?: (paths: string[], rootPath: string) => Record<string, unknown>;
+  getWorkflowManager?: () => import('../workflows/workflowManager.js').WorkflowManager;
   getWorkflowVectorIndex?: () => import('../workflows/workflowVectorIndex.js').WorkflowVectorIndex | undefined;
 }
 
@@ -143,9 +144,9 @@ export function createAdminRouter(context: AdminContext): Router {
   const { router: changesRouter, queue: changeQueue } = createChangesRouter({
     getPrisma: getOrCreatePrisma,
     config: () => loadChangesConfig(context.configDir),
-  });
     onDocsChange: context.onDocsChange,
     onLibraryChange: context.onLibraryChange,
+  });
   router.use('/changes', changesRouter);
 
   // Apply Basic Auth to all admin routes
@@ -158,6 +159,9 @@ export function createAdminRouter(context: AdminContext): Router {
     queue: changeQueue,
     requireAdmin,
   }));
+
+  // "NetBird" page API: setup key, hostname, status of the NetBird sidecar container
+  router.use('/netbird', createNetbirdRouter({ cacheDir: context.cacheDir, requireAdmin }));
 
   // ============================================
   // Root endpoint - API index
@@ -247,6 +251,9 @@ export function createAdminRouter(context: AdminContext): Router {
           'DELETE /admin/sidecar/links/:index': 'Sidecar sync: remove a link (admin)',
           'POST /admin/sidecar/projects/:id/rebuild': 'Sidecar sync: full rebuild of one project (admin)',
           'GET /admin/sidecar/status': 'Sidecar sync: receiver status, target "axon"',
+          'GET /admin/netbird': 'NetBird: settings and status (key hint only) (admin)',
+          'PUT /admin/netbird': 'NetBird: save setup key, hostname, management URL, enabled (admin)',
+          'DELETE /admin/netbird/key': 'NetBird: remove the setup key and disable (admin)',
           'GET /admin/graph/nodes/search?q=name': 'Search graph nodes by name',
           'GET /admin/graph/nodes/:id': 'Get node details with callers/callees',
           'GET /admin/graph/visualize/:id': 'Get subgraph around a node (format=json|dot|d3|cytoscape)',

@@ -13,6 +13,8 @@ config/*.json
 !config/*.example.json
 dashboard/node_modules
 dashboard/.next
+dashboard/out
+dashboard/proj
 vscode-extension
 claudePlugin
 tree-sitter-axon

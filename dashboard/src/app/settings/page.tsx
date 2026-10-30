@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import ApiKeysPanel from '@/components/ApiKeysPanel';
+import NetbirdPanel from '@/components/NetbirdPanel';
 import {
   Save, RefreshCw, Globe, FolderOpen, Server, Database,
   Search, HardDrive, Trash2, RotateCcw, Brain, Zap,
@@ -21,7 +22,8 @@ type SettingsGroup =
   | 'search'
   | 'semantic'
   | 'apikeys'
-  | 'database';
+  | 'database'
+  | 'netbird';
 
 const GROUPS: { id: SettingsGroup; label: string; icon: string }[] = [
   { id: 'server',   label: 'Server',          icon: '🌐' },
@@ -32,11 +34,23 @@ const GROUPS: { id: SettingsGroup; label: string; icon: string }[] = [
   { id: 'semantic', label: 'Semantic Search', icon: '🧠' },
   { id: 'apikeys',  label: 'API Keys',        icon: '🔑' },
   { id: 'database', label: 'Database',        icon: '🗄️' },
+  { id: 'netbird',  label: 'NetBird',         icon: '🌐' },
 ];
 
 // ─── Contextual Documentation ───────────────────────────────────────────────
 
 const DOCS: Record<SettingsGroup, { title: string; content: React.ReactNode }> = {
+  netbird: {
+    title: 'NetBird and HTTPS',
+    content: (
+      <div className="space-y-3 text-sm text-gray-600">
+        <p>Joins this server to the NetBird network as <code>&lt;hostname&gt;.vpn.bas.co</code>. Paste a setup key from the NetBird admin (Setup Keys), turn NetBird on and Save.</p>
+        <p><strong>HTTPS</strong> serves the server as <code>https://&lt;hostname&gt;.&lt;domain&gt;</code> on the NetBird IP. Paste a Cloudflare API token (template &quot;Edit zone DNS&quot;, zone bas.co only). Without a token the Caddy container waits.</p>
+        <p><strong>Advanced:</strong> WireGuard port, 0 = NetBird picks a free port.</p>
+        <p>The page shows only the last 4 characters of the key and the token.</p>
+      </div>
+    ),
+  },
   server: {
     title: 'Server Configuration',
     content: (
@@ -267,7 +281,21 @@ const DEFAULT_SEMANTIC: SemanticSearchConfig = {
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
-  const [activeGroup, setActiveGroup] = useState<SettingsGroup>('server');
+  const [activeGroup, setActiveGroupState] = useState<SettingsGroup>('server');
+  // The tab is kept in the URL hash (#netbird), so links like /dashboard/settings/#netbird work.
+  const setActiveGroup = (id: SettingsGroup) => {
+    setActiveGroupState(id);
+    if (typeof window !== 'undefined' && window.location.hash !== `#${id}`) history.pushState(null, '', `#${id}`);
+  };
+  useEffect(() => {
+    const sync = () => {
+      const h = window.location.hash.replace(/^#/, '') as SettingsGroup;
+      if (GROUPS.some(g => g.id === h)) setActiveGroupState(h);
+    };
+    sync();
+    window.addEventListener('hashchange', sync);
+    return () => window.removeEventListener('hashchange', sync);
+  }, []);
   const [config, setConfig] = useState<ConfigSettings | null>(null);
   const [semantic, setSemantic] = useState<SemanticSearchConfig>(DEFAULT_SEMANTIC);
   const [isLoading, setIsLoading] = useState(true);
@@ -846,6 +874,7 @@ export default function SettingsPage() {
       case 'semantic': return renderSemantic();
       case 'apikeys': return renderApiKeys();
       case 'database': return renderDatabase();
+      case 'netbird': return <NetbirdPanel />;
     }
   };
 

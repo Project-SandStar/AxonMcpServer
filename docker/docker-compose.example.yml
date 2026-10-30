@@ -1,0 +1,75 @@
+# Axon MCP server + NetBird sidecar + HTTPS sidecar (Caddy) (example).
+#
+# The NetBird container shares the network of axon-mcp (network_mode: service:...),
+# so the NetBird IP / <hostname>.vpn.bas.co reaches port 3847 directly.
+#
+# Join the network: open Settings > NetBird
+# (http://<host>:3847/dashboard/settings/#netbird), paste a setup key from the
+# NetBird admin (Setup Keys), set the hostname, Save.
+# The page writes /netbird-ctl/config.json; docker/netbird-entrypoint.sh
+# runs `netbird up` and writes /netbird-ctl/status.json every 10 s.
+# HTTPS: on the same tab turn on HTTPS and paste a Cloudflare API token.
+# docker/caddy-entrypoint.sh then serves https://<hostname>.vpn.bas.co on the
+# NetBird IP. Without a token it waits.
+#
+# The three containers share one network. Restart them together:
+#   docker compose -p axon up -d --force-recreate axon-mcp axon-netbird axon-caddy
+# If only axon-mcp restarts, the sidecars see their network go away, exit, and
+# Docker restarts them in the new one (so they keep DNS).
+#
+# Build the Caddy image once:
+#   docker build -f caddy.Dockerfile -t sidecar-caddy:latest .
+# Copy this file, netbird-entrypoint.sh and caddy-entrypoint.sh next to each other, then:
+#   docker compose -p axon up -d
+
+services:
+  axon-mcp:
+    image: axon-mcp:latest
+    container_name: axon-mcp
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NETBIRD_CTL_DIR: /netbird-ctl
+    ports: ["3847:3847"]
+    volumes:
+      - ./data/cache:/app/.cache
+      - ./data/models:/app/.cache/models
+      - ./data/config:/app/config
+      - netbird-ctl:/netbird-ctl
+
+  axon-netbird:
+    image: netbirdio/netbird:latest
+    container_name: axon-netbird
+    restart: unless-stopped
+    network_mode: "service:axon-mcp"
+    depends_on: [axon-mcp]
+    cap_add: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    entrypoint: ["/bin/bash", "/netbird-entrypoint.sh"]
+    environment:
+      NETBIRD_CTL_DIR: /netbird-ctl
+    volumes:
+      - ./netbird-entrypoint.sh:/netbird-entrypoint.sh:ro
+      - netbird-ctl:/netbird-ctl
+      - netbird-state:/var/lib/netbird   # peer identity survives restarts
+
+  axon-caddy:
+    image: sidecar-caddy:latest
+    container_name: axon-caddy
+    restart: unless-stopped
+    mem_limit: 128m
+    network_mode: "service:axon-mcp"
+    depends_on: [axon-mcp]
+    entrypoint: ["/bin/sh", "/caddy-entrypoint.sh"]
+    environment:
+      NETBIRD_CTL_DIR: /netbird-ctl
+      CADDY_UPSTREAM: 127.0.0.1:3847
+    volumes:
+      - ./caddy-entrypoint.sh:/caddy-entrypoint.sh:ro
+      - netbird-ctl:/netbird-ctl
+      - caddy-data:/data                 # certificates
+
+volumes:
+  netbird-ctl:
+  netbird-state:
+  caddy-data:
