@@ -72,6 +72,10 @@ interface AdminContext {
   getDocsForEmbedding?: () => Array<{ id: string; title: string; library: string; fullText: string }>;
   getDocsStats?: () => { totalDocuments: number; totalSections: number; libraries: string[] };
   getWorkflowManager?: () => import('../workflows/workflowManager.js').WorkflowManager;
+  /** Sidecar hook: changed paths under a "docs" root (relative to rootPath). */
+  onDocsChange?: (paths: string[], rootPath: string) => Record<string, unknown>;
+  /** Sidecar hook: changed paths under a "library" root (relative to rootPath). */
+  onLibraryChange?: (paths: string[], rootPath: string) => Record<string, unknown>;
   getWorkflowVectorIndex?: () => import('../workflows/workflowVectorIndex.js').WorkflowVectorIndex | undefined;
 }
 
@@ -140,6 +144,8 @@ export function createAdminRouter(context: AdminContext): Router {
     getPrisma: getOrCreatePrisma,
     config: () => loadChangesConfig(context.configDir),
   });
+    onDocsChange: context.onDocsChange,
+    onLibraryChange: context.onLibraryChange,
   router.use('/changes', changesRouter);
 
   // Apply Basic Auth to all admin routes

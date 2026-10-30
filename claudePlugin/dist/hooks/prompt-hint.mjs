@@ -43,8 +43,10 @@ const RULES = [
     'getCallers, then getCodeImpact (Axon graph of the active project)', ''],
   [/\b(points?|equips?|sites?|records?|recs?|filter|histor(y|ies)|tags?)\b.*\b(find|list|query|show|count|which)\b|\b(find|list|query|show|count|which)\b.*\b(points?|equips?|sites?|records?|recs?|histor(y|ies))\b/i,
     'queryHaystack (filter), or getProjectSchema to browse', ''],
+  [/\b(docs?|documentation|manual|fresco|docSkySpark|docFresco|docHaxall|reference page)\b/i,
+    'searchAxonDocs (keyword), then getAxonDoc (docId). SkySpark docs live on the MCP server: never ls/find/cat local doc paths', ''],
   [/\b(write|generate|create|example|pattern|how (do|to))\b/i,
-    'searchAxonExamples / getAxonPattern / searchAxonDocs, then validateAxonCode before running it', wf('axon-lang-information')],
+    'searchAxonExamples / getAxonPattern / searchAxonDocs (then getAxonDoc; docs live on the server, never read local doc paths), then validateAxonCode before running it', wf('axon-lang-information')],
   [/\b(find|search|look ?up|locate|where)\b/i, 'semanticCodeSearch, searchAxonRegex or findFunctionUsage', ''],
 ];
 

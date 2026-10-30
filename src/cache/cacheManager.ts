@@ -277,7 +277,11 @@ export class CacheManager {
   /**
    * Save FlexSearch documentation index to cache
    */
-  async saveFlexSearchIndex(indexData: string, docsPath: string): Promise<void> {
+  async saveFlexSearchIndex(
+    indexData: string,
+    docsPath: string,
+    extra: { fileCount?: number; newestMtimeMs?: number; parserVersion?: number } = {}
+  ): Promise<void> {
     try {
       await this.initialize();
       const cacheFilePath = path.join(this.cacheDir, 'flexsearch-docs.json');
@@ -290,7 +294,8 @@ export class CacheManager {
       const metadata = {
         version: this.cacheVersion,
         timestamp: Date.now(),
-        docsPath
+        docsPath,
+        ...extra
       };
       await fs.writeFile(metadataFilePath, JSON.stringify(metadata, null, 2));
       
@@ -333,7 +338,8 @@ export class CacheManager {
    */
   async isFlexSearchIndexValid(
     docsPath: string, 
-    maxAge: number = 24 * 60 * 60 * 1000
+    maxAge: number = 24 * 60 * 60 * 1000,
+    expect?: { fileCount?: number; newestMtimeMs?: number; parserVersion?: number }
   ): Promise<boolean> {
     try {
       const metadataFilePath = path.join(this.cacheDir, 'flexsearch-metadata.json');
@@ -345,6 +351,16 @@ export class CacheManager {
       // Check version and path
       if (metadata.version !== this.cacheVersion || metadata.docsPath !== docsPath) {
         return false;
+      }
+
+      // Staleness: file count, newest mtime and parser version must match
+      if (expect) {
+        for (const key of ['fileCount', 'newestMtimeMs', 'parserVersion'] as const) {
+          if (expect[key] !== undefined && metadata[key] !== expect[key]) {
+            console.error(`FlexSearch doc cache stale: ${key} ${metadata[key]} -> ${expect[key]}`);
+            return false;
+          }
+        }
       }
       
       // Check age

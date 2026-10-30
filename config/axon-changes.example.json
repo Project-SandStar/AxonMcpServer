@@ -1,6 +1,9 @@
 {
   "mirrorDir": "/mirror",
   "roots": [
-    { "sidecar": "mac-alper", "root": "BAS", "project": "mirror/BAS", "path": "/mirror/mac-alper/BAS" }
+    { "sidecar": "mac-alper", "root": "BAS", "project": "mirror/BAS", "path": "/mirror/mac-alper/BAS" },
+    { "sidecar": "mac-alper-axon", "root": "proj", "project": "mirror/proj", "path": "/mirror/proj" },
+    { "sidecar": "mac-alper-axon", "root": "axon-docs", "kind": "docs", "path": "/mirror/lib/docs" },
+    { "sidecar": "mac-alper-axon", "root": "axon-library", "kind": "library", "path": "/mirror/lib/axon-library" }
   ]
 }

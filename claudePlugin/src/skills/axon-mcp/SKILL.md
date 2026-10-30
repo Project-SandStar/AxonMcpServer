@@ -22,9 +22,14 @@ Switch with `switchSkySparkProject` (this session only) or `setPrimaryProject`
 (also the default for new sessions). A wrong-project commit is the most
 common mistake.
 
+**SkySpark docs live on the MCP server.** Use `searchAxonDocs` (param
+`keyword`), then `getAxonDoc` with the `docId` it returns. `listAxonDocs`
+lists libraries and pages. Never ls/find/cat local doc paths.
+
 | You want to | Call | Notes |
 |---|---|---|
 | Write new Axon | `searchAxonExamples`, `getAxonPattern`, `searchAxonDocs` | Then `validateAxonCode` before running it. `/axon-mcp:wf-axon-lang-information` lists the syntax traps. |
+| Read SkySpark docs | `searchAxonDocs`, then `getAxonDoc` | `listAxonDocs` to browse (docSkySpark, docFresco, lib-*). Docs are on the server; never read local doc files. |
 | Look up an operator | `searchAxonOperatorExamples` | `>=`, `==`, `->` and so on. |
 | Generate from a template | `listAxonTemplates`, `generateAxonCode` | |
 | Run Axon | `executeAxonCode` | `project` set. Read-only first; confirm with the user before code that writes. |

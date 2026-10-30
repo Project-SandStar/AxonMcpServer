@@ -66,13 +66,21 @@ export function validateLink(body: unknown): RootMapEntry | string {
   const sidecar = str(b.sidecar);
   if (sidecar && (!NAME_RE.test(sidecar) || sidecar === '.' || sidecar === '..')) return '"sidecar" must be a sidecar id (no "/" or "\\")';
 
+  const kind = str(b.kind) || 'project';
+  if (kind !== 'project' && kind !== 'docs' && kind !== 'library') return '"kind" must be "project", "docs" or "library"';
+
+  const p = str(b.path);
+  if (p && !path.isAbsolute(p)) return '"path" must be an absolute path';
+
+  if (kind !== 'project') {
+    if (!p) return `"path" is required for "${kind}" roots`;
+    return { ...(sidecar ? { sidecar } : {}), root, kind, path: p };
+  }
+
   let project: string | number;
   if (typeof b.project === 'number' && Number.isInteger(b.project) && b.project > 0) project = b.project;
   else if (str(b.project)) project = str(b.project);
   else return '"project" must be an Axon project name or id';
-
-  const p = str(b.path);
-  if (p && !path.isAbsolute(p)) return '"path" must be an absolute path';
 
   return { ...(sidecar ? { sidecar } : {}), root, project, ...(p ? { path: p } : {}) };
 }
@@ -225,9 +233,11 @@ export function createSidecarSyncRouter(opts: SidecarSyncRouterOptions): Router 
       const mirrorDir = cfg.mirrorDir || process.env.AXON_MIRROR_DIR || '/mirror';
       const prisma = await opts.getPrisma();
       const links = await Promise.all(cfg.roots.map(async (entry, index) => {
-        const project = typeof entry.project === 'number'
-          ? await prisma.axonProject.findUnique({ where: { id: entry.project } })
-          : await prisma.axonProject.findUnique({ where: { name: String(entry.project) } });
+        const project = entry.project === undefined || (entry.kind && entry.kind !== 'project')
+          ? null
+          : typeof entry.project === 'number'
+            ? await prisma.axonProject.findUnique({ where: { id: entry.project } })
+            : await prisma.axonProject.findUnique({ where: { name: String(entry.project) } });
         const nodeCount = project ? await prisma.codeNode.count({ where: { projectId: project.id } }) : 0;
         return {
           index,

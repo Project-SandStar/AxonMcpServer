@@ -38,8 +38,8 @@ Run this workflow automatically when the user asks anything like:
    `/Users/<user>/Code/2026/skyspark/bassgPointHealth/lib/views/` (1 app + 4 wired views).
 
 3. **Search docs as needed:**
-   - `mcp__axon__searchAxonDocs({ query: "view framework" })`
-   - `mcp__axon__searchAxonDocs({ query: "defVal defExpr var" })`
+   - `mcp__axon__searchAxonDocs({ keyword: "view framework" })`
+   - `mcp__axon__searchAxonDocs({ keyword: "defVal defExpr var" })`
    - Canonical sources at `/Users/<user>/Code/axon_library_2025/docs/3.1.11/docFresco/{Apps,Views,ValDef,Actions}.html` and `…/docDomkit/Modals.html`.
    - **`searchAxonRegex` can return huge result sets.** Common patterns (`=>\s*do`) match thousands of lines. Always pass `limit` and tighten the pattern before broadening — the default cap is 100 matches; the response reports `truncated` and `totalMatches` so you can paginate via `offset`.
 
@@ -79,7 +79,7 @@ mcp__axon__executeAxonCode({ code: "diff(null, {app:\"myReportsApp\", dis:\"My R
 
 `workbook` · `chartBar` · `chartLine` · `gauge` · `dashboard` · `table` · `report` · `alarm` · `equip` · `site` · `point` · `tag` · `cog` · `wrench` · `network` · `connector` · `folder`
 
-(Run `mcp__axon__searchAxonDocs({ query: "icon catalog" })` for the full list.)
+(Run `mcp__axon__searchAxonDocs({ keyword: "icon catalog" })` for the full list.)
 
 ## Step 2 — Build View-Data Functions
 

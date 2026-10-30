@@ -17,6 +17,12 @@
  *   }
  * "sidecar" is optional (any sidecar). "path" defaults to {mirrorDir}/{sidecar}/{root}.
  * A missing Axon project is created with that path; its first job is a full build.
+ *
+ * "kind" (default "project"):
+ *   "project" - Axon project graph (needs "project")
+ *   "docs"    - HTML docs root: changed/deleted pages are re-parsed into the doc index
+ *   "library" - Axon code library: the code-index cache is marked stale
+ * Paths in the hook body are relative to the root.
  */
 
 import { Router, Request, Response, NextFunction } from 'express';
@@ -27,12 +33,18 @@ import type { PrismaClient } from '../generated/prisma/index.js';
 import { ChangeQueue } from '../graph/changeQueue.js';
 import { updateProjectFiles, fullProjectBuild, defaultVectorSink, type UpdateOptions } from '../graph/incrementalUpdater.js';
 
+export type RootKind = 'project' | 'docs' | 'library';
+
 export interface RootMapEntry {
   sidecar?: string;
   root: string;
-  project: string | number;
+  kind?: RootKind;
+  project?: string | number;
   path?: string;
 }
+
+/** Callback for docs/library roots. rootPath = resolved root dir; paths are relative to it. */
+export type RootChangeHandler = (paths: string[], rootPath: string) => Record<string, unknown>;
 
 export interface ChangesConfig {
   mirrorDir?: string;
@@ -44,6 +56,10 @@ export interface ChangesRouterOptions {
   token?: () => string | undefined;
   config?: () => ChangesConfig;
   update?: UpdateOptions;
+  /** Handler for roots with kind "docs". */
+  onDocsChange?: RootChangeHandler;
+  /** Handler for roots with kind "library". */
+  onLibraryChange?: RootChangeHandler;
 }
 
 const MAX_PATHS = 10000;
@@ -123,6 +139,17 @@ export function createChangesRouter(opts: ChangesRouterOptions): { router: Route
       const entry = cfg.roots.find(r => r.root === root && (!r.sidecar || r.sidecar === sidecar));
       if (!entry) return res.status(404).json({ error: `No Axon project mapped for root "${root}"` });
 
+      const kind: RootKind = entry.kind || 'project';
+      if (kind === 'docs' || kind === 'library') {
+        const handler = kind === 'docs' ? opts.onDocsChange : opts.onLibraryChange;
+        if (!handler) return res.status(501).json({ error: `No handler for "${kind}" roots on this server` });
+        const rootPath = entry.path || path.join(cfg.mirrorDir || process.env.AXON_MIRROR_DIR || '/mirror', String(sidecar || ''), root);
+        return res.status(202).json({ accepted: paths.length, kind, root, ...handler(paths, rootPath) });
+      }
+      if (entry.project === undefined || entry.project === null || entry.project === '') {
+        return res.status(400).json({ error: `Root "${root}" has no "project"` });
+      }
+
       const prisma = await opts.getPrisma();
       let project = typeof entry.project === 'number'
         ? await prisma.axonProject.findUnique({ where: { id: entry.project } })
@@ -131,7 +158,7 @@ export function createChangesRouter(opts: ChangesRouterOptions): { router: Route
         if (typeof entry.project === 'number') return res.status(404).json({ error: `Project not found: ${entry.project}` });
         const projPath = entry.path || path.join(cfg.mirrorDir || process.env.AXON_MIRROR_DIR || '/mirror', String(sidecar || ''), root);
         project = await prisma.axonProject.create({
-          data: { name: entry.project, path: projPath, description: `Sidecar mirror ${sidecar || '*'}/${root}`, autoIndex: true },
+          data: { name: String(entry.project), path: projPath, description: `Sidecar mirror ${sidecar || '*'}/${root}`, autoIndex: true },
         });
       }
       const status = queue.enqueue(project.id, paths);

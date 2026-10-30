@@ -1,6 +1,10 @@
 import { DocumentSection, HtmlDocument } from '../types/documentation.js';
 import * as crypto from 'crypto';
 import * as path from 'path';
+import { htmlToMarkdown } from 'mdream';
+
+/** Bump when parse output changes; old doc caches are then rebuilt. */
+export const DOC_PARSER_VERSION = 2;
 
 // Directories that contain Fantom language documentation (not Axon)
 // Note: lib-* directories contain Axon function docs and should NOT be filtered
@@ -20,8 +24,6 @@ const FANTOM_ONLY_DIRECTORIES = [
   'util',         // Fantom util
   'dom',          // Fantom DOM (not domkit lib)
   'domkit',       // Fantom domkit pod
-  'docDomkit',    // Fantom domkit docs
-  'docFresco',    // Fantom fresco docs
   'email',        // Fantom email pod
   'crypto',       // Fantom crypto pod
   'asn1',         // Fantom ASN.1
@@ -136,196 +138,211 @@ export class HtmlDocParser {
   }
 
   /**
-   * Parse an HTML documentation file into a structured document
-   * Returns null for Fantom-only documentation
+   * Parse an HTML documentation file into a structured document.
+   * The page is converted to Markdown (mdream), SkySpark chrome is stripped,
+   * and the Markdown is split into sections at h1-h3 headings.
+   * Returns null for Fantom-only documentation.
+   *
+   * @param docsRoot docsPath root; used to build the docId (e.g. "docFresco/Nav").
    */
-  parseDocument(htmlContent: string, filePath: string): HtmlDocument | null {
+  parseDocument(htmlContent: string, filePath: string, docsRoot?: string): HtmlDocument | null {
     try {
-      // Skip Fantom-only directories
       if (this.isFantomOnlyPath(filePath)) {
         return null;
       }
 
-      const title = this.extractTitle(htmlContent, filePath);
+      const docId = HtmlDocParser.docIdFor(filePath, docsRoot);
       const library = this.extractLibrary(filePath);
-      const sections = this.extractSections(htmlContent);
-      
-      // Build full text for indexing
+      const markdown = this.toMarkdown(htmlContent, docId);
+      const anchors = this.extractHeadingAnchors(htmlContent);
+      const sections = this.splitSections(markdown, anchors);
+      const title = this.extractTitle(htmlContent, filePath, markdown);
+
       const fullText = [
         title,
         library,
-        ...sections.map(s => `${s.heading} ${s.content} ${s.codeExamples.join(' ')}`)
+        ...sections.map(s => `${s.heading} ${s.content}`),
       ].join(' ');
-      
-      // Generate unique ID
-      const id = crypto.createHash('md5')
-        .update(filePath)
-        .digest('hex');
-      
-      // Build file:// URL
-      const url = `file://${filePath}`;
-      
+
+      const id = crypto.createHash('md5').update(filePath).digest('hex');
+
       return {
         id,
+        docId,
         title,
         library,
         filePath,
         sections,
         fullText,
-        url
+        url: `doc://${docId}`,
       };
     } catch (error) {
       console.error(`Error parsing HTML document ${filePath}:`, error);
       return null;
     }
   }
-  
+
   /**
-   * Extract page title from <title> tag or main heading
+   * docId = path relative to the docs root, without the leading version dir
+   * (e.g. "3.1.11/") and without ".html". Without a root: "<parentDir>/<name>".
    */
-  private extractTitle(htmlContent: string, filePath: string): string {
-    // Try to extract from <title> tag
+  static docIdFor(filePath: string, docsRoot?: string): string {
+    const noExt = filePath.replace(/\.html?$/i, '');
+    if (docsRoot) {
+      const rel = path.relative(path.resolve(docsRoot), path.resolve(noExt));
+      if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+        const parts = rel.split(/[\\/]+/);
+        if (parts.length > 2 && /^\d+(\.\d+)*$/.test(parts[0])) parts.shift();
+        return parts.join('/');
+      }
+    }
+    const parts = noExt.split(/[\\/]+/);
+    return parts.slice(-2).join('/');
+  }
+
+  /**
+   * Convert page HTML to Markdown, without the SkySpark nav/footer chrome.
+   * Relative doc links are rewritten to doc://<docId> URIs.
+   */
+  toMarkdown(htmlContent: string, docId: string): string {
+    // Drop the page head and HTML comments (breadcrumb comment) before conversion.
+    const body = htmlContent
+      .replace(/<head[\s\S]*?<\/head>/i, '')
+      .replace(/<!--[\s\S]*?-->/g, '');
+    let md = htmlToMarkdown(body, {
+      filter: { exclude: ['.defc-nav', '.defc-footer-ts', '.defc-footer', 'hr', 'script', 'style', 'nav'] },
+    });
+
+    const lines = md.split('\n');
+    const out: string[] = [];
+    let inFence = false;
+    for (const line of lines) {
+      if (/^\s*```/.test(line)) inFence = !inFence;
+      // In-page TOC line: "[Overview](Nav.html) • [UiMeta](#uiMeta) • ..."
+      if (!inFence && /^\s*\[[^\]]+\]\([^)]*\)\s*•/.test(line)) continue;
+      out.push(line);
+    }
+    md = out.join('\n');
+
+    const dir = docId.includes('/') ? docId.slice(0, docId.lastIndexOf('/')) : '';
+    md = md.replace(/\]\(([^)\s]+?)\.html(#[^)\s]*)?\)/g, (all, target: string, hash?: string) => {
+      if (/^[a-z]+:/i.test(target)) return all; // absolute URL
+      const resolved = path.posix.normalize(path.posix.join(dir || '.', target));
+      if (resolved.startsWith('..')) return all;
+      return `](doc://${resolved}${hash || ''})`;
+    });
+
+    return md.replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  /** Heading anchors (id attributes) in document order, for h1-h3. */
+  private extractHeadingAnchors(htmlContent: string): Array<{ level: number; id?: string }> {
+    const anchors: Array<{ level: number; id?: string }> = [];
+    const re = /<h([1-3])\b([^>]*)>/gi;
+    let m;
+    while ((m = re.exec(htmlContent)) !== null) {
+      const idMatch = m[2].match(/\bid=['"]([^'"]+)['"]/i);
+      anchors.push({ level: parseInt(m[1], 10), id: idMatch ? idMatch[1] : undefined });
+    }
+    return anchors;
+  }
+
+  /**
+   * Split Markdown into sections at h1-h3 headings. Content before the first
+   * heading becomes an "Overview" section. Empty sections are dropped.
+   */
+  splitSections(markdown: string, anchors: Array<{ level: number; id?: string }> = []): DocumentSection[] {
+    type Draft = { heading: string; level: number; anchor?: string; lines: string[] };
+    const drafts: Draft[] = [];
+    let current: Draft = { heading: 'Overview', level: 1, anchor: 'overview', lines: [] };
+    let inFence = false;
+    let anchorPos = 0;
+
+    for (const line of markdown.split('\n')) {
+      if (/^\s*```/.test(line)) inFence = !inFence;
+      const h = !inFence ? line.match(/^(#{1,3})\s+(.+?)\s*#*\s*$/) : null;
+      if (h) {
+        drafts.push(current);
+        const level = h[1].length;
+        // Pair with the next HTML heading anchor of the same level.
+        let anchor: string | undefined;
+        for (let i = anchorPos; i < anchors.length; i++) {
+          if (anchors[i].level === level) { anchor = anchors[i].id; anchorPos = i + 1; break; }
+        }
+        current = { heading: HtmlDocParser.stripLinks(h[2]), level, anchor, lines: [] };
+      } else {
+        current.lines.push(line);
+      }
+    }
+    drafts.push(current);
+
+    const sections: DocumentSection[] = [];
+    const used = new Set<string>();
+    for (const d of drafts) {
+      const content = d.lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+      if (!content) continue;
+      let id = d.anchor || HtmlDocParser.slug(d.heading) || `section-${sections.length}`;
+      while (used.has(id)) id = `${id}-${sections.length}`;
+      used.add(id);
+      sections.push({
+        id,
+        heading: d.heading,
+        level: d.level,
+        content,
+        codeExamples: this.extractCodeExamples(content),
+      });
+    }
+    return sections;
+  }
+
+  static stripLinks(text: string): string {
+    return text.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[`*_]/g, '').trim();
+  }
+
+  static slug(text: string): string {
+    return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+
+  /**
+   * Page title: first Markdown h1, else <title> without the " – SkySpark" suffix, else file name.
+   */
+  private extractTitle(htmlContent: string, filePath: string, markdown?: string): string {
+    const h1 = markdown?.match(/^#\s+(.+)$/m);
+    if (h1) return HtmlDocParser.stripLinks(h1[1]);
     const titleMatch = htmlContent.match(/<title[^>]*>([^<]+)<\/title>/i);
     if (titleMatch) {
-      return this.cleanText(titleMatch[1]);
+      return this.cleanText(titleMatch[1]).replace(/\s+[–-]\s+[^–-]+$/, '').trim() || path.basename(filePath, '.html');
     }
-    
-    // Try to extract from first <h1> tag
-    const h1Match = htmlContent.match(/<h1[^>]*>([^<]+)<\/h1>/i);
-    if (h1Match) {
-      return this.cleanText(h1Match[1]);
-    }
-    
-    // Fall back to filename
     return path.basename(filePath, '.html');
   }
-  
+
   /**
    * Extract library/module name from file path
    * e.g., "/docs/3.1.11/lib-task/doc.html" -> "lib-task"
    */
   private extractLibrary(filePath: string): string {
     const parts = filePath.split('/');
-    
-    // Look for lib-* pattern or directory name before the file
     for (let i = parts.length - 2; i >= 0; i--) {
       const part = parts[i];
       if (part.startsWith('lib-') || part.startsWith('doc')) {
         return part;
       }
     }
-    
-    // Return the parent directory name
     return parts[parts.length - 2] || 'unknown';
   }
-  
-  /**
-   * Extract sections from HTML document
-   */
-  private extractSections(htmlContent: string): DocumentSection[] {
-    const sections: DocumentSection[] = [];
-    
-    // Pattern to match h2 and h3 sections with their content
-    const sectionPattern = /<h([23])[^>]*(?:id=['"]([^'"]+)['"])?[^>]*>([^<]+)<\/h\1>([\s\S]*?)(?=<h[23]|<\/div>|$)/gi;
-    
-    let match;
-    let sectionIndex = 0;
-    
-    while ((match = sectionPattern.exec(htmlContent)) !== null) {
-      const level = parseInt(match[1]);
-      const id = match[2] || `section-${sectionIndex}`;
-      const heading = this.cleanText(match[3]);
-      const sectionContent = match[4];
-      
-      // Extract text content (paragraphs, lists)
-      const content = this.extractTextContent(sectionContent);
-      
-      // Extract code examples from this section
-      const codeExamples = this.extractCodeExamples(sectionContent);
-      
-      sections.push({
-        id,
-        heading,
-        level,
-        content,
-        codeExamples
-      });
-      
-      sectionIndex++;
-    }
-    
-    // If no sections found, try to extract all paragraphs as a single section
-    if (sections.length === 0) {
-      const content = this.extractTextContent(htmlContent);
-      const codeExamples = this.extractCodeExamples(htmlContent);
-      
-      if (content || codeExamples.length > 0) {
-        sections.push({
-          id: 'main-content',
-          heading: 'Overview',
-          level: 1,
-          content,
-          codeExamples
-        });
-      }
-    }
-    
-    return sections;
-  }
-  
-  /**
-   * Extract text content from HTML (paragraphs, lists, etc.)
-   */
-  private extractTextContent(html: string): string {
-    const textParts: string[] = [];
-    
-    // Extract paragraphs
-    const pPattern = /<p[^>]*>([\\s\\S]*?)<\/p>/gi;
-    let pMatch;
-    while ((pMatch = pPattern.exec(html)) !== null) {
-      const text = this.cleanText(pMatch[1]);
-      if (text.trim()) {
-        textParts.push(text);
-      }
-    }
-    
-    // Extract list items
-    const liPattern = /<li[^>]*>([\\s\\S]*?)<\/li>/gi;
-    let liMatch;
-    while ((liMatch = liPattern.exec(html)) !== null) {
-      const text = this.cleanText(liMatch[1]);
-      if (text.trim()) {
-        textParts.push(text);
-      }
-    }
-    
-    return textParts.join(' ');
-  }
-  
-  /**
-   * Extract code examples from <pre> tags, filtering out Fantom code
-   */
-  private extractCodeExamples(html: string): string[] {
+
+  /** Fenced code blocks from Markdown, without Fantom code. */
+  private extractCodeExamples(markdown: string): string[] {
     const examples: string[] = [];
-    const prePattern = /<pre[^>]*>([\\s\\S]*?)<\/pre>/gi;
-
-    let match;
-    while ((match = prePattern.exec(html)) !== null) {
-      const code = this.cleanCodeBlock(match[1]);
-      if (code.trim()) {
-        // Skip Fantom code examples
-        if (!this.isFantomCode(code)) {
-          examples.push(code);
-        }
-      }
+    const re = /```[^\n]*\n([\s\S]*?)```/g;
+    let m;
+    while ((m = re.exec(markdown)) !== null) {
+      const code = m[1].replace(/\s+$/, '');
+      if (code.trim() && !this.isFantomCode(code)) examples.push(code);
     }
-
     return examples;
   }
-  
-  /**
-   * Clean HTML entities and tags from text
-   */
+
   private cleanText(text: string): string {
     return text
       .replace(/&lt;/g, '<')
@@ -336,23 +353,8 @@ export class HtmlDocParser {
       .replace(/&nbsp;/g, ' ')
       .replace(/&ndash;/g, '–')
       .replace(/&mdash;/g, '—')
-      .replace(/<[^>]+>/g, '') // Remove HTML tags
-      .replace(/\s+/g, ' ') // Collapse whitespace
-      .trim();
-  }
-  
-  /**
-   * Clean code blocks, preserving important whitespace
-   */
-  private cleanCodeBlock(code: string): string {
-    return code
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&amp;/g, '&')
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .replace(/&nbsp;/g, ' ')
-      .replace(/<[^>]+>/g, '') // Remove HTML tags
+      .replace(/<[^>]+>/g, '')
+      .replace(/\s+/g, ' ')
       .trim();
   }
 }

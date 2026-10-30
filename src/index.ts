@@ -33,7 +33,8 @@ import { OperatorIndex } from './search/operatorIndex.js';
 import { AxonUsageScanner } from './scanner/axonUsageScanner.js';
 import { RegexSearcher } from './search/regexSearch.js';
 import { EnhancedAxonIndexer } from './indexer/enhancedAxonIndexer.js';
-import { HtmlDocParser } from './parser/htmlDocParser.js';
+import { HtmlDocParser, DOC_PARSER_VERSION } from './parser/htmlDocParser.js';
+import { applyDocChanges, docsFingerprint, listDocFiles, DocChangeQueue, pickDocSections, type DocUpdateResult } from './search/docIndexer.js';
 import { FlexSearchDocIndex } from './search/flexSearchIndex.js';
 import { FlexSearchFunctionIndex, FunctionSearchOptions } from './search/flexSearchFunctionIndex.js';
 import { HtmlDocument, DocSearchOptions, DocSearchResult } from './types/documentation.js';
@@ -770,7 +771,50 @@ class AxonMCPServer {
       },
       getWorkflowManager: () => this.workflowManager,
       getWorkflowVectorIndex: () => this.workflowVectorIndex,
+      onDocsChange: (paths: string[], rootPath: string) => this.enqueueDocChanges(paths, rootPath),
+      onLibraryChange: (paths: string[], rootPath: string) => this.markLibraryChanged(paths, rootPath),
     };
+  }
+
+  private docChangeQueue?: DocChangeQueue;
+
+  /** Queue doc changes from the sidecar hook. Paths are relative to rootPath. */
+  private enqueueDocChanges(paths: string[], rootPath: string): Record<string, unknown> {
+    const docsPath = this.config.docsPath;
+    if (!docsPath) return { error: 'No docsPath configured' };
+    // Map root-relative paths to docsPath-relative paths (the root may be docsPath or a parent/child of it).
+    const docsAbs = path.resolve(docsPath);
+    const rel: string[] = [];
+    let outside = 0;
+    for (const p of paths) {
+      if (path.isAbsolute(p) || p.split(/[\\/]+/).includes('..')) { outside++; continue; }
+      const abs = path.resolve(rootPath, p);
+      if (abs === docsAbs) { rel.push('.'); continue; }
+      if (!abs.startsWith(docsAbs + path.sep)) { outside++; continue; }
+      rel.push(path.relative(docsAbs, abs));
+    }
+    if (!this.docChangeQueue) {
+      this.docChangeQueue = new DocChangeQueue(batch => this.updateDocsFiles(batch));
+    }
+    const status = rel.length > 0 ? this.docChangeQueue.enqueue(rel) : this.docChangeQueue.status();
+    return { queued: rel.length, outsideDocsPath: outside, ...status, lastResult: this.docChangeQueue.lastResult };
+  }
+
+  /**
+   * Library (Axon code) root changed. A live rebuild of the code index is large, so the
+   * code-index cache is marked stale: the next restart re-scans codePath.
+   */
+  private markLibraryChanged(paths: string[], rootPath: string): Record<string, unknown> {
+    const cacheDir = this.config.cache?.directory || '.cache';
+    const meta = path.join(cacheDir, 'cache-metadata.json');
+    let invalidated = false;
+    try {
+      if (fs.existsSync(meta)) { fs.unlinkSync(meta); invalidated = true; }
+    } catch (err) {
+      console.error('[library] could not invalidate code cache:', err);
+    }
+    console.error(`[library] ${paths.length} changed path(s) under ${rootPath}; code cache ${invalidated ? 'invalidated' : 'already stale'}, rebuild on next restart`);
+    return { codeCacheInvalidated: invalidated, note: 'Code index rebuilds on next server restart' };
   }
 
   /**
@@ -952,7 +996,7 @@ class AxonMCPServer {
         },
         {
           name: 'searchAxonDocs',
-          description: 'Search Axon documentation with AI-powered relevance ranking. Returns structured results with titles, sections, code examples, and context.',
+          description: 'Search the SkySpark/Axon documentation (docSkySpark, docFresco, docHaxall, docHaystack, lib-* function pages). The docs live on the MCP server, not on your machine: never ls/find/cat local doc paths. Returns docId, title, library and matched sections (Markdown with code examples). Then call getAxonDoc with the docId for the full page or one section.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -962,7 +1006,7 @@ class AxonMCPServer {
               },
               library: {
                 type: 'string',
-                description: 'Filter by library name (e.g., "lib-task", "lib-energy", "lib-his")',
+                description: 'Filter by library name (e.g., "docFresco", "docSkySpark", "docHaxall", "lib-task", "lib-his"). listAxonDocs lists them.',
               },
               includeContent: {
                 type: 'boolean',
@@ -976,6 +1020,30 @@ class AxonMCPServer {
                 type: 'number',
                 description: 'Maximum number of documents to return (default: 10)',
               },
+            },
+          },
+        },
+        {
+          name: 'getAxonDoc',
+          description: 'Read one SkySpark/Axon documentation page from the MCP server as Markdown (title, library, section list, content). Give docId (e.g. "docFresco/Nav", "lib-hx/func~readAll") from searchAxonDocs, or library + page. Give section (heading text or anchor id) to get only that section. Docs live on the server: never read local doc files.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              docId: { type: 'string', description: 'Doc id, e.g. "docFresco/Nav" or "doc://docFresco/Nav"' },
+              library: { type: 'string', description: 'Library/doc folder, e.g. "docFresco", "docSkySpark", "lib-axon" (with page)' },
+              page: { type: 'string', description: 'Page name inside the library, e.g. "Nav" (with library)' },
+              section: { type: 'string', description: 'Section heading or anchor id, e.g. "Tag Nav" or "tagNav"' },
+              maxChars: { type: 'number', description: 'Max Markdown characters to return (default 20000)' },
+            },
+          },
+        },
+        {
+          name: 'listAxonDocs',
+          description: 'List SkySpark/Axon documentation on the MCP server. Without library: libraries with page counts. With library (e.g. "docFresco", "docSkySpark"): docIds and titles. Use with getAxonDoc.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              library: { type: 'string', description: 'Library/doc folder, e.g. "docFresco"' },
             },
           },
         },
@@ -1813,6 +1881,12 @@ Response includes 'operation': "added" or "updated".`,
         
         case 'searchAxonDocs':
           return await this.searchDocs(args);
+
+        case 'getAxonDoc':
+          return this.getAxonDocTool(args);
+
+        case 'listAxonDocs':
+          return this.listAxonDocsTool(args);
         
         case 'listAxonCategories':
           return await this.listCategories();
@@ -2058,14 +2132,26 @@ Response includes 'operation': "added" or "updated".`,
     server.setRequestHandler(ListResourcesRequestSchema, async () => {
       try {
         const workflows = this.workflowManager.getWorkflowList();
+        // Doc pages: only the library index pages (the full set is ~4000); any doc:// URI can be read.
+        const docIndexPages = this.flexSearchIndex.listDocuments()
+          .filter(d => /\/index$/.test(d.docId || ''))
+          .map(d => ({
+            uri: `doc://${d.docId}`,
+            name: `${d.library}: ${d.title}`,
+            description: `SkySpark docs (${d.library}). Any page: doc://<docId>, see listAxonDocs.`,
+            mimeType: 'text/markdown',
+          }));
 
         return {
-          resources: workflows.map(workflow => ({
-            uri: workflow.uri,
-            name: workflow.metadata.title,
-            description: workflow.metadata.description,
-            mimeType: 'text/markdown',
-          })),
+          resources: [
+            ...workflows.map(workflow => ({
+              uri: workflow.uri,
+              name: workflow.metadata.title,
+              description: workflow.metadata.description,
+              mimeType: 'text/markdown',
+            })),
+            ...docIndexPages,
+          ],
         };
       } catch (error: any) {
         console.error('Error listing resources:', error);
@@ -2077,6 +2163,14 @@ Response includes 'operation': "added" or "updated".`,
     server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       try {
         const { uri } = request.params;
+
+        // Documentation page: doc://<docId>[#section]
+        const docMatch = uri.match(/^doc:\/\/([^#]+)(?:#(.+))?$/);
+        if (docMatch) {
+          const r = this.renderAxonDoc({ docId: docMatch[1], section: docMatch[2], maxChars: 100000 });
+          if ('error' in r) throw new McpError(ErrorCode.InvalidRequest, r.error);
+          return { contents: [{ uri, mimeType: 'text/markdown', text: r.markdown }] };
+        }
 
         // Extract workflow ID from URI (format: workflow://id)
         const match = uri.match(/^workflow:\/\/(.+)$/);
@@ -2222,6 +2316,56 @@ Response includes 'operation': "added" or "updated".`,
     };
   }
 
+  /** Build the Markdown for one doc page or section. */
+  private renderAxonDoc(args: { docId?: string; library?: string; page?: string; section?: string; maxChars?: number }):
+    { markdown: string; meta: Record<string, unknown> } | { error: string } {
+    let docId = args.docId;
+    if (!docId && args.library && args.page) docId = `${args.library}/${args.page}`;
+    if (!docId) return { error: 'Give docId, or library + page' };
+    const doc = this.flexSearchIndex.getByDocId(docId);
+    if (!doc) return { error: `Doc not found: ${docId}. Use searchAxonDocs or listAxonDocs to find the docId.` };
+    const maxChars = Math.max(500, Math.min(Number(args.maxChars) || 20000, 200000));
+    const sectionList = doc.sections.map(s => ({ id: s.id, heading: s.heading, level: s.level }));
+
+    let picked = doc.sections;
+    if (args.section) {
+      const hit = pickDocSections(doc, args.section);
+      if (!hit) return { error: `Section "${args.section}" not found in ${doc.docId}. Sections: ${sectionList.map(s => s.heading).join(', ')}` };
+      picked = hit;
+    }
+
+    let body = picked.map(s => `${'#'.repeat(Math.max(1, s.level))} ${s.heading}\n\n${s.content}`).join('\n\n');
+    let truncated = false;
+    if (body.length > maxChars) { body = body.slice(0, maxChars) + '\n\n…(truncated; ask for one section or raise maxChars)'; truncated = true; }
+    const header = `<!-- doc://${doc.docId} · library ${doc.library} -->\n`;
+    return {
+      markdown: header + body,
+      meta: { docId: doc.docId, uri: `doc://${doc.docId}`, title: doc.title, library: doc.library, section: args.section ?? null, truncated, sections: sectionList },
+    };
+  }
+
+  private getAxonDocTool(args: any) {
+    const r = this.renderAxonDoc(args || {});
+    if ('error' in r) {
+      return { content: [{ type: 'text', text: JSON.stringify({ error: r.error }, null, 2) }], isError: true };
+    }
+    return { content: [{ type: 'text', text: JSON.stringify(r.meta, null, 2) }, { type: 'text', text: r.markdown }] };
+  }
+
+  private listAxonDocsTool(args: any) {
+    const library = args?.library;
+    if (!library) {
+      const counts = this.flexSearchIndex.libraryCounts();
+      const libraries = Object.keys(counts).sort().map(name => ({ library: name, pages: counts[name] }));
+      return { content: [{ type: 'text', text: JSON.stringify({ totalDocs: this.flexSearchIndex.getStats().totalDocuments, libraries }, null, 2) }] };
+    }
+    const docs = this.flexSearchIndex.listDocuments(library).map(d => ({ docId: d.docId, title: d.title }));
+    if (docs.length === 0) {
+      return { content: [{ type: 'text', text: JSON.stringify({ error: `No docs for library "${library}". Call listAxonDocs without library to see names.` }, null, 2) }], isError: true };
+    }
+    return { content: [{ type: 'text', text: JSON.stringify({ library, count: docs.length, docs }, null, 2) }] };
+  }
+
   private async searchDocs(options: any) {
     // Use FlexSearch if available and keyword is provided
     if (options.keyword && this.flexSearchIndex) {
@@ -2255,14 +2399,15 @@ Response includes 'operation': "added" or "updated".`,
         
         // Format results for both AI and dashboard consumption
         const formattedResults = searchResults.map(result => ({
+          docId: result.document.docId,
+          uri: `doc://${result.document.docId}`,
           document: {
             id: result.document.id,
+            docId: result.document.docId,
             title: result.document.title,
             library: result.document.library,
-            filePath: result.document.filePath,
-            sections: result.document.sections,
-            fullText: result.document.fullText,
-            url: result.document.url
+            uri: `doc://${result.document.docId}`,
+            sections: result.document.sections.map(sec => ({ id: sec.id, heading: sec.heading, level: sec.level })),
           },
           score: result.score,
           matchedSections: result.matchedSections.map(section => ({
@@ -2286,7 +2431,8 @@ Response includes 'operation': "added" or "updated".`,
                 count: searchResults.length,
                 query: options.keyword,
                 library: options.library || 'all',
-                results: formattedResults
+                results: formattedResults,
+                next: 'Read a full page or one section with getAxonDoc({docId, section}).'
               }, null, 2)
             }
           ]
@@ -2847,84 +2993,92 @@ Response includes 'operation': "added" or "updated".`,
       console.error('⚠️  No docsPath configured, skipping FlexSearch documentation index');
       return;
     }
+    const docsPath = this.config.docsPath;
+    const fingerprint = { ...docsFingerprint(docsPath), parserVersion: DOC_PARSER_VERSION };
 
-    // Check for cached index
+    // Check for cached index (rebuild when file count, newest mtime or parser version differ)
     if (this.config.cache?.enabled) {
       const cacheValid = await this.cacheManager.isFlexSearchIndexValid(
-        this.config.docsPath,
-        this.config.cache?.maxAge || 86400000
+        docsPath,
+        this.config.cache?.maxAge || 86400000,
+        fingerprint
       );
 
       if (cacheValid) {
         await this.loadFlexSearchIndexFromCache();
-        return;
+        if (this.flexSearchIndex.getStats().totalDocuments > 0) return;
       }
     }
 
     console.error('\n📚 Building FlexSearch documentation index...');
     const startTime = Date.now();
 
-    // Get all HTML files from docs path
-    const htmlFiles = await this.scanner.scanForAxonFiles();
-    const docFiles = htmlFiles.filter(f => 
-      f.fileType === 'docs' && 
-      f.codePath.endsWith('.html') &&
-      path.basename(f.codePath) !== 'AxonUsage.html' // Skip AxonUsage, it's handled differently
-    );
-
+    const docFiles = listDocFiles(docsPath);
     if (docFiles.length === 0) {
       console.error('⚠️  No HTML documentation files found');
       return;
     }
 
-    // Parse HTML documents with progress tracking
     const documents: HtmlDocument[] = [];
     let parsed = 0;
     let failed = 0;
 
-    for (const fileInfo of docFiles) {
+    for (const file of docFiles) {
       try {
-        const content = await this.scanner.readFileContents(fileInfo.codePath);
-        const doc = this.htmlDocParser.parseDocument(content, fileInfo.codePath);
-        
+        const content = await this.scanner.readFileContents(file);
+        const doc = this.htmlDocParser.parseDocument(content, file, docsPath);
         if (doc) {
           documents.push(doc);
           parsed++;
-          
-          // Progress tracking every 100 files
-          if (parsed % 100 === 0) {
+          if (parsed % 500 === 0) {
             console.error(`   Parsed ${parsed}/${docFiles.length} HTML files...`);
           }
         }
       } catch (error) {
         failed++;
-        if (failed <= 5) { // Only log first 5 errors
-          console.error(`   ⚠️  Failed to parse ${path.basename(fileInfo.codePath)}`);
+        if (failed <= 5) {
+          console.error(`   ⚠️  Failed to parse ${path.basename(file)}`);
         }
       }
     }
 
     console.error(`   ✓ Parsed ${parsed} documents (${failed} failed)`);
 
-    // Build FlexSearch index
+    this.flexSearchIndex.clear();
     await this.flexSearchIndex.buildIndex(documents);
 
-    // Display stats
     const stats = this.flexSearchIndex.getStats();
     this.displayFlexSearchIndexSummary(stats);
 
-    // Save to cache
-    if (this.config.cache?.enabled) {
-      try {
-        const indexData = this.flexSearchIndex.export();
-        await this.cacheManager.saveFlexSearchIndex(indexData, this.config.docsPath);
-      } catch (error) {
-        console.error('⚠️  Failed to save FlexSearch index to cache:', error);
-      }
-    }
+    await this.saveDocIndexCache(fingerprint);
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
     console.error(`   ✓ FlexSearch index built in ${duration}s`);
+  }
+
+  /** Save the doc index + metadata (fingerprint) to cache. */
+  private async saveDocIndexCache(fingerprint?: { fileCount: number; newestMtimeMs: number; parserVersion: number }) {
+    if (!this.config.cache?.enabled || !this.config.docsPath) return;
+    try {
+      const fp = fingerprint ?? { ...docsFingerprint(this.config.docsPath), parserVersion: DOC_PARSER_VERSION };
+      await this.cacheManager.saveFlexSearchIndex(this.flexSearchIndex.export(), this.config.docsPath, fp);
+    } catch (error) {
+      console.error('⚠️  Failed to save FlexSearch index to cache:', error);
+    }
+  }
+
+  /**
+   * Apply changed doc paths (relative to docsPath) to the doc index, then save the cache.
+   * Called by the /admin/changes hook for "docs" roots (through a debounced queue).
+   */
+  async updateDocsFiles(relPaths: string[]): Promise<DocUpdateResult> {
+    if (!this.config.docsPath) {
+      return { added: 0, updated: 0, removed: 0, skipped: relPaths.length, errors: ['No docsPath configured'], durationMs: 0 };
+    }
+    const result = await applyDocChanges(this.flexSearchIndex, this.htmlDocParser, this.config.docsPath, relPaths);
+    if (result.added + result.updated + result.removed > 0) await this.saveDocIndexCache();
+    console.error(`[docs] +${result.added} ~${result.updated} -${result.removed} (${result.skipped} skipped, ${result.errors.length} errors) ${result.durationMs}ms`);
+    return result;
   }
 
   /**

@@ -12,12 +12,13 @@ export interface DocumentSection {
 
 export interface HtmlDocument {
   id: string;
+  docId: string; // Path relative to the docs version dir, no ".html" (e.g. "docFresco/Nav")
   title: string;
   library: string; // e.g., "lib-task", "lib-energy"
-  filePath: string;
+  filePath: string; // Server-side path; not returned to MCP clients
   sections: DocumentSection[];
   fullText: string; // Combined text for indexing
-  url?: string; // Optional file:// URL
+  url?: string; // doc://<docId>
 }
 
 export interface DocSearchOptions {

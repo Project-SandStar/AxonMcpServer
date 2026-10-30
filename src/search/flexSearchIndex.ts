@@ -236,6 +236,63 @@ export class FlexSearchDocIndex {
     return Array.from(this.documents.keys());
   }
 
+  /** Find a document by docId (e.g. "docFresco/Nav"); case-insensitive fallback. */
+  getByDocId(docId: string): HtmlDocument | null {
+    const want = docId.replace(/^doc:\/\//, '').replace(/\.html?$/i, '').replace(/^\/+/, '');
+    let ci: HtmlDocument | null = null;
+    for (const doc of this.documents.values()) {
+      if (doc.docId === want) return doc;
+      if (!ci && doc.docId?.toLowerCase() === want.toLowerCase()) ci = doc;
+    }
+    return ci;
+  }
+
+  /** Find a document by server file path. */
+  getByFilePath(filePath: string): HtmlDocument | null {
+    for (const doc of this.documents.values()) if (doc.filePath === filePath) return doc;
+    return null;
+  }
+
+  /** All documents, optionally limited to one library. */
+  listDocuments(library?: string): HtmlDocument[] {
+    const docs = library
+      ? Array.from(this.libraryIndex.get(library) ?? []).map(id => this.documents.get(id)!).filter(Boolean)
+      : Array.from(this.documents.values());
+    return docs.sort((a, b) => (a.docId || '').localeCompare(b.docId || ''));
+  }
+
+  /** Library name -> document count. */
+  libraryCounts(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const [lib, ids] of this.libraryIndex) out[lib] = ids.size;
+    return out;
+  }
+
+  /** Add a document, or replace the one with the same id. */
+  async upsertDocument(doc: HtmlDocument): Promise<'added' | 'updated'> {
+    const existed = this.documents.has(doc.id);
+    if (existed) await this.removeDocument(doc.id);
+    await this.index.addAsync(doc.id, doc);
+    this.documents.set(doc.id, doc);
+    if (!this.libraryIndex.has(doc.library)) this.libraryIndex.set(doc.library, new Set());
+    this.libraryIndex.get(doc.library)!.add(doc.id);
+    return existed ? 'updated' : 'added';
+  }
+
+  /** Remove a document by internal id. Returns true if it was there. */
+  async removeDocument(id: string): Promise<boolean> {
+    const doc = this.documents.get(id);
+    if (!doc) return false;
+    await this.index.removeAsync(id);
+    this.documents.delete(id);
+    const set = this.libraryIndex.get(doc.library);
+    if (set) {
+      set.delete(id);
+      if (set.size === 0) this.libraryIndex.delete(doc.library);
+    }
+    return true;
+  }
+
   /**
    * Find sections in a document that match the query
    */
@@ -403,6 +460,7 @@ export class FlexSearchDocIndex {
    * Clear the index
    */
   clear(): void {
+    for (const id of this.documents.keys()) this.index.remove(id);
     this.documents.clear();
     this.libraryIndex.clear();
   }
