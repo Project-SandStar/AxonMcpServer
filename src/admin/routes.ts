@@ -12,6 +12,8 @@ import { AxonOAuthProvider } from '../auth/oauthProvider.js';
 import { BackupManager } from './backupManager.js';
 import { createChangesRouter, loadChangesConfig } from './changesRouter.js';
 import { createSidecarSyncRouter } from './sidecarSync.js';
+import { createSyncAllRouter, SyncAllRunner } from './syncAll.js';
+import { createSidecarAccountsRouter, createUserSyncRouter, ReceiverAdminClient, scheduleAutoLink } from './sidecarAccounts.js';
 import { createNetbirdRouter } from './netbird.js';
 import { createFsBrowserRouter, resolveRoots, parseRootsEnv, isInside } from './fsBrowser.js';
 import {
@@ -77,6 +79,10 @@ interface AdminContext {
   onDocsChange?: (paths: string[], rootPath: string) => Record<string, unknown>;
   /** Sidecar hook: changed paths under a "library" root (relative to rootPath). */
   onLibraryChange?: (paths: string[], rootPath: string) => Record<string, unknown>;
+  /** Folders Axon reads (config docsPath, codePath, proj dir), for the Sidecar page. */
+  getAxonFolders?: () => { docsPath?: string; codePath?: string; projDir?: string };
+  /** Drop the docs index cache and build it again. */
+  reindexDocs?: () => Promise<void>;
   getWorkflowManager?: () => import('../workflows/workflowManager.js').WorkflowManager;
   getWorkflowVectorIndex?: () => import('../workflows/workflowVectorIndex.js').WorkflowVectorIndex | undefined;
 }
@@ -153,12 +159,23 @@ export function createAdminRouter(context: AdminContext): Router {
   // Apply Basic Auth to all admin routes
   router.use(basicAuthWithUserStore(userStore));
 
+  // "Sidecar sync login" per user: receiver accounts kept in step through the receiver admin API
+  const receiverAdmin = new ReceiverAdminClient();
+  router.use('/sidecar/accounts', createSidecarAccountsRouter({ userStore, requireAdmin, receiver: receiverAdmin }));
+  router.use('/users', createUserSyncRouter({ userStore, requireAdmin, receiver: receiverAdmin }));
+  scheduleAutoLink(userStore, receiverAdmin);
+
   // "Sidecar sync" page API: root-to-project links, change queue, receiver status
   router.use('/sidecar', createSidecarSyncRouter({
     configDir: context.configDir,
     getPrisma: getOrCreatePrisma,
     queue: changeQueue,
     requireAdmin,
+    axon: () => {
+      const f = context.getAxonFolders?.() ?? {};
+      return { ...f, docsStats: () => context.getDocsStats?.() };
+    },
+    reindexDocs: context.reindexDocs,
   }));
 
   // "NetBird" page API: setup key, hostname, status of the NetBird sidecar container
@@ -217,6 +234,9 @@ export function createAdminRouter(context: AdminContext): Router {
         projects: {
           'GET /admin/projects': 'List all projects',
           'POST /admin/projects/:instance/:project/sync': 'Trigger function sync',
+          'POST /admin/projects/sync-all': 'Sync every project, one after another (admin)',
+          'GET /admin/projects/sync-all': 'Status of the sync-all run',
+          'POST /admin/projects/sync-all/cancel': 'Stop sync all after the current project (admin)',
           'POST /admin/projects/:instance/discover': 'Discover projects'
         },
         cache: {
@@ -272,6 +292,10 @@ export function createAdminRouter(context: AdminContext): Router {
           'DELETE /admin/sidecar/links/:index': 'Sidecar sync: remove a link (admin)',
           'POST /admin/sidecar/projects/:id/rebuild': 'Sidecar sync: full rebuild of one project (admin)',
           'GET /admin/sidecar/status': 'Sidecar sync: receiver status, target "axon"',
+          'GET /admin/sidecar/accounts': 'Sidecar sync: receiver accounts (read only) and linked users',
+          'POST /admin/sidecar/accounts/link': 'Sidecar sync: link receiver accounts to users by name (admin)',
+          'PUT /admin/users/:username/sidecar-sync': 'Users: turn the sidecar sync login on/off, set sync password and roots (admin)',
+          'DELETE /admin/users/:username/sidecar-sync': 'Users: remove the sidecar sync login (admin)',
           'GET /admin/fs/dirs?path=': 'Folder picker: list sub-folders inside allowed roots (admin)',
           'GET /admin/netbird': 'NetBird: settings and status (key hint only) (admin)',
           'PUT /admin/netbird': 'NetBird: save setup key, hostname, management URL, enabled (admin)',
@@ -446,13 +470,24 @@ export function createAdminRouter(context: AdminContext): Router {
   });
 
   // Delete a user (admin only)
-  router.delete('/users/:username', requireAdmin, (req: Request, res: Response) => {
+  router.delete('/users/:username', requireAdmin, async (req: Request, res: Response) => {
     try {
       const { username } = req.params;
 
       // Prevent deleting self
       if (req.user?.username === username) {
         return res.status(400).json({ error: 'Cannot delete yourself' });
+      }
+
+      // A user with a sync login: remove the receiver account first
+      const target = userStore.getUser(username);
+      if (target?.sidecarSync?.enabled && receiverAdmin.configured()) {
+        try {
+          const acc = (await receiverAdmin.list()).find(a => a.username.toLowerCase() === target.username);
+          if (acc) await receiverAdmin.remove(acc.username);
+        } catch (err) {
+          return res.status(502).json({ error: `Could not remove the sync login on the receiver: ${err instanceof Error ? err.message : String(err)}` });
+        }
       }
 
       const success = userStore.deleteUser(username);
@@ -572,7 +607,18 @@ export function createAdminRouter(context: AdminContext): Router {
     }
   });
 
+  // "Sync all": one project after another, in the background, with a status endpoint
+  const syncAllRunner = new SyncAllRunner((instance, project) => context.triggerSync(instance, project));
+  router.use('/projects/sync-all', createSyncAllRouter({
+    runner: syncAllRunner,
+    listProjects: () => context.getProjects(),
+    requireAdmin,
+  }));
+
   router.post('/projects/:instance/:project/sync', async (req: Request, res: Response) => {
+    if (syncAllRunner.isRunning()) {
+      return res.status(409).json({ error: 'Sync all is running; wait for it or cancel it' });
+    }
     try {
       const result = await context.triggerSync(req.params.instance, req.params.project);
       res.json(result);

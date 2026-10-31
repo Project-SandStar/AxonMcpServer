@@ -644,14 +644,21 @@ class AxonMCPServer {
         if (!this.syncClient || !this.configManager) {
           throw new Error('SkySpark not configured');
         }
-        // Use syncClient for sync operations - keeps skysparkClient on primaryContext
-        this.syncClient.switchTo(instance, project);
-        const result = await this.functionSyncManager.syncFunctions(
-          this.syncClient,
-          instance,
-          project
-        );
-        return { downloaded: result.downloaded, updated: result.updated, deleted: result.deleted };
+        // Shown as "Syncing" on the Projects page (isSyncing in getProjects)
+        const mine = { instance, project, startedAt: new Date() };
+        this.syncInProgress = mine;
+        try {
+          // Use syncClient for sync operations - keeps skysparkClient on primaryContext
+          this.syncClient.switchTo(instance, project);
+          const result = await this.functionSyncManager.syncFunctions(
+            this.syncClient,
+            instance,
+            project
+          );
+          return { downloaded: result.downloaded, updated: result.updated, deleted: result.deleted };
+        } finally {
+          if (this.syncInProgress === mine) this.syncInProgress = null;
+        }
       },
       triggerDiscover: async (instanceName: string) => {
         return await this.runDiscoverWithProgress(instanceName);
@@ -773,6 +780,18 @@ class AxonMCPServer {
       getWorkflowVectorIndex: () => this.workflowVectorIndex,
       onDocsChange: (paths: string[], rootPath: string) => this.enqueueDocChanges(paths, rootPath),
       onLibraryChange: (paths: string[], rootPath: string) => this.markLibraryChanged(paths, rootPath),
+      getAxonFolders: () => ({
+        docsPath: this.config.docsPath ? path.resolve(this.config.docsPath) : undefined,
+        codePath: this.config.codePath ? path.resolve(this.config.codePath) : undefined,
+        projDir: path.resolve('proj'),
+      }),
+      reindexDocs: async () => {
+        if (!this.config.docsPath) throw new Error('No docsPath configured');
+        const cacheFile = path.join(this.config.cache?.directory || '.cache', 'flexsearch-docs.json');
+        try { if (fs.existsSync(cacheFile)) fs.unlinkSync(cacheFile); } catch { /* rebuild anyway */ }
+        this.flexSearchIndex.clear();
+        await this.buildFlexSearchIndex();
+      },
     };
   }
 

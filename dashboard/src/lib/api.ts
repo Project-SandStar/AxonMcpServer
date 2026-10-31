@@ -169,6 +169,28 @@ export interface AuthClientInfo {
   error?: string;
 }
 
+export interface SyncAllItem {
+  instance: string;
+  project: string;
+  state: 'waiting' | 'running' | 'done' | 'failed' | 'skipped';
+  result?: { downloaded: number; updated: number; deleted: number };
+  error?: string;
+  durationMs?: number;
+}
+
+export interface SyncAllStatus {
+  state: 'idle' | 'running' | 'done' | 'cancelled';
+  total: number;
+  completed: number;
+  failed: number;
+  current: { instance: string; project: string } | null;
+  cancelRequested: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  startedBy: string | null;
+  items: SyncAllItem[];
+}
+
 // API functions
 export type DirHint = 'skysparkDocRoot' | 'docLibrary' | 'axonProject' | 'skysparkInstance';
 
@@ -222,6 +244,10 @@ export const api = {
       `/projects/${instance}/${project}/sync`,
       { method: 'POST' }
     ),
+  getSyncAll: () => apiRequest<SyncAllStatus>('/projects/sync-all'),
+  startSyncAll: () => apiRequest<SyncAllStatus>('/projects/sync-all', { method: 'POST' }),
+  cancelSyncAll: () => apiRequest<SyncAllStatus>('/projects/sync-all/cancel', { method: 'POST' }),
+  getMe: () => apiRequest<{ username: string; role: 'admin' | 'user' }>('/users/me'),
   discoverProjects: (instance: string) =>
     apiRequest<{ projects: string[] }>(`/projects/${instance}/discover`, { method: 'POST' }),
 

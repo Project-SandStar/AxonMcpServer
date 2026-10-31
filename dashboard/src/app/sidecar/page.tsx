@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import Link from 'next/link';
 import { getApiBase } from '@/lib/api';
 import PathInput from '@/components/PathInput';
 import { FolderSync, RefreshCw, Plus, Pencil, Trash2, Hammer, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
@@ -20,12 +21,23 @@ interface QueueInfo {
   lastFinishedAt: string | null;
 }
 
+type RootRole = 'project' | 'docs' | 'library';
+
 interface SidecarLink {
   index: number;
   sidecar?: string;
   root: string;
-  project: string | number;
+  kind: RootRole;
+  project?: string | number;
   path?: string;
+  role: RootRole;
+  roleLabel: string;
+  configKey: string | null;
+  usedFor: string;
+  kindMismatch: boolean;
+  localFiles: number | null;
+  localFilesTruncated: boolean;
+  canRebuild: boolean;
   resolvedPath: string;
   projectId: number | null;
   projectName: string | null;
@@ -67,9 +79,17 @@ interface StatusReply {
   };
 }
 
+interface AccountsReply {
+  configured: boolean;
+  message?: string;
+  error?: string;
+  accounts: Array<{ username: string; roots?: string[]; connected?: boolean; last_login_ms?: number | null; user: string | null }>;
+}
+
 interface LinkForm {
   sidecar: string;
   root: string;
+  kind: RootRole;
   project: string;
   path: string;
 }
@@ -92,8 +112,10 @@ async function request<T>(endpoint: string, method = 'GET', body?: unknown): Pro
 }
 
 function toBody(f: LinkForm) {
+  const base = { sidecar: f.sidecar.trim() || undefined, root: f.root.trim(), path: f.path.trim() || undefined };
+  if (f.kind !== 'project') return { ...base, kind: f.kind };
   const project = /^\d+$/.test(f.project.trim()) ? Number(f.project.trim()) : f.project.trim();
-  return { sidecar: f.sidecar.trim() || undefined, root: f.root.trim(), project, path: f.path.trim() || undefined };
+  return { ...base, project };
 }
 
 // ============================================
@@ -123,9 +145,16 @@ function SetBadge({ label, value }: { label: string; value: 'set' | 'not set' })
   );
 }
 
+const ROLE_BADGE: Record<RootRole, string> = {
+  project: 'bg-blue-100 text-blue-800',
+  docs: 'bg-purple-100 text-purple-800',
+  library: 'bg-amber-100 text-amber-800',
+};
+
 function QueueCell({ link }: { link: SidecarLink }) {
   const q = link.queue;
-  if (!q) return <span className="text-gray-400">No project yet</span>;
+  if (link.role !== 'project') return <span className="text-gray-400">–</span>;
+  if (!q) return <span className="text-gray-400">Waits for the first change</span>;
   if (q.running) {
     return (
       <span className="inline-flex items-center gap-1 text-blue-700">
@@ -152,7 +181,17 @@ function ResultCell({ link }: { link: SidecarLink }) {
   );
 }
 
-const EMPTY: LinkForm = { sidecar: '', root: '', project: '', path: '' };
+const EMPTY: LinkForm = { sidecar: '', root: '', kind: 'project', project: '', path: '' };
+
+/** The receiver's row for a link (same sidecar, or any sidecar when the link has none). */
+function receiverRoot(s: StatusReply | undefined, l: SidecarLink): ReceiverRoot | undefined {
+  for (const sc of s?.data?.sidecars ?? []) {
+    if (l.sidecar && sc.id !== l.sidecar) continue;
+    const r = sc.roots.find((x) => x.name === l.root);
+    if (r) return r;
+  }
+  return undefined;
+}
 
 // ============================================
 // Page
@@ -175,6 +214,12 @@ export default function SidecarSyncPage() {
   const status = useQuery({
     queryKey: ['sidecar-status'],
     queryFn: () => request<StatusReply>('/status'),
+    refetchInterval: 15000,
+  });
+
+  const accounts = useQuery({
+    queryKey: ['sidecar-accounts'],
+    queryFn: () => request<AccountsReply>('/accounts'),
     refetchInterval: 15000,
   });
 
@@ -209,9 +254,15 @@ export default function SidecarSyncPage() {
     onError: failed,
   });
 
+  const reindex = useMutation({
+    mutationFn: (index: number) => request(`/links/${index}/reindex`, 'POST', {}),
+    onSuccess: () => done('Docs re-index started'),
+    onError: failed,
+  });
+
   const startEdit = (l: SidecarLink) => {
     setEditIndex(l.index);
-    setForm({ sidecar: l.sidecar || '', root: l.root, project: String(l.project), path: l.path || '' });
+    setForm({ sidecar: l.sidecar || '', root: l.root, kind: l.kind || 'project', project: l.project === undefined ? '' : String(l.project), path: l.path || '' });
     setShowForm(true);
   };
 
@@ -229,7 +280,7 @@ export default function SidecarSyncPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Sidecar sync</h1>
-          <p className="text-gray-500">Root-to-project links, change queue and sidecar status</p>
+          <p className="text-gray-500">Folders the sidecar sends to Axon, what Axon uses each one for, and sidecar status</p>
         </div>
         <div className="flex gap-3">
           <button
@@ -282,13 +333,25 @@ export default function SidecarSyncPage() {
           className="rounded-xl bg-white p-6 shadow-sm space-y-4"
         >
           <h2 className="text-lg font-semibold text-gray-900">{editIndex === null ? 'Add link' : 'Edit link'}</h2>
+          <label className="block max-w-xs">
+            <span className="text-sm font-medium text-gray-700">Role</span>
+            <select
+              value={form.kind}
+              onChange={(e) => setForm({ ...form, kind: e.target.value as RootRole })}
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none"
+            >
+              <option value="project">Projects (Axon project graph)</option>
+              <option value="docs">Docs (SkySpark docs)</option>
+              <option value="library">Library (Axon code library)</option>
+            </select>
+          </label>
           <div className="grid gap-4 md:grid-cols-2">
             {([
               ['sidecar', 'Sidecar id', 'Empty = any sidecar'],
               ['root', 'Root name', 'For example BAS'],
               ['project', 'Axon project (name or id)', 'A missing name is created'],
               ['path', 'Path', `Empty = ${links.data?.mirrorDir || '/mirror'}/{sidecar}/{root}`],
-            ] as const).map(([key, label, hint]) => (
+            ] as const).filter(([key]) => key !== 'project' || form.kind === 'project').map(([key, label, hint]) => (
               <label key={key} className="block">
                 <span className="text-sm font-medium text-gray-700">{label}</span>
                 {key === 'path' ? (
@@ -335,11 +398,16 @@ export default function SidecarSyncPage() {
 
       {/* Links */}
       <div className="rounded-xl bg-white shadow-sm overflow-hidden">
+        <div className="px-6 pt-5 pb-3">
+          <h2 className="text-lg font-semibold text-gray-900">Synced folders</h2>
+          <p className="text-sm text-gray-500">Projects = SkySpark project functions (proj). Library = Axon code library. Docs = SkySpark docs. The role comes from Axon&apos;s config (codePath, docsPath, proj dir).</p>
+        </div>
         <table className="min-w-full">
           <thead className="bg-gray-50">
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sidecar / root</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Project</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Role / used for</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Files</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Queue</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Last update</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Last result</th>
@@ -348,13 +416,13 @@ export default function SidecarSyncPage() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {links.isLoading && (
-              <tr><td colSpan={6} className="px-6 py-4 text-sm text-gray-500">Loading...</td></tr>
+              <tr><td colSpan={7} className="px-6 py-4 text-sm text-gray-500">Loading...</td></tr>
             )}
             {links.error && (
-              <tr><td colSpan={6} className="px-6 py-4 text-sm text-red-600">{(links.error as Error).message}</td></tr>
+              <tr><td colSpan={7} className="px-6 py-4 text-sm text-red-600">{(links.error as Error).message}</td></tr>
             )}
             {links.data?.links.length === 0 && (
-              <tr><td colSpan={6} className="px-6 py-4 text-sm text-gray-500">No links yet</td></tr>
+              <tr><td colSpan={7} className="px-6 py-4 text-sm text-gray-500">No links yet</td></tr>
             )}
             {links.data?.links.map((l) => (
               <tr key={l.index}>
@@ -367,25 +435,62 @@ export default function SidecarSyncPage() {
                     </div>
                   </div>
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-700">
-                  {l.projectName ?? String(l.project)}
-                  <p className="text-xs text-gray-500">{l.projectId ? `id ${l.projectId}, ${l.nodeCount} nodes` : 'Created on first change'}</p>
+                <td className="px-6 py-4 text-sm text-gray-700 max-w-xs">
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${ROLE_BADGE[l.role]}`}>{l.roleLabel}</span>
+                  {l.configKey && <span className="ml-2 font-mono text-xs text-gray-500">{l.configKey === 'proj' ? 'proj dir' : l.configKey}</span>}
+                  {l.role === 'project' && l.project !== undefined && (
+                    <p className="mt-1 text-xs text-gray-700">
+                      Project <span className="font-mono">{l.projectName ?? String(l.project)}</span>
+                      {l.projectId ? `, id ${l.projectId}, ${l.nodeCount} nodes` : ', added on the first change'}
+                    </p>
+                  )}
+                  <p className="mt-1 text-xs text-gray-500">{l.usedFor}</p>
+                  {l.kindMismatch && <p className="mt-1 text-xs text-amber-700">Root map says &quot;{l.kind}&quot;; Axon config uses this folder as {l.roleLabel}</p>}
+                </td>
+                <td className="px-6 py-4 text-sm text-gray-500">
+                  {(() => {
+                    const r = receiverRoot(s, l);
+                    const n = l.localFiles ?? r?.files;
+                    return n === null || n === undefined ? '–' : `${n.toLocaleString()}${l.localFilesTruncated ? '+' : ''}`;
+                  })()}
                 </td>
                 <td className="px-6 py-4 text-sm"><QueueCell link={l} /></td>
-                <td className="px-6 py-4 text-sm text-gray-500">{formatTime(l.queue?.lastFinishedAt ?? l.lastIndexed)}</td>
+                <td className="px-6 py-4 text-sm text-gray-500">
+                  {(() => {
+                    if (l.role === 'project') return formatTime(l.queue?.lastFinishedAt ?? l.lastIndexed);
+                    const r = receiverRoot(s, l);
+                    return (
+                      <>
+                        {r?.last_change_ms ? formatTime(r.last_change_ms) : 'No change since the receiver started'}
+                        {r?.last_path && <p className="font-mono text-xs">{r.last_path}</p>}
+                      </>
+                    );
+                  })()}
+                </td>
                 <td className="px-6 py-4 text-sm"><ResultCell link={l} /></td>
                 <td className="px-6 py-4">
                   <div className="flex gap-3">
                     <button onClick={() => startEdit(l)} className="flex items-center gap-1 text-sm text-gray-600 hover:text-gray-900">
                       <Pencil className="h-4 w-4" /> Edit
                     </button>
-                    <button
-                      onClick={() => l.projectId && rebuild.mutate(l.projectId)}
-                      disabled={!l.projectId || rebuild.isPending || !!l.queue?.runningFull}
-                      className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 disabled:opacity-40"
-                    >
-                      <Hammer className="h-4 w-4" /> Rebuild
-                    </button>
+                    {l.role === 'project' && (
+                      <button
+                        onClick={() => l.projectId && rebuild.mutate(l.projectId)}
+                        disabled={!l.canRebuild || rebuild.isPending || !!l.queue?.runningFull}
+                        className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 disabled:opacity-40"
+                      >
+                        <Hammer className="h-4 w-4" /> Rebuild
+                      </button>
+                    )}
+                    {l.role === 'docs' && l.canRebuild && (
+                      <button
+                        onClick={() => reindex.mutate(l.index)}
+                        disabled={reindex.isPending}
+                        className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 disabled:opacity-40"
+                      >
+                        <Hammer className="h-4 w-4" /> Re-index docs
+                      </button>
+                    )}
                     <button
                       onClick={() => { if (confirm(`Remove link ${l.sidecar || '*'}/${l.root}?`)) remove.mutate(l.index); }}
                       disabled={remove.isPending}
@@ -399,6 +504,45 @@ export default function SidecarSyncPage() {
             ))}
           </tbody>
         </table>
+      </div>
+
+      {/* Receiver accounts (read only; managed on the Users page) */}
+      <div className="rounded-xl bg-white p-6 shadow-sm space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900">Sync logins</h2>
+          <Link href="/users" className="text-sm font-medium text-blue-600 hover:text-blue-800">Manage in Users</Link>
+        </div>
+        {accounts.isLoading && <p className="text-sm text-gray-500">Loading...</p>}
+        {accounts.error && <p className="text-sm text-red-600">{(accounts.error as Error).message}</p>}
+        {accounts.data && !accounts.data.configured && <p className="text-sm text-gray-500">Receiver not set up</p>}
+        {accounts.data?.error && <p className="text-sm text-red-600">{accounts.data.error}</p>}
+        {accounts.data?.configured && !accounts.data.error && (
+          accounts.data.accounts.length === 0 ? <p className="text-sm text-gray-500">No accounts on the receiver</p> : (
+            <table className="min-w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Account</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">User</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Roots</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Last login</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {accounts.data.accounts.map((a) => (
+                  <tr key={a.username}>
+                    <td className="px-4 py-2 text-sm">
+                      <span className={`mr-2 inline-block h-2 w-2 rounded-full ${a.connected ? 'bg-green-500' : 'bg-gray-400'}`} />
+                      <span className="font-mono text-gray-900">{a.username}</span>
+                    </td>
+                    <td className="px-4 py-2 text-sm text-gray-700">{a.user ?? <span className="text-amber-700">not linked</span>}</td>
+                    <td className="px-4 py-2 font-mono text-sm text-gray-500">{a.roots?.length ? a.roots.join(', ') : 'all'}</td>
+                    <td className="px-4 py-2 text-sm text-gray-500">{formatTime(a.last_login_ms)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+        )}
       </div>
 
       {/* Receiver status */}

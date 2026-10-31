@@ -9,7 +9,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import type { AddressInfo } from 'net';
 import type { Server } from 'http';
 import { createChangesRouter, loadChangesConfig } from '../admin/changesRouter.js';
-import { createSidecarSyncRouter, ReceiverStatusClient, RECEIVER_NOT_SET_UP } from '../admin/sidecarSync.js';
+import { createSidecarSyncRouter, ReceiverStatusClient, RECEIVER_NOT_SET_UP, rootRole } from '../admin/sidecarSync.js';
 import type { ChangeQueue } from '../graph/changeQueue.js';
 import type { Embedder, VectorSink } from '../graph/incrementalUpdater.js';
 
@@ -25,6 +25,9 @@ let base: string;
 let fake: Server;
 let fakeUrl: string;
 let queue: ChangeQueue;
+let docsDir: string;
+let libDir: string;
+let reindexCalls = 0;
 const vectors = new Map<string, Float32Array>();
 const oldEnv = process.env.AXON_CHANGES_CONFIG;
 
@@ -41,6 +44,7 @@ const FEED = {
       roots: [
         { name: 'BAS', target: 'axon', company: null, files: 3, bytes: 300, last_path: 'alpha.axon', last_change_ms: 1761700000000, hook: { ok: true, last_ms: 1761700000000, error: null } },
         { name: 'mcpfantom', target: 'fantom', company: null, files: 10, bytes: 999, last_path: 'x.fan', last_change_ms: 1, hook: null },
+        { name: 'proj', target: '/mirror/proj', company: null, files: 1, bytes: 5, last_path: 'p.axon', last_change_ms: 1, hook: null },
       ],
     },
     { id: 'win-qb', connected: false, last_seen_ms: 1, roots: [{ name: 'pdfs', target: 'quickbooks', company: 'ACME' }] },
@@ -94,6 +98,13 @@ beforeAll(async () => {
   fs.mkdirSync(projDir, { recursive: true });
   fs.writeFileSync(path.join(projDir, 'alpha.axon'), 'alpha: (x) => do\n  beta(x)\nend\n');
   fs.writeFileSync(path.join(projDir, 'beta.axon'), 'beta: (x) => do\n  x + 1\nend\n');
+  docsDir = path.join(tmp, 'mirror', 'lib', 'docs');
+  libDir = path.join(tmp, 'mirror', 'lib', 'axon-library');
+  fs.mkdirSync(path.join(docsDir, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(docsDir, 'a.html'), '<html></html>');
+  fs.writeFileSync(path.join(docsDir, 'sub', 'b.html'), '<html></html>');
+  fs.mkdirSync(libDir, { recursive: true });
+  fs.writeFileSync(path.join(libDir, 'lib.axon'), 'x: () => 1\n');
 
   const Database = (await import('better-sqlite3')).default;
   const dbPath = path.join(tmp, 'usage.db');
@@ -138,6 +149,8 @@ beforeAll(async () => {
       req.headers['x-role'] === 'admin' ? next() : res.status(403).json({ error: 'Admin access required' }),
     changesToken: () => HOOK_TOKEN,
     receiver: new ReceiverStatusClient({ url: () => fakeUrl, token: () => RECV_TOKEN, timeoutMs: 200 }),
+    axon: () => ({ docsPath: docsDir, codePath: libDir, projDir: path.join(tmp, 'proj'), docsStats: () => ({ totalDocuments: 7, totalSections: 20 }) }),
+    reindexDocs: async () => { reindexCalls++; },
   }));
   [app, base] = await listen(a);
 });
@@ -210,6 +223,44 @@ describe('links', () => {
   });
 });
 
+describe('root roles', () => {
+  test('docs and library roots show their role, file count and use; no project fields', async () => {
+    expect((await call('POST', '/admin/sidecar/links', { sidecar: 'mac-test', root: 'axon-docs', kind: 'docs', path: docsDir })).status).toBe(201);
+    expect((await call('POST', '/admin/sidecar/links', { sidecar: 'mac-test', root: 'axon-library', kind: 'library', path: libDir })).status).toBe(201);
+    const r = await call('GET', '/admin/sidecar/links');
+    expect(r.text).not.toContain('undefined');
+    const docs = r.json.links.find((l: any) => l.root === 'axon-docs');
+    const lib = r.json.links.find((l: any) => l.root === 'axon-library');
+    const proj = r.json.links.find((l: any) => l.root === 'BAS');
+    expect(docs).toMatchObject({ role: 'docs', roleLabel: 'Docs', configKey: 'docsPath', localFiles: 2, canRebuild: true, kindMismatch: false, projectId: null, queue: null });
+    expect(docs.project).toBeUndefined();
+    expect(docs.usedFor).toContain('7 pages');
+    expect(lib).toMatchObject({ role: 'library', roleLabel: 'Library', configKey: 'codePath', localFiles: 1, canRebuild: false });
+    expect(proj).toMatchObject({ role: 'project', roleLabel: 'Projects', kind: 'project', localFiles: null, canRebuild: true });
+
+    // Re-index: docs only
+    const di = r.json.links.indexOf(docs);
+    expect((await call('POST', `/admin/sidecar/links/${di}/reindex`, {}, 'user')).status).toBe(403);
+    expect((await call('POST', `/admin/sidecar/links/${di}/reindex`, {})).status).toBe(202);
+    expect(reindexCalls).toBe(1);
+    expect((await call('POST', `/admin/sidecar/links/${r.json.links.indexOf(lib)}/reindex`, {})).status).toBe(400);
+    expect((await call('POST', '/admin/sidecar/links/99/reindex', {})).status).toBe(404);
+
+    // Clean up so later tests see one link
+    await call('DELETE', `/admin/sidecar/links/${r.json.links.indexOf(lib)}`);
+    await call('DELETE', `/admin/sidecar/links/${di}`);
+    expect(JSON.parse(fs.readFileSync(cfgFile, 'utf-8')).roots).toHaveLength(1);
+  });
+
+  test('Axon config wins over the kind in the root map', () => {
+    const axon = { docsPath: '/m/lib/docs', codePath: '/m/lib/axon-library', projDir: '/app/proj' };
+    expect(rootRole({ root: 'x', project: 'p', path: '/m/lib/docs' }, '/m/lib/docs', axon)).toEqual({ role: 'docs', configKey: 'docsPath' });
+    expect(rootRole({ root: 'x', kind: 'library', path: '/m/lib/axon-library' }, '/m/lib/axon-library', axon)).toEqual({ role: 'library', configKey: 'codePath' });
+    expect(rootRole({ root: 'proj', project: 'mirror/proj', path: '/app/proj' }, '/app/proj', axon)).toEqual({ role: 'project', configKey: 'proj' });
+    expect(rootRole({ root: 'BAS', project: 'p' }, '/m/x/BAS', axon)).toEqual({ role: 'project', configKey: null });
+  });
+});
+
 describe('rebuild', () => {
   test('runs a full build for one project', async () => {
     const project = await prisma.axonProject.findUnique({ where: { name: 'mirror/BAS' } });
@@ -238,7 +289,7 @@ describe('receiver status', () => {
     expect(r.json.ok).toBe(true);
     expect(r.json.stale).toBe(false);
     expect(r.json.data.sidecars).toHaveLength(1);
-    expect(r.json.data.sidecars[0].roots.map((x: any) => x.name)).toEqual(['BAS']);
+    expect(r.json.data.sidecars[0].roots.map((x: any) => x.name)).toEqual(['BAS', 'proj']);
     expect(r.json.data.recent.map((e: any) => e.path)).toEqual(['alpha.axon']);
     expect(r.json.data.errors.map((e: any) => e.message)).toEqual(['hash mismatch']);
     expect(r.text).not.toContain(RECV_TOKEN);

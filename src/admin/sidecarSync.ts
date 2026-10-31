@@ -8,6 +8,7 @@
  *   PUT    /admin/sidecar/links/:index       edit a link    same body                              (admin)
  *   DELETE /admin/sidecar/links/:index       remove a link                                          (admin)
  *   POST   /admin/sidecar/projects/:id/rebuild  full rebuild (graph + embeddings) in the change queue (admin)
+ *   POST   /admin/sidecar/links/:index/reindex  re-index a docs root (admin)
  *   GET    /admin/sidecar/status             receiver GET /v1/status, filtered to target "axon"
  *
  * Links are saved to config/axon-changes.json (or AXON_CHANGES_CONFIG). The change
@@ -24,6 +25,7 @@ import * as path from 'path';
 import type { PrismaClient } from '../generated/prisma/index.js';
 import type { ChangeQueue } from '../graph/changeQueue.js';
 import type { ChangesConfig, RootMapEntry } from './changesRouter.js';
+import { receiverFetch } from './receiverFetch.js';
 
 export const RECEIVER_NOT_SET_UP = 'Receiver not set up';
 const TARGET = 'axon';
@@ -131,12 +133,20 @@ export interface StatusReply {
   data?: ReceiverStatus;
 }
 
-/** Keeps only roots with target "axon", and events for those roots. */
+/**
+ * Keeps only Axon roots, and events for those roots. A root is Axon's when its
+ * target is "axon", or a folder path: Axon's own receiver reports the folder it
+ * writes to (`/mirror/proj`), and only Axon reads that receiver.
+ */
+function isAxonTarget(t: unknown): boolean {
+  return t === TARGET || (typeof t === 'string' && t.startsWith('/'));
+}
+
 export function filterForAxon(raw: any): ReceiverStatus {
   const keys = new Set<string>();
   const sidecars: ReceiverSidecar[] = [];
   for (const s of Array.isArray(raw?.sidecars) ? raw.sidecars : []) {
-    const roots = (Array.isArray(s?.roots) ? s.roots : []).filter((r: any) => r?.target === TARGET);
+    const roots = (Array.isArray(s?.roots) ? s.roots : []).filter((r: any) => isAxonTarget(r?.target));
     if (roots.length === 0) continue;
     roots.forEach((r: any) => keys.add(`${s.id}/${r.name}`));
     sidecars.push({ id: String(s.id), connected: !!s.connected, last_seen_ms: s.last_seen_ms ?? null, roots });
@@ -166,7 +176,7 @@ export class ReceiverStatusClient {
     this.url = opts.url ?? (() => process.env.SIDECAR_RECEIVER_URL);
     this.token = opts.token ?? (() => process.env.SIDECAR_RECEIVER_TOKEN);
     this.timeoutMs = opts.timeoutMs ?? 5000;
-    this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.fetchImpl = opts.fetchImpl ?? receiverFetch;
   }
 
   settings(): { receiverUrl: string | null; receiverToken: 'set' | 'not set' } {
@@ -201,6 +211,75 @@ export class ReceiverStatusClient {
 }
 
 // ============================================
+// Root roles (what Axon uses each folder for)
+// ============================================
+
+export type RootRole = 'project' | 'docs' | 'library';
+
+/** Folders Axon reads, from its own config (docsPath, codePath, proj dir). */
+export interface AxonFolders {
+  docsPath?: string;
+  codePath?: string;
+  projDir?: string;
+  /** Doc index size, if the docs index is loaded. */
+  docsStats?: () => { totalDocuments: number; totalSections: number } | undefined;
+}
+
+export const ROLE_LABEL: Record<RootRole, string> = { project: 'Projects', docs: 'Docs', library: 'Library' };
+
+const same = (a?: string, b?: string) => !!a && !!b && path.resolve(a) === path.resolve(b);
+const inside = (child: string, parent?: string) => {
+  if (!parent) return false;
+  const c = path.resolve(child); const p = path.resolve(parent);
+  return c === p || c.startsWith(p + path.sep);
+};
+
+/**
+ * The role of a root folder. The Axon config wins: a folder that is Axon's
+ * docsPath is "docs", its codePath is "library", the proj dir is "project".
+ * Else the link's "kind" (default "project").
+ */
+export function rootRole(entry: RootMapEntry, resolvedPath: string, axon: AxonFolders): { role: RootRole; configKey: string | null } {
+  if (same(resolvedPath, axon.docsPath) || (entry.kind === 'docs' && inside(resolvedPath, axon.docsPath))) return { role: 'docs', configKey: 'docsPath' };
+  if (same(resolvedPath, axon.codePath) || (entry.kind === 'library' && inside(resolvedPath, axon.codePath))) return { role: 'library', configKey: 'codePath' };
+  if (same(resolvedPath, axon.projDir)) return { role: 'project', configKey: 'proj' };
+  return { role: (entry.kind as RootRole) || 'project', configKey: null };
+}
+
+export function roleUse(role: RootRole, axon: AxonFolders): string {
+  if (role === 'docs') {
+    const st = axon.docsStats?.();
+    return 'SkySpark docs for the docs search tools' + (st ? ` (${st.totalDocuments} pages indexed)` : '');
+  }
+  if (role === 'library') return 'Axon code library for function search and examples; the code index rebuilds on the next restart';
+  return 'SkySpark project functions (proj/<instance>/<project>/func) for the project graph';
+}
+
+const countCache = new Map<string, { atMs: number; files: number; truncated: boolean }>();
+const COUNT_LIMIT = 200000;
+
+/** Files under a folder (cached 60 s, stops at 200 000). null when the folder is missing. */
+export function countFiles(dir: string): { files: number; truncated: boolean } | null {
+  const hit = countCache.get(dir);
+  if (hit && Date.now() - hit.atMs < 60000) return { files: hit.files, truncated: hit.truncated };
+  if (!fs.existsSync(dir)) return null;
+  let files = 0;
+  const stack = [dir];
+  while (stack.length && files < COUNT_LIMIT) {
+    const d = stack.pop()!;
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (e.isDirectory()) stack.push(path.join(d, e.name));
+      else if (e.isFile()) files++;
+    }
+  }
+  const out = { files, truncated: files >= COUNT_LIMIT };
+  countCache.set(dir, { atMs: Date.now(), ...out });
+  return out;
+}
+
+// ============================================
 // Router
 // ============================================
 
@@ -212,6 +291,10 @@ export interface SidecarSyncRouterOptions {
   requireAdmin: RequestHandler;
   changesToken?: () => string | undefined;
   receiver?: ReceiverStatusClient;
+  /** Axon's own folders (config), to show each root's real role. */
+  axon?: () => AxonFolders;
+  /** Re-index the docs (docs roots). Missing = no re-index button. */
+  reindexDocs?: () => Promise<unknown>;
 }
 
 export function createSidecarSyncRouter(opts: SidecarSyncRouterOptions): Router {
@@ -232,17 +315,32 @@ export function createSidecarSyncRouter(opts: SidecarSyncRouterOptions): Router 
       const cfg = readChangesFile(file());
       const mirrorDir = cfg.mirrorDir || process.env.AXON_MIRROR_DIR || '/mirror';
       const prisma = await opts.getPrisma();
+      const axon = opts.axon?.() ?? {};
       const links = await Promise.all(cfg.roots.map(async (entry, index) => {
-        const project = entry.project === undefined || (entry.kind && entry.kind !== 'project')
+        const isProjectKind = !entry.kind || entry.kind === 'project';
+        const project = entry.project === undefined || !isProjectKind
           ? null
           : typeof entry.project === 'number'
             ? await prisma.axonProject.findUnique({ where: { id: entry.project } })
             : await prisma.axonProject.findUnique({ where: { name: String(entry.project) } });
         const nodeCount = project ? await prisma.codeNode.count({ where: { projectId: project.id } }) : 0;
+        const resolvedPath = entry.path || project?.path || path.join(mirrorDir, entry.sidecar || '', entry.root);
+        const { role, configKey } = rootRole(entry, resolvedPath, axon);
+        const local = role === 'project' ? null : countFiles(resolvedPath);
         return {
           index,
           ...entry,
-          resolvedPath: entry.path || project?.path || path.join(mirrorDir, entry.sidecar || '', entry.root),
+          kind: entry.kind || 'project',
+          role,
+          roleLabel: role === 'project' && configKey === 'proj' ? 'Projects (proj)' : ROLE_LABEL[role],
+          configKey,
+          usedFor: roleUse(role, axon),
+          /** Kind in the root map does not match the folder's role in Axon's config. */
+          kindMismatch: (entry.kind || 'project') !== role,
+          localFiles: local?.files ?? null,
+          localFilesTruncated: local?.truncated ?? false,
+          canRebuild: role === 'project' ? !!project : role === 'docs' && !!opts.reindexDocs,
+          resolvedPath,
           projectId: project?.id ?? null,
           projectName: project?.name ?? null,
           lastIndexed: project?.lastIndexed ?? null,
@@ -314,6 +412,25 @@ export function createSidecarSyncRouter(opts: SidecarSyncRouterOptions): Router 
       if (!project) return res.status(404).json({ error: 'Project not found' });
       opts.queue.enqueueFull(projectId);
       return res.status(202).json({ projectName: project.name, ...opts.queue.info(projectId) });
+    } catch (err) {
+      return fail(res, err);
+    }
+  });
+
+  // Re-index the docs root (docs only; library has no live re-index)
+  router.post('/links/:index/reindex', opts.requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const cfg = readChangesFile(file());
+      const index = parseIndex(req, cfg);
+      if (index === null) return res.status(404).json({ error: 'Link not found' });
+      const entry = cfg.roots[index];
+      const mirrorDir = cfg.mirrorDir || process.env.AXON_MIRROR_DIR || '/mirror';
+      const resolvedPath = entry.path || path.join(mirrorDir, entry.sidecar || '', entry.root);
+      const { role } = rootRole(entry, resolvedPath, opts.axon?.() ?? {});
+      if (role !== 'docs') return res.status(400).json({ error: `Re-index is only for docs roots (this root is "${role}")` });
+      if (!opts.reindexDocs) return res.status(501).json({ error: 'Docs re-index is not available on this server' });
+      void opts.reindexDocs().catch(err => console.error('[sidecar] docs re-index failed:', err));
+      return res.status(202).json({ started: true, role });
     } catch (err) {
       return fail(res, err);
     }
