@@ -12,6 +12,8 @@
 #   - runs `netbird down` when enabled=false
 #   - every 10 s writes `netbird status --json` to $CTL/status.json
 #   - passes wireguardPort as --wireguard-port (0 = NetBird picks a free port)
+#   - passes externalIpMap (else env NB_EXTERNAL_IP_MAP) as --external-ip-map:
+#     the public IP peers should use, e.g. 203.0.113.10 (empty clears it)
 #   - exits when the app container network goes away (app restarted), so Docker
 #     restarts this container in the new network (with DNS)
 # The key is never printed. It goes to a mode-600 temp file for --setup-key-file.
@@ -43,6 +45,16 @@ on_exit() {
 trap on_exit TERM INT
 
 mkdir -p "$CTL"
+
+# externalIpMap may hold commas ("IP/IP,IP/eth0"), which field() does not allow.
+# Only IPs, interface names, "/", "," are kept; anything else makes it empty.
+ipmap_field() {
+  local v
+  v="$(sed -n 's/^  "externalIpMap"[[:space:]]*:[[:space:]]*"\([^"]*\)".*$/\1/p' "$CFG" 2>/dev/null | head -n 1)"
+  [ -z "$v" ] && v="${NB_EXTERNAL_IP_MAP:-}"
+  case "$v" in *[!0-9A-Za-z./,_-]*) v="" ;; esac
+  printf '%s' "$v"
+}
 
 # The shared network namespace at start. A restarted app gets a new one.
 netns_id() { readlink /proc/1/ns/net 2>/dev/null; cat /sys/class/net/eth0/ifindex 2>/dev/null; }
@@ -89,13 +101,17 @@ while :; do
       host="$(field hostname)"; host="${host:-axon}"
       url="$(field managementUrl)"; url="${url:-https://vpn.bas.co:443}"
       port="$(field wireguardPort)"; case "$port" in ''|*[!0-9]*) port=0 ;; esac
+      ipmap="$(ipmap_field)"
       retry_at=0
       if [ "$enabled" = "true" ] && [ -n "$key" ]; then
-        log "config changed: up (hostname=$host, management=$url, wireguard-port=$port)"
-        [ "$is_up" = 1 ] && "$NB" down >/dev/null 2>&1
+        log "config changed: up (hostname=$host, management=$url, wireguard-port=$port, external-ip-map=${ipmap:-none})"
+        # Always down first: at start the daemon reconnects from its saved
+        # profile, and `up` on a live connection ignores new flags
+        # (--wireguard-port, --external-ip-map).
+        "$NB" down >/dev/null 2>&1
         is_up=0
         ( umask 077; printf '%s' "$key" > "$KEYFILE" )
-        if "$NB" up --setup-key-file "$KEYFILE" --management-url "$url" --hostname "$host" --wireguard-port "$port" 2>&1 \
+        if "$NB" up --setup-key-file "$KEYFILE" --management-url "$url" --hostname "$host" --wireguard-port "$port" --external-ip-map "$ipmap" 2>&1 \
              | sed -E 's/[A-Za-z0-9-]{20,}/<hidden>/g' >&2; then
           is_up=1
           log "connected"

@@ -4,7 +4,7 @@
  * Mounted under /admin/netbird, behind the admin Basic Auth (admin role only).
  *
  *   GET    /admin/netbird        settings + live status (never the full key)
- *   PUT    /admin/netbird        body {setupKey?, hostname?, managementUrl?, wireguardPort?, enabled?,
+ *   PUT    /admin/netbird        body {setupKey?, hostname?, managementUrl?, wireguardPort?, externalIpMap?, enabled?,
  *                                      https?: {enabled?, domain?, cloudflareToken?, email?}}
  *   DELETE /admin/netbird/key    remove the key and set enabled=false
  *   DELETE /admin/netbird/https-token  remove the Cloudflare token
@@ -45,6 +45,8 @@ export interface NetbirdConfig {
   hostname: string;
   managementUrl: string;
   wireguardPort: number;
+  /** netbird up --external-ip-map, e.g. "203.0.113.10". Empty = not set. */
+  externalIpMap: string;
   enabled: boolean;
   https: HttpsConfig;
   updatedAt: string;
@@ -86,6 +88,7 @@ export interface NetbirdReply {
   hasKey: boolean;
   keyHint: string | null;
   wireguardPort: number;
+  externalIpMap: string;
   status: NetbirdStatus | null;
   https: HttpsReply;
 }
@@ -108,6 +111,7 @@ export function readNetbirdConfig(dir: string): NetbirdConfig {
     hostname: DEFAULT_HOSTNAME,
     managementUrl: DEFAULT_MANAGEMENT_URL,
     wireguardPort: 0,
+    externalIpMap: '',
     enabled: false,
     https: { enabled: false, domain: DEFAULT_HTTPS_DOMAIN, cloudflareToken: '', email: '' },
     updatedAt: '',
@@ -120,6 +124,7 @@ export function readNetbirdConfig(dir: string): NetbirdConfig {
       hostname: typeof raw.hostname === 'string' && raw.hostname ? raw.hostname : base.hostname,
       managementUrl: typeof raw.managementUrl === 'string' && raw.managementUrl ? raw.managementUrl : base.managementUrl,
       wireguardPort: validWireguardPort(raw.wireguardPort) ? raw.wireguardPort : 0,
+      externalIpMap: validExternalIpMap(raw.externalIpMap) ? raw.externalIpMap : '',
       enabled: raw.enabled === true,
       https: {
         enabled: h.enabled === true,
@@ -203,6 +208,14 @@ export function validWireguardPort(p: unknown): p is number {
   return typeof p === 'number' && Number.isInteger(p) && p >= 0 && p <= 65535;
 }
 
+const IPV4 = '(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(\\.(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}';
+const IP_MAP_ENTRY_RE = new RegExp(`^${IPV4}(/(${IPV4}|[A-Za-z0-9_.-]{1,15}))?$`);
+
+/** "" or a comma list of IP, IP/localIP or IP/interface (netbird up --external-ip-map). */
+export function validExternalIpMap(m: unknown): m is string {
+  return typeof m === 'string' && m.length <= 500 && (m === '' || m.split(',').every((e) => IP_MAP_ENTRY_RE.test(e)));
+}
+
 const HOSTNAME_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 const KEY_RE = /^[A-Za-z0-9._~+=-]{1,256}$/;
 
@@ -211,6 +224,7 @@ export interface NetbirdUpdate {
   hostname?: string;
   managementUrl?: string;
   wireguardPort?: number;
+  externalIpMap?: string;
   enabled?: boolean;
   https?: Partial<HttpsConfig>;
 }
@@ -244,6 +258,12 @@ export function validateNetbirdUpdate(body: unknown): NetbirdUpdate | string {
   if (b.wireguardPort !== undefined) {
     if (!validWireguardPort(b.wireguardPort)) return '"wireguardPort" must be a whole number from 0 to 65535 (0 = NetBird picks)';
     out.wireguardPort = b.wireguardPort;
+  }
+
+  if (b.externalIpMap !== undefined) {
+    const m = typeof b.externalIpMap === 'string' ? b.externalIpMap.replace(/\s+/g, '') : b.externalIpMap;
+    if (!validExternalIpMap(m)) return '"externalIpMap" (Advertised public IP) must be empty or an IPv4 address like 203.0.113.10 (or IP/local-IP, comma separated)';
+    out.externalIpMap = m;
   }
 
   if (b.enabled !== undefined) {
@@ -294,6 +314,7 @@ function reply(dir: string, configured: boolean): NetbirdReply {
     hasKey: !!cfg.setupKey,
     keyHint: cfg.setupKey ? cfg.setupKey.slice(-4) : null,
     wireguardPort: cfg.wireguardPort,
+    externalIpMap: cfg.externalIpMap,
     status: configured ? readNetbirdStatus(dir) : null,
     https: {
       enabled: cfg.https.enabled,
@@ -335,6 +356,7 @@ export function createNetbirdRouter(opts: { cacheDir: string; requireAdmin: Requ
       hostname: update.hostname ?? cur.hostname,
       managementUrl: update.managementUrl ?? cur.managementUrl,
       wireguardPort: update.wireguardPort ?? cur.wireguardPort,
+      externalIpMap: update.externalIpMap ?? cur.externalIpMap,
       enabled: update.enabled ?? cur.enabled,
       https: { ...cur.https, ...(update.https ?? {}) },
       updatedAt: nextUpdatedAt(cur.updatedAt),
@@ -347,7 +369,7 @@ export function createNetbirdRouter(opts: { cacheDir: string; requireAdmin: Requ
     } catch (error: any) {
       return res.status(500).json({ error: 'Failed to save NetBird settings', details: error?.code || 'write error' });
     }
-    console.error(`[netbird] settings saved (hostname=${next.hostname}, enabled=${next.enabled}, key=${next.setupKey ? 'set' : 'not set'}, wireguardPort=${next.wireguardPort}, https=${next.https.enabled}, token=${next.https.cloudflareToken ? 'set' : 'not set'})`);
+    console.error(`[netbird] settings saved (hostname=${next.hostname}, enabled=${next.enabled}, key=${next.setupKey ? 'set' : 'not set'}, wireguardPort=${next.wireguardPort}, externalIpMap=${next.externalIpMap || 'none'}, https=${next.https.enabled}, token=${next.https.cloudflareToken ? 'set' : 'not set'})`);
     return res.json(reply(dir, configured));
   });
 

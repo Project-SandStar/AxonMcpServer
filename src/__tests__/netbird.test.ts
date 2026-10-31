@@ -13,6 +13,7 @@ import {
   readNetbirdStatus,
   readCaddyStatus,
   validWireguardPort,
+  validExternalIpMap,
   DEFAULT_HOSTNAME,
   DEFAULT_MANAGEMENT_URL,
 } from '../admin/netbird';
@@ -100,12 +101,22 @@ describe('NetBird API', () => {
     expect(r.status).toBe(200);
     expect(r.json).toEqual({
       configured: true, enabled: false, hostname: DEFAULT_HOSTNAME, managementUrl: DEFAULT_MANAGEMENT_URL,
-      hasKey: false, keyHint: null, wireguardPort: 0, status: null,
+      hasKey: false, keyHint: null, wireguardPort: 0, externalIpMap: '', status: null,
       https: {
         enabled: false, domain: 'vpn.bas.co', email: '', hasToken: false, tokenHint: null,
         address: 'https://axon.vpn.bas.co', status: null,
       },
     });
+  });
+
+  it('PUT saves the advertised public IP right after wireguardPort (sed reads it)', async () => {
+    const r = await call('PUT', '/admin/netbird', { wireguardPort: 52004, externalIpMap: ' 203.0.113.10 ' });
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ wireguardPort: 52004, externalIpMap: '203.0.113.10' });
+    const raw = fs.readFileSync(path.join(ctl, 'config.json'), 'utf-8');
+    expect(raw).toMatch(/^  "wireguardPort": 52004,\n  "externalIpMap": "203.0.113.10",$/m);
+    expect((await call('PUT', '/admin/netbird', { externalIpMap: 'not an ip' })).status).toBe(400);
+    expect((await call('PUT', '/admin/netbird', { externalIpMap: '' })).json).toMatchObject({ externalIpMap: '' });
   });
 
   it('PUT saves wireguardPort and https, never returns the token', async () => {
@@ -275,5 +286,10 @@ describe('readCaddyStatus and validWireguardPort', () => {
     expect(validWireguardPort(65536)).toBe(false);
     expect(validWireguardPort(-1)).toBe(false);
     expect(validWireguardPort('1')).toBe(false);
+    expect(validExternalIpMap('')).toBe(true);
+    expect(validExternalIpMap('203.0.113.10')).toBe(true);
+    expect(validExternalIpMap('1.2.3.4/10.0.0.1,5.6.7.8/eth1')).toBe(true);
+    expect(validExternalIpMap('999.1.1.1')).toBe(false);
+    expect(validExternalIpMap('1.2.3.4;rm')).toBe(false);
   });
 });

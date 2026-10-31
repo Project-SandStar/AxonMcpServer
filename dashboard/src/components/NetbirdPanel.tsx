@@ -34,6 +34,7 @@ interface NetbirdReply {
   hasKey: boolean;
   keyHint: string | null;
   wireguardPort: number;
+  externalIpMap?: string;
   status: NetbirdStatus | null;
   https: {
     enabled: boolean;
@@ -105,6 +106,7 @@ export default function NetbirdPanel() {
   const [hostname, setHostname] = useState('axon');
   const [managementUrl, setManagementUrl] = useState('https://vpn.bas.co:443');
   const [wireguardPort, setWireguardPort] = useState('0');
+  const [externalIpMap, setExternalIpMap] = useState('');
   const [enabled, setEnabled] = useState(false);
   const [httpsOn, setHttpsOn] = useState(false);
   const [domain, setDomain] = useState('vpn.bas.co');
@@ -123,7 +125,7 @@ export default function NetbirdPanel() {
     setHostname(v.hostname);
     setManagementUrl(v.managementUrl);
     setEnabled(v.enabled);
-    setWireguardPort(String(v.wireguardPort ?? 0));
+    setWireguardPort(String(v.wireguardPort ?? 0)); setExternalIpMap(v.externalIpMap ?? '');
     setHttpsOn(v.https.enabled);
     setDomain(v.https.domain);
     setEmail(v.https.email);
@@ -152,6 +154,7 @@ export default function NetbirdPanel() {
       hostname: hostname.trim(),
       managementUrl: managementUrl.trim(),
       wireguardPort: Number(wireguardPort.trim() || '0'),
+      externalIpMap: externalIpMap.trim(),
       enabled,
       https: {
         enabled: httpsOn,
@@ -331,7 +334,18 @@ export default function NetbirdPanel() {
               onChange={(e) => setWireguardPort(e.target.value)}
               className={inputCls}
             />
-            <p className="mt-1 text-xs text-gray-500">0 = NetBird picks a free port. Change it only when two peers clash.</p>
+            <p className="mt-1 text-xs text-gray-500">0 = NetBird picks a free port. Set a fixed port to forward it on the firewall (UDP) for direct peer-to-peer links.</p>
+          </div>
+          <div className="mt-3">
+            <label className={labelCls}>Advertised public IP (optional)</label>
+            <input
+              type="text"
+              value={externalIpMap}
+              onChange={(e) => setExternalIpMap(e.target.value)}
+              placeholder="203.0.113.10"
+              className={inputCls}
+            />
+            <p className="mt-1 text-xs text-gray-500">The public IP that forwards the WireGuard port (UDP) to this host. Peers then connect here directly instead of through the relay. Empty = not set. Passed as netbird up --external-ip-map.</p>
           </div>
         </details>
 

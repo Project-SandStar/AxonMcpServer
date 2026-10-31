@@ -30,7 +30,11 @@ services:
     env_file: .env
     environment:
       NETBIRD_CTL_DIR: /netbird-ctl
-    ports: ["3847:3847"]
+    ports:
+      - "3847:3847"
+      # NetBird WireGuard (UDP). axon-netbird shares this network, so its port is
+      # published here. Same port as Settings > NetBird > Advanced; forward it on the firewall.
+      - "${AXON_NETBIRD_WG_PORT:-52004}:${AXON_NETBIRD_WG_PORT:-52004}/udp"
     volumes:
       - ./data/cache:/app/.cache
       - ./data/models:/app/.cache/models
