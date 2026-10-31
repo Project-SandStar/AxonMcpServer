@@ -1,5 +1,5 @@
 {
-  "version": "1.2.3",
+  "version": "1.1.1",
   "workflows": [
     "wf-app-creation",
     "wf-axon-func-update",
