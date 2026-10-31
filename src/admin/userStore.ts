@@ -7,6 +7,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 
+/**
+ * "Sidecar sync login" of a user. The sync password is write-only: the
+ * receiver keeps its Argon2 hash in receiver.toml, this app keeps no hash.
+ */
+export interface SidecarSyncLogin {
+  enabled: boolean;
+  /** Root names this login may send. Empty = all roots. */
+  roots: string[];
+  /** When the login was linked to (or made on) the receiver. */
+  linkedAt?: string;
+}
+
 export interface User {
   id: string;
   username: string;
@@ -14,6 +26,9 @@ export interface User {
   role: 'admin' | 'user';
   createdAt: string;
   lastLogin?: string;
+  /** false = the user can not log in to the dashboard (sync-only user). Missing = true. */
+  dashboardLogin?: boolean;
+  sidecarSync?: SidecarSyncLogin;
 }
 
 export interface UserPublic {
@@ -22,6 +37,20 @@ export interface UserPublic {
   role: 'admin' | 'user';
   createdAt: string;
   lastLogin?: string;
+  dashboardLogin: boolean;
+  sidecarSync?: SidecarSyncLogin;
+}
+
+function toPublic(u: User): UserPublic {
+  return {
+    id: u.id,
+    username: u.username,
+    role: u.role,
+    createdAt: u.createdAt,
+    lastLogin: u.lastLogin,
+    dashboardLogin: u.dashboardLogin !== false,
+    ...(u.sidecarSync ? { sidecarSync: { ...u.sidecarSync, roots: [...u.sidecarSync.roots] } } : {}),
+  };
 }
 
 interface UsersData {
@@ -97,8 +126,8 @@ export class UserStore {
    * Authenticate a user
    */
   authenticate(username: string, password: string): User | null {
-    const user = this.users.get(username.toLowerCase());
-    if (!user) return null;
+    const user = this.users.get((username || '').toLowerCase());
+    if (!user || user.dashboardLogin === false) return null;
 
     if (verifyPassword(password, user.passwordHash)) {
       // Update last login
@@ -113,13 +142,7 @@ export class UserStore {
    * Get all users (without password hashes)
    */
   getAllUsers(): UserPublic[] {
-    return Array.from(this.users.values()).map(u => ({
-      id: u.id,
-      username: u.username,
-      role: u.role,
-      createdAt: u.createdAt,
-      lastLogin: u.lastLogin,
-    }));
+    return Array.from(this.users.values()).map(toPublic);
   }
 
   /**
@@ -127,14 +150,7 @@ export class UserStore {
    */
   getUser(username: string): UserPublic | null {
     const user = this.users.get(username.toLowerCase());
-    if (!user) return null;
-    return {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-      createdAt: user.createdAt,
-      lastLogin: user.lastLogin,
-    };
+    return user ? toPublic(user) : null;
   }
 
   /**
@@ -156,12 +172,52 @@ export class UserStore {
     this.users.set(username.toLowerCase(), user);
     this.saveUsers();
 
-    return {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-      createdAt: user.createdAt,
+    return toPublic(user);
+  }
+
+  /**
+   * Create a sync-only user for an existing receiver account: role "user",
+   * dashboard login off, random dashboard password nobody knows.
+   */
+  createSyncOnlyUser(username: string, sync: SidecarSyncLogin): UserPublic | null {
+    const key = username.toLowerCase();
+    if (this.users.has(key)) return null;
+    const user: User = {
+      id: crypto.randomUUID(),
+      username: key,
+      passwordHash: hashPassword(crypto.randomBytes(24).toString('hex')).hash,
+      role: 'user',
+      createdAt: new Date().toISOString(),
+      dashboardLogin: false,
+      sidecarSync: { enabled: sync.enabled, roots: [...sync.roots], ...(sync.linkedAt ? { linkedAt: sync.linkedAt } : {}) },
     };
+    this.users.set(key, user);
+    this.saveUsers();
+    return toPublic(user);
+  }
+
+  /** Turn dashboard login on or off. Refuses to lock out the last admin who can log in. */
+  setDashboardLogin(username: string, on: boolean): boolean {
+    const user = this.users.get(username.toLowerCase());
+    if (!user) return false;
+    if (!on && user.role === 'admin') {
+      const others = Array.from(this.users.values())
+        .filter(u => u.role === 'admin' && u.dashboardLogin !== false && u !== user);
+      if (others.length === 0) return false;
+    }
+    user.dashboardLogin = on;
+    this.saveUsers();
+    return true;
+  }
+
+  /** Save the sidecar sync login settings (never a password). */
+  setSidecarSync(username: string, sync: SidecarSyncLogin | undefined): boolean {
+    const user = this.users.get(username.toLowerCase());
+    if (!user) return false;
+    if (sync) user.sidecarSync = { enabled: sync.enabled, roots: [...sync.roots], ...(sync.linkedAt ? { linkedAt: sync.linkedAt } : {}) };
+    else delete user.sidecarSync;
+    this.saveUsers();
+    return true;
   }
 
   /**
