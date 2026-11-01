@@ -3,6 +3,8 @@
 > **Agents:** read and follow [AGENTS.md](AGENTS.md). Use the context-mode tools for
 > searching and for reading large files, logs and command output, not raw
 > `grep`, `cat`, `find` or long `tail`.
+> If context-mode is not available: search with ripgrep (`rg`), never `grep`, and
+> run shell commands through `rtk` for token savings.
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
