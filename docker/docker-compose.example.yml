@@ -1,6 +1,7 @@
 # Axon MCP server + NetBird sidecar + HTTPS sidecar (Caddy) (example).
 #
-# The NetBird container shares the network of axon-mcp (network_mode: service:...),
+# axon-net owns the network namespace, the ports and the DNS name "axon-mcp".
+# axon-mcp, axon-netbird and axon-caddy join it (network_mode: container:axon-net),
 # so the NetBird IP / <hostname>.vpn.bas.co reaches port 3847 directly.
 #
 # Join the network: open Settings > NetBird
@@ -12,10 +13,13 @@
 # docker/caddy-entrypoint.sh then serves https://<hostname>.vpn.bas.co on the
 # NetBird IP. Without a token it waits.
 #
-# The three containers share one network. Restart them together:
-#   docker compose -p axon up -d --force-recreate axon-mcp axon-netbird axon-caddy
-# If only axon-mcp restarts, the sidecars see their network go away, exit, and
-# Docker restarts them in the new one (so they keep DNS).
+# The app can restart or be recreated alone; netbird and caddy keep working:
+#   docker compose -p axon up -d --no-deps --force-recreate axon-mcp
+# If axon-net itself is recreated, recreate the three that join it too:
+#   docker compose -p axon up -d --no-deps --force-recreate axon-net axon-mcp axon-netbird axon-caddy
+# container: and not service:, because docker compose v2.2.3 fails
+# `up --no-deps <svc>` with "no such service" when the network is service:<other>.
+# On basws42 the task SidecarStackWatchdog repairs a stack that lost its network.
 #
 # Build the Caddy image once:
 #   docker build -f caddy.Dockerfile -t sidecar-caddy:latest .
@@ -23,18 +27,32 @@
 #   docker compose -p axon up -d
 
 services:
-  axon-mcp:
-    image: axon-mcp:latest
-    container_name: axon-mcp
+  # Network owner: namespace, ports, DNS name "axon-mcp" (receiver hook http://axon-mcp:3847).
+  axon-net:
+    image: alpine:3.20
+    container_name: axon-net
+    init: true
+    command: ["sleep", "infinity"]
     restart: unless-stopped
-    env_file: .env
-    environment:
-      NETBIRD_CTL_DIR: /netbird-ctl
+    mem_limit: 32m
     ports:
       - "3847:3847"
       # NetBird WireGuard (UDP). axon-netbird shares this network, so its port is
       # published here. Same port as Settings > NetBird > Advanced; forward it on the firewall.
       - "${AXON_NETBIRD_WG_PORT:-52004}:${AXON_NETBIRD_WG_PORT:-52004}/udp"
+    networks:
+      default:
+        aliases: [axon-mcp]
+
+  axon-mcp:
+    image: axon-mcp:latest
+    container_name: axon-mcp
+    restart: unless-stopped
+    network_mode: "container:axon-net"
+    depends_on: [axon-net]
+    env_file: .env
+    environment:
+      NETBIRD_CTL_DIR: /netbird-ctl
     volumes:
       - ./data/cache:/app/.cache
       - ./data/models:/app/.cache/models
@@ -45,8 +63,8 @@ services:
     image: netbirdio/netbird:latest
     container_name: axon-netbird
     restart: unless-stopped
-    network_mode: "service:axon-mcp"
-    depends_on: [axon-mcp]
+    network_mode: "container:axon-net"
+    depends_on: [axon-net]
     cap_add: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]
     devices: ["/dev/net/tun:/dev/net/tun"]
     entrypoint: ["/bin/bash", "/netbird-entrypoint.sh"]
@@ -62,8 +80,8 @@ services:
     container_name: axon-caddy
     restart: unless-stopped
     mem_limit: 128m
-    network_mode: "service:axon-mcp"
-    depends_on: [axon-mcp]
+    network_mode: "container:axon-net"
+    depends_on: [axon-net]
     entrypoint: ["/bin/sh", "/caddy-entrypoint.sh"]
     environment:
       NETBIRD_CTL_DIR: /netbird-ctl
