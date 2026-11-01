@@ -57,3 +57,4 @@ load-project-caches.log
 
 # ── Private project workflows (own repo on gitlab.bas.co) ───
 workflows/proj/
+.worktrees/
