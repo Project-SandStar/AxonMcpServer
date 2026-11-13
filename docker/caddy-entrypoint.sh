@@ -24,6 +24,9 @@ CFG="$CTL/config.json"
 STATUS="$CTL/caddy-status.json"
 UPSTREAM="${CADDY_UPSTREAM:?set CADDY_UPSTREAM, e.g. 127.0.0.1:3848}"
 INTERNAL="${CADDY_TLS_INTERNAL:-0}"
+# CADDY_EXTRA_PROXIES: more HTTPS ports on the same name, space separated
+# "<port>=<upstream>", e.g. "8795=https://fantom-receiver:8795".
+EXTRA="${CADDY_EXTRA_PROXIES:-}"
 CADDYFILE=/etc/caddy/Caddyfile.generated
 LOG=/tmp/caddy.log
 INTERVAL="${CADDY_STATUS_INTERVAL:-10}"
@@ -71,6 +74,32 @@ write_caddyfile() { # $1 fqdn, $2 email
     echo "		flush_interval -1"
     echo "	}"
     echo "}"
+    # Extra HTTPS ports on the same name (CADDY_EXTRA_PROXIES), same certificate.
+    for p in $EXTRA; do
+      port="${p%%=*}"; up="${p#*=}"
+      echo "$1:$port {"
+      if [ "$INTERNAL" = 1 ]; then
+        echo "	tls internal"
+      else
+        echo "	tls {"
+        echo "		dns cloudflare {env.CF_API_TOKEN}"
+        echo "		resolvers 1.1.1.1 1.0.0.1"
+        echo "	}"
+      fi
+      echo "	reverse_proxy $up {"
+      echo "		flush_interval -1"
+      case "$up" in
+        https://*)
+          # The upstream has its own self-signed certificate. This hop stays
+          # on the Docker host, so its certificate is not checked.
+          echo "		transport http {"
+          echo "			tls_insecure_skip_verify"
+          echo "		}"
+          ;;
+      esac
+      echo "	}"
+      echo "}"
+    done
   } > "$CADDYFILE"
 }
 
