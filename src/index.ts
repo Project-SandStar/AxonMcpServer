@@ -1610,7 +1610,13 @@ Note: Folio enforces unique id, not unique name on func — this tool looks up t
 
 SAFETY: pass 'project' explicitly ("instance/project" or "project") to assert the expected target. If the explicit value does not match the active project, the call FAILS instead of committing to the wrong place. If 'project' is omitted, the response includes a warning — call getPrimaryProject first to confirm routing.
 
-Response includes 'operation': "added" or "updated".`,
+DOC: when 'doc' is not given, the stored doc is kept. Pass "" to clear it.
+
+STALE WRITES: pass 'expectedMod' (the mod of the record you last read, ISO 8601; null for a new function) to refuse the commit when the record has changed since. The response then has 'status': "conflict" with the server's 'mod' and 'hash', and nothing is committed. Without 'expectedMod' there is no check.
+
+The name must be a letter, then letters, digits or "_". After a good commit the server's local copy (func/<name>.axon, .trio, sync metadata) is updated.
+
+Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha256 of src).`,
           inputSchema: {
             type: 'object',
             properties: {

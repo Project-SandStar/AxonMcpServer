@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+
+### Features
+
+* **ide:** IDE API under `/api/ide` (list projects, export functions, commit one function) behind a bearer token of its own, `AXON_IDE_TOKEN`; see docs/api/IDE-API.md
+* **ide:** `commitAxonFunction` takes an optional `expectedMod`; a stale write returns a conflict and commits nothing
+
+
+### Bug Fixes
+
+* **commit:** a commit without `doc` keeps the stored doc (it was cleared)
+* **commit:** the function name is validated, and `$`, CR and tab in source are escaped in the Axon literal
+* **commit:** the local copy (`func/<name>.axon`, `.trio`, sync metadata) is updated after a good commit
+* **sync:** a first sync records `mod`, and a later sync sees a changed source also when the old copy holds no `mod`
+
 ## [1.2.1](https://github.com/Project-SandStar/AxonMcpServer/compare/v1.2.0...v1.2.1) (2026-10-27)
 
 

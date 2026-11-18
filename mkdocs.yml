@@ -63,6 +63,7 @@ nav:
     - Regex Search: api/REGEX-SEARCH.md
     - Library Patterns: api/axon-library-patterns.md
     - Templates: api/README_TEMPLATES.md
+    - IDE API: api/IDE-API.md
   - Development:
     - Roadmap: development/roadmap.md
     - Implementation Summary: development/IMPLEMENTATION_SUMMARY.md

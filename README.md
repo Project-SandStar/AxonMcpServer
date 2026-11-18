@@ -408,6 +408,24 @@ To use this MCP server with Claude Desktop, add the following to your Claude Des
 }
 ```
 
+## IDE API (HTTP mode)
+
+Editor plugins can copy a project's Axon functions and push one function back
+through three routes under `/api/ide`:
+
+| Route | Use |
+|---|---|
+| `GET /api/ide/projects` | List the projects |
+| `GET /api/ide/projects/{instance}/{project}/functions?sync=true\|false` | Export the functions (`src`, `doc`, `mod`, `hash`) |
+| `POST /api/ide/projects/{instance}/{project}/functions/{name}` | Commit one function; `409` when it changed on the server |
+
+Every route needs `Authorization: Bearer <AXON_IDE_TOKEN>`. Set
+`AXON_IDE_TOKEN` (16 characters or more) in the server's environment. When it
+is not set, the routes are off and the server logs one line that says so. The
+token is always required, also when `/mcp` runs without auth.
+
+Full contract: [docs/api/IDE-API.md](docs/api/IDE-API.md).
+
 ## FlexSearch Documentation Index
 
 The MCP server uses **FlexSearch** to provide Algolia-quality search across your HTML documentation files. This gives you:
