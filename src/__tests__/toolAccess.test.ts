@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { READ_TOOLS, WRITE_TOOLS, toolDenied } from '../auth/toolAccess.js';
+import { READ_TOOLS, WRITE_TOOLS, parseAnonymousRole, toolDenied } from '../auth/toolAccess.js';
 import { UserStore, isUserRole } from '../admin/userStore.js';
 
 const indexSource = fs.readFileSync(path.join(__dirname, '..', 'index.ts'), 'utf8');
@@ -71,10 +71,52 @@ describe('toolDenied', () => {
     expect(toolDenied('', 'readonly')).not.toBeNull();
   });
 
-  test('user, admin and a call with no role have no rule here', () => {
-    for (const role of ['user', 'admin', undefined, null] as const) {
+  test('user and admin have no rule here', () => {
+    for (const role of ['user', 'admin'] as const) {
       for (const tool of [...WRITE_TOOLS, ...READ_TOOLS, 'someNewTool']) expect(toolDenied(tool, role)).toBeNull();
     }
+  });
+
+  test('a call with no token is read-only by default: no write tool, every read tool', () => {
+    for (const role of [undefined, null] as const) {
+      for (const tool of WRITE_TOOLS) {
+        const text = toolDenied(tool, role);
+        expect(text).toContain(tool);
+        expect(text).toContain('access key');
+      }
+      for (const tool of READ_TOOLS) expect(toolDenied(tool, role)).toBeNull();
+      expect(toolDenied('someNewTool', role)).not.toBeNull();
+    }
+  });
+
+  test('MCP_ANONYMOUS_ROLE=user lets a call with no token use every tool', () => {
+    for (const tool of [...WRITE_TOOLS, ...READ_TOOLS, 'someNewTool']) expect(toolDenied(tool, undefined, 'user')).toBeNull();
+  });
+
+  test('the anonymous role never widens a read-only user', () => {
+    for (const tool of WRITE_TOOLS) expect(toolDenied(tool, 'readonly', 'user')).not.toBeNull();
+  });
+
+  test('the tool handler passes the anonymous role from the config', () => {
+    const handler = indexSource.indexOf('server.setRequestHandler(CallToolRequestSchema');
+    const gate = indexSource.slice(handler, indexSource.indexOf('this.usageTracker.trackToolCall(', handler));
+    expect(gate).toMatch(/toolDenied\(name,\s*this\.sessionScope\.getStore\(\)\?\.role,\s*this\.config\.mcpAnonymousRole \?\? 'readonly'\)/);
+  });
+});
+
+describe('MCP_ANONYMOUS_ROLE', () => {
+  test('unset or blank: no override; user and readonly are read; anything else is invalid', () => {
+    expect(parseAnonymousRole(undefined)).toBeUndefined();
+    expect(parseAnonymousRole('  ')).toBeUndefined();
+    expect(parseAnonymousRole('user')).toBe('user');
+    expect(parseAnonymousRole(' readonly ')).toBe('readonly');
+    for (const bad of ['admin', 'USER', 'yes', 'true']) expect(parseAnonymousRole(bad)).toBe('invalid');
+  });
+
+  test('config.ts reads the variable with parseAnonymousRole and never stores an invalid value', () => {
+    const configSource = fs.readFileSync(path.join(__dirname, '..', 'config', 'config.ts'), 'utf8');
+    expect(configSource).toContain('parseAnonymousRole(process.env.MCP_ANONYMOUS_ROLE)');
+    expect(configSource).toMatch(/=== 'invalid'\)\s*\{[^}]*console\.error/);
   });
 });
 

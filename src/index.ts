@@ -1906,8 +1906,9 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
       await this.prepareSessionClient();
       const { name, arguments: args } = request.params;
 
-      // A read-only user cannot call a write tool (src/auth/toolAccess.ts)
-      const denied = toolDenied(name, this.sessionScope.getStore()?.role);
+      // A read-only user cannot call a write tool (src/auth/toolAccess.ts). A call with no
+      // token is read-only too, unless MCP_ANONYMOUS_ROLE=user.
+      const denied = toolDenied(name, this.sessionScope.getStore()?.role, this.config.mcpAnonymousRole ?? 'readonly');
       if (denied) {
         throw new McpError(ErrorCode.InvalidRequest, denied);
       }
@@ -6099,7 +6100,10 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
       next();
     };
     if (!mcpRequireAuth) {
-      console.error('⚠️ MCP_REQUIRE_AUTH is off: calls with no token are anonymous and no role rule applies to them');
+      const anonymousRole = this.config.mcpAnonymousRole ?? 'readonly';
+      console.error(anonymousRole === 'user'
+        ? '⚠️ MCP_REQUIRE_AUTH is off and MCP_ANONYMOUS_ROLE=user: calls with no token can use every tool'
+        : 'ℹ️ MCP_REQUIRE_AUTH is off: calls with no token are read-only (write tools need an access key)');
     }
 
     // MCP endpoint - handles POST (messages), GET (SSE stream), DELETE (terminate)

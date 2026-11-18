@@ -49,12 +49,40 @@ export const READ_TOOLS: readonly string[] = [
 
 const READ = new Set(READ_TOOLS);
 
+/** The role a call with no token gets (only possible when MCP_REQUIRE_AUTH is off). */
+export type AnonymousRole = 'readonly' | 'user';
+
+export function isAnonymousRole(value: unknown): value is AnonymousRole {
+  return value === 'readonly' || value === 'user';
+}
+
+/**
+ * Reads MCP_ANONYMOUS_ROLE. Unset or blank: undefined (the gate uses 'readonly').
+ * Any value other than 'readonly' or 'user': 'invalid' (the caller logs it and
+ * keeps 'readonly').
+ */
+export function parseAnonymousRole(value: string | undefined): AnonymousRole | 'invalid' | undefined {
+  const text = value?.trim();
+  if (!text) return undefined;
+  return isAnonymousRole(text) ? text : 'invalid';
+}
+
 /**
  * The text of the refusal, or null when the call may go on. A call with no
- * role (no token, when MCP_REQUIRE_AUTH is off) has no rule here.
+ * role (no token, when MCP_REQUIRE_AUTH is off) gets `anonymousRole`, which is
+ * 'readonly' unless the server sets MCP_ANONYMOUS_ROLE=user.
  */
-export function toolDenied(tool: string, role: UserRole | undefined | null): string | null {
-  if (role !== 'readonly') return null;
+export function toolDenied(
+  tool: string,
+  role: UserRole | undefined | null,
+  anonymousRole: AnonymousRole = 'readonly'
+): string | null {
+  const effective = role ?? anonymousRole;
+  if (effective !== 'readonly') return null;
   if (READ.has(tool)) return null;
+  if (!role) {
+    return `${tool} needs a user access key. Calls with no token are read-only on this server. ` +
+      'Ask an admin for an access key and send it as "Authorization: Bearer <key>".';
+  }
   return `Your user is read-only and cannot use ${tool}. Ask an admin for a user with the "user" role.`;
 }

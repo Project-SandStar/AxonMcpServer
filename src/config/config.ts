@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { parseAnonymousRole } from '../auth/toolAccess.js';
 
 export interface SkysSparkFallback {
   host: string;
@@ -58,6 +59,10 @@ export interface AxonServerConfig {
   // Require a Bearer token on /mcp (default: false; env MCP_REQUIRE_AUTH=true).
   // When false, a token is optional: verified if sent, anonymous if not.
   mcpRequireAuth?: boolean;
+
+  // Role of an anonymous /mcp call (no token, MCP_REQUIRE_AUTH off). Default 'readonly':
+  // no write tools without a key. Env MCP_ANONYMOUS_ROLE=user gives the old behaviour.
+  mcpAnonymousRole?: 'readonly' | 'user';
 
   // Path to the Axon code library
   codePath: string;
@@ -270,6 +275,13 @@ export function loadConfig(configPath?: string): AxonServerConfig {
 
   if (process.env.MCP_REQUIRE_AUTH !== undefined) {
     currentConfig.mcpRequireAuth = process.env.MCP_REQUIRE_AUTH === 'true';
+  }
+
+  const anonymousRole = parseAnonymousRole(process.env.MCP_ANONYMOUS_ROLE);
+  if (anonymousRole === 'invalid') {
+    console.error(`[Config] MCP_ANONYMOUS_ROLE must be "readonly" or "user"; using "readonly"`);
+  } else if (anonymousRole) {
+    currentConfig.mcpAnonymousRole = anonymousRole;
   }
 
   return currentConfig;
