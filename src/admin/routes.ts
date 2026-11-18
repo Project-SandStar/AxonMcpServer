@@ -7,7 +7,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getUsageTracker } from '../usage/index.js';
 import { ServerStatus, InstanceInfo, ProjectInfo, CacheInfo, AdminCredentials } from './types.js';
-import { initUserStore, getUserStore, UserStore, User, isUserRole } from './userStore.js';
+import { initUserStore, getUserStore, isUserRole } from './userStore.js';
+import { basicAuthWithUserStore, requireAdmin } from './adminAuth.js';
 import { createUserKeysRouter, createAccessRouter, readonlyGuard } from './userKeys.js';
 import type { UserKeyStore } from '../auth/userKeys.js';
 import type { AccessAudit } from '../auth/accessAudit.js';
@@ -30,15 +31,6 @@ import {
   generateMcpToolsetConfig,
   ToolCategory,
 } from '../toolSearch/toolSearchConfig.js';
-
-// Extend Express Request to include user
-declare global {
-  namespace Express {
-    interface Request {
-      user?: User;
-    }
-  }
-}
 
 // Types for injected dependencies
 interface PrimaryProjectContext {
@@ -91,42 +83,6 @@ interface AdminContext {
   reindexDocs?: () => Promise<void>;
   getWorkflowManager?: () => import('../workflows/workflowManager.js').WorkflowManager;
   getWorkflowVectorIndex?: () => import('../workflows/workflowVectorIndex.js').WorkflowVectorIndex | undefined;
-}
-
-/**
- * Basic Auth middleware using UserStore
- */
-function basicAuthWithUserStore(userStore: UserStore) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader || !authHeader.startsWith('Basic ')) {
-      res.setHeader('WWW-Authenticate', 'Basic realm="Axon MCP Admin"');
-      return res.status(401).json({ error: 'Authentication required' });
-    }
-
-    const base64 = authHeader.split(' ')[1];
-    const [username, password] = Buffer.from(base64, 'base64').toString().split(':');
-
-    const user = userStore.authenticate(username, password);
-    if (user) {
-      req.user = user;
-      return next();
-    }
-
-    res.setHeader('WWW-Authenticate', 'Basic realm="Axon MCP Admin"');
-    return res.status(401).json({ error: 'Invalid credentials' });
-  };
-}
-
-/**
- * Require admin role middleware
- */
-function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  if (req.user?.role !== 'admin') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-  return next();
 }
 
 /**

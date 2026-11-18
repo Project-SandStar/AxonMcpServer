@@ -13,6 +13,7 @@
  */
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
 import type { UserStore } from './userStore.js';
+import './adminAuth.js'; // req.user
 import type { KeyInfo } from '../auth/userKeys.js';
 import type { AccessAuditRow } from '../auth/accessAudit.js';
 
