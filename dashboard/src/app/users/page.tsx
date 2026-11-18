@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Users, Plus, Trash2, Shield, User, Key, RefreshCw, AlertCircle, CheckCircle, FolderSync, Link2 } from 'lucide-react';
-import { getApiBase } from '@/lib/api';
+import { Users, Plus, Trash2, Shield, User, Key, KeyRound, Ban, UserCheck, RefreshCw, AlertCircle, CheckCircle, FolderSync, Link2 } from 'lucide-react';
+import { api, getApiBase, type AccessKeyWithSecret, type UserRole } from '@/lib/api';
+import { NewKeyBox, UserAccessKeys } from '@/components/UserAccessKeys';
 import { useAuth } from '@/contexts/AuthContext';
 
 const API_BASE = getApiBase();
@@ -10,9 +11,10 @@ const API_BASE = getApiBase();
 interface UserInfo {
   id: string;
   username: string;
-  role: 'admin' | 'user';
+  role: UserRole;
   createdAt: string;
   lastLogin?: string;
+  disabled?: boolean;
   dashboardLogin?: boolean;
   sidecarSync?: { enabled: boolean; roots: string[]; linkedAt?: string };
 }
@@ -56,7 +58,13 @@ export default function UsersPage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [newRole, setNewRole] = useState<'admin' | 'user'>('user');
+  const [newRole, setNewRole] = useState<UserRole>('user');
+  const [newUserKey, setNewUserKey] = useState(false);
+  // A key made with a new user. Shown once; kept in React state only.
+  const [madeKey, setMadeKey] = useState<AccessKeyWithSecret | null>(null);
+
+  // Access keys panel: the user whose keys are open
+  const [keysFor, setKeysFor] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
   // Password change
@@ -216,10 +224,19 @@ export default function UsersPage() {
 
       if (response.ok) {
         setSuccessMessage(`User "${newUsername}" created successfully`);
+        // The second call: one access key for the new user, shown once.
+        if (newUserKey) {
+          try {
+            setMadeKey(await api.createUserKey(newUsername, { name: 'first key', expiresInDays: 365 }));
+          } catch (err) {
+            setError(`The user was created, but the key was not: ${err instanceof Error ? err.message : 'unknown error'}`);
+          }
+        }
         setShowCreateForm(false);
         setNewUsername('');
         setNewPassword('');
         setNewRole('user');
+        setNewUserKey(false);
         fetchUsers();
         setTimeout(() => setSuccessMessage(null), 3000);
       } else {
@@ -269,7 +286,7 @@ export default function UsersPage() {
     }
   };
 
-  const handleChangeRole = async (username: string, newRole: 'admin' | 'user') => {
+  const handleChangeRole = async (username: string, newRole: UserRole) => {
     try {
       const response = await fetch(`${API_BASE}/admin/users/${username}/role`, {
         method: 'PUT',
@@ -292,6 +309,23 @@ export default function UsersPage() {
       setError('Failed to update role');
     }
   };
+
+  const handleSetDisabled = async (username: string, disabled: boolean) => {
+    if (disabled && !confirm(`Disable user "${username}"? The dashboard login, the access keys and the OAuth logins of this user stop at once.`)) {
+      return;
+    }
+    try {
+      await api.setUserDisabled(username, disabled);
+      setSuccessMessage(`User "${username}" ${disabled ? 'disabled' : 'enabled'}`);
+      fetchUsers();
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to change the user');
+    }
+  };
+
+  const roleStyle = (role: UserRole) =>
+    role === 'admin' ? 'bg-purple-100 text-purple-700' : role === 'readonly' ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-700';
 
   const handleDeleteUser = async (username: string) => {
     if (!confirm(`Are you sure you want to delete user "${username}"?`)) {
@@ -385,9 +419,7 @@ export default function UsersPage() {
             </div>
             <div>
               <p className="text-sm text-gray-500">Role</p>
-              <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
-                currentUserInfo.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-700'
-              }`}>
+              <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${roleStyle(currentUserInfo.role)}`}>
                 <Shield className="h-3 w-3" />
                 {currentUserInfo.role}
               </span>
@@ -431,7 +463,23 @@ export default function UsersPage() {
             </button>
           )}
         </div>
+        {currentUserInfo && (
+          <div className="mt-4 pt-4 border-t space-y-3">
+            <div className="flex items-center gap-2">
+              <KeyRound className="h-4 w-4 text-gray-500" />
+              <h3 className="text-sm font-semibold text-gray-900">Your access keys</h3>
+            </div>
+            <p className="text-xs text-gray-500">
+              An access key lets the IntelliJ plugin and MCP clients work as you. You can revoke your keys here.
+              {!isAdmin && ' Only an admin can make a new key.'}
+            </p>
+            <UserAccessKeys username={currentUserInfo.username} canCreate={isAdmin} />
+          </div>
+        )}
       </div>
+
+      {/* A key made with a new user: shown once */}
+      {madeKey && <NewKeyBox made={madeKey} onDone={() => setMadeKey(null)} />}
 
       {/* Create User Form */}
       {showCreateForm && (
@@ -472,14 +520,22 @@ export default function UsersPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
                 <select
                   value={newRole}
-                  onChange={(e) => setNewRole(e.target.value as 'admin' | 'user')}
+                  onChange={(e) => setNewRole(e.target.value as UserRole)}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                 >
                   <option value="user">User</option>
+                  <option value="readonly">Read-only</option>
                   <option value="admin">Admin</option>
                 </select>
               </div>
             </div>
+            <p className="text-xs text-gray-500">
+              Read-only: can list and export in the IDE and use read tools on MCP. Cannot commit and cannot run Axon.
+            </p>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input type="checkbox" checked={newUserKey} onChange={(e) => setNewUserKey(e.target.checked)} />
+              Create an access key now (for the IntelliJ plugin and MCP clients; expires in 365 days)
+            </label>
             <div className="flex gap-2">
               <button
                 type="submit"
@@ -490,7 +546,7 @@ export default function UsersPage() {
               </button>
               <button
                 type="button"
-                onClick={() => { setShowCreateForm(false); setNewUsername(''); setNewPassword(''); }}
+                onClick={() => { setShowCreateForm(false); setNewUsername(''); setNewPassword(''); setNewUserKey(false); }}
                 className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
               >
                 Cancel
@@ -532,18 +588,20 @@ export default function UsersPage() {
                         {user.username === currentUser && (
                           <span className="text-xs text-blue-600">(you)</span>
                         )}
+                        {user.disabled && (
+                          <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">Disabled</span>
+                        )}
                       </div>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <select
                         value={user.role}
-                        onChange={(e) => handleChangeRole(user.username, e.target.value as 'admin' | 'user')}
+                        onChange={(e) => handleChangeRole(user.username, e.target.value as UserRole)}
                         disabled={user.username === currentUser}
-                        className={`text-xs rounded-full px-2 py-1 border-0 ${
-                          user.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-700'
-                        } ${user.username === currentUser ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                        className={`text-xs rounded-full px-2 py-1 border-0 ${roleStyle(user.role)} ${user.username === currentUser ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                       >
                         <option value="user">User</option>
+                        <option value="readonly">Read-only</option>
                         <option value="admin">Admin</option>
                       </select>
                     </td>
@@ -604,6 +662,22 @@ export default function UsersPage() {
                               <Key className="h-4 w-4" />
                             </button>
                             <button
+                              onClick={() => setKeysFor(keysFor === user.username ? null : user.username)}
+                              className={`p-1 hover:text-blue-600 ${keysFor === user.username ? 'text-blue-600' : 'text-gray-400'}`}
+                              title="Access keys"
+                            >
+                              <KeyRound className="h-4 w-4" />
+                            </button>
+                            {user.username !== currentUser && (
+                              <button
+                                onClick={() => handleSetDisabled(user.username, !user.disabled)}
+                                className={`p-1 text-gray-400 ${user.disabled ? 'hover:text-green-600' : 'hover:text-red-600'}`}
+                                title={user.disabled ? 'Enable user' : 'Disable user'}
+                              >
+                                {user.disabled ? <UserCheck className="h-4 w-4" /> : <Ban className="h-4 w-4" />}
+                              </button>
+                            )}
+                            <button
                               onClick={() => openSync(user)}
                               className="p-1 text-gray-400 hover:text-blue-600"
                               title="Sidecar sync login"
@@ -628,6 +702,33 @@ export default function UsersPage() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* Access keys of one user (Admin only) */}
+      {isAdmin && keysFor && (
+        <div className="rounded-xl bg-white p-6 shadow-sm space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="rounded-lg bg-amber-100 p-2">
+              <KeyRound className="h-5 w-5 text-amber-600" />
+            </div>
+            <h2 className="text-lg font-semibold">Access keys of &quot;{keysFor}&quot;</h2>
+            <button
+              onClick={() => setKeysFor(null)}
+              className="ml-auto rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
+            >
+              Close
+            </button>
+          </div>
+          <p className="text-sm text-gray-500">
+            One key works for the IDE API (the IntelliJ plugin) and for /mcp. The key is shown one time, when you create it.
+            The server keeps only a hash of it.
+          </p>
+          <UserAccessKeys
+            username={keysFor}
+            canCreate
+            userEnabled={!users.find(u => u.username === keysFor)?.disabled}
+          />
         </div>
       )}
 

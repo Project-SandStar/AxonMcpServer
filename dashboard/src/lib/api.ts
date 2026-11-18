@@ -50,7 +50,62 @@ async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promis
   return response.json();
 }
 
+/** Like apiRequest, but the Error holds the server's own error text. */
+async function apiRequestDetailed<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
+  const { method = 'GET', body } = options;
+  const username = typeof window !== 'undefined' ? localStorage.getItem('admin_user') || 'admin' : 'admin';
+  const password = typeof window !== 'undefined' ? localStorage.getItem('admin_pass') || 'admin' : 'admin';
+  const response = await fetch(`${API_BASE}/admin${endpoint}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + btoa(`${username}:${password}`) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    cache: 'no-store',
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(data?.error || (response.status === 401 ? 'Authentication required' : `API error: ${response.status}`));
+  }
+  return data as T;
+}
+
 // Types
+export type UserRole = 'admin' | 'user' | 'readonly';
+
+/** A user access key for the IDE API and /mcp. It never holds the key text. */
+export interface AccessKey {
+  id: string;
+  /** null when the user was deleted */
+  username: string | null;
+  name: string;
+  /** The readable start of the key, for example "axk_1a2b3c4d" */
+  prefix: string;
+  createdAt: string;
+  createdBy: string | null;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  lastUsedFrom: 'ide' | 'mcp' | null;
+  revokedAt: string | null;
+  status: 'active' | 'expired' | 'revoked';
+}
+
+/** The reply of "create a key": the only place the key text is ever sent. */
+export interface AccessKeyWithSecret extends AccessKey {
+  key: string;
+}
+
+export interface AccessAuditEvent {
+  id: number;
+  at: string;
+  source: 'ide' | 'mcp' | string;
+  action: string;
+  status: string;
+  username: string | null;
+  keyPrefix: string | null;
+  instance: string | null;
+  project: string | null;
+  name: string | null;
+}
+
 export interface ServerStatus {
   status: 'running' | 'starting' | 'error';
   uptime: number;
@@ -375,6 +430,28 @@ export const api = {
     apiRequest<{ success: boolean; message: string }>(`/oauth/clients/${encodeURIComponent(clientId)}`, {
       method: 'DELETE',
     }),
+
+  // User access keys (IDE API and /mcp) and the access record
+  listUserKeys: (username: string) =>
+    apiRequestDetailed<{ keys: AccessKey[] }>(`/users/${encodeURIComponent(username)}/keys`).then(r => r.keys),
+
+  createUserKey: (username: string, body: { name: string; expiresInDays: number | null }) =>
+    apiRequestDetailed<AccessKeyWithSecret>(`/users/${encodeURIComponent(username)}/keys`, { method: 'POST', body }),
+
+  revokeUserKey: (username: string, id: string) =>
+    apiRequestDetailed<{ success: boolean; key: AccessKey }>(
+      `/users/${encodeURIComponent(username)}/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }
+    ),
+
+  setUserDisabled: (username: string, disabled: boolean) =>
+    apiRequestDetailed<{ user: { username: string; disabled: boolean } }>(
+      `/users/${encodeURIComponent(username)}/disabled`, { method: 'PUT', body: { disabled } }
+    ),
+
+  listAllKeys: () => apiRequestDetailed<{ keys: AccessKey[] }>('/access/keys').then(r => r.keys),
+
+  listAccessAudit: (limit = 100) =>
+    apiRequestDetailed<{ events: AccessAuditEvent[] }>(`/access/audit?limit=${limit}`).then(r => r.events),
 
   // Tool Search
   getToolSearchMetadata: () => apiRequest<{
