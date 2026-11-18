@@ -116,6 +116,22 @@ afterEach(async () => {
 const make = async (username: string, name = 'laptop IntelliJ', expiresInDays?: number | null) =>
   (await call('POST', `/users/${username}/keys`, expiresInDays === undefined ? { name } : { name, expiresInDays })).json;
 
+describe('read-only guard: names with escaped characters', () => {
+  test('a read-only user named rita+dev can change the own password and revoke the own key, in any escape case', async () => {
+    const pw = 'ritadev-password';
+    users.createUser('rita+dev', pw, 'readonly');
+    const auth = 'Basic ' + Buffer.from(`rita+dev:${pw}`).toString('base64');
+    for (const seg of ['rita%2Bdev', 'rita%2bdev', 'RITA%2BDEV']) {
+      const res = await call('PUT', `/users/${seg}/password`, { password: 'new-password-1' }, null, auth);
+      expect(res.status).not.toBe(403);
+    }
+    // Another user's password stays closed.
+    expect((await call('PUT', '/users/alice/password', { password: 'x-password-1' }, null, auth)).status).toBe(403);
+    // A bad escape is refused, not thrown.
+    expect((await call('PUT', '/users/rita%E0%A4%A/password', { password: 'x-password-1' }, null, auth)).status).toBe(403);
+  });
+});
+
 describe('create a key', () => {
   test('201 with the key, once; the row has no key and no hash', async () => {
     const res = await call('POST', '/users/alice/keys', { name: '  laptop IntelliJ ', expiresInDays: 30 });

@@ -314,7 +314,10 @@ describe('roles and the access record', () => {
     expect(commitCalls).toEqual([]);
     expect(sky.evals).toEqual([]);
     await settle();
-    expect(audits).toEqual([{ action: 'write.denied', status: 'denied', caller: RITA }]);
+    // The record of a refused commit names the project and the function.
+    expect(audits).toEqual([{
+      action: 'write.denied', status: 'denied', caller: RITA, instance: 'demo', project: 'site', name: 'calcDailyAvg',
+    }]);
     // The 403 comes before the body is read.
     expect((await call('POST', fnUrl('demo', 'site', 'calcDailyAvg'), '{not json', READONLY_TOKEN)).status).toBe(403);
   });
@@ -329,6 +332,24 @@ describe('roles and the access record', () => {
       { action: 'functions.export', status: 'ok', caller: ALICE, instance: 'demo', project: 'site' },
       { action: 'functions.export', status: 'error', caller: ALICE },
     ]);
+  });
+
+  test('a call whose client drops the connection still leaves one record', async () => {
+    const http = await import('http');
+    const url = new URL(base + fnUrl('demo', 'site'));
+    // A request that never reads its reply: close the socket as soon as the reply starts.
+    await new Promise<void>(done => {
+      const req = http.request({
+        host: url.hostname, port: url.port, path: url.pathname, method: 'GET',
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      });
+      req.on('response', r => { r.destroy(); req.destroy(); done(); });
+      req.on('error', () => done());
+      req.end();
+    });
+    await settle();
+    expect(audits.length).toBe(1);
+    expect(audits[0]).toMatchObject({ action: 'functions.export', caller: ALICE });
   });
 
   test('the commit records the user: ok, conflict and error', async () => {

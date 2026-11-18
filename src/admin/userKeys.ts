@@ -217,10 +217,15 @@ export function createAccessRouter(opts: UserKeysRouterOptions): Router {
  */
 export function readonlyGuard(req: Request, res: Response, next: NextFunction) {
   if (req.user?.role !== 'readonly' || req.method === 'GET' || req.method === 'HEAD') return next();
-  const me = encodeURIComponent(req.user.username);
-  const path = req.path.toLowerCase().replace(/\/+$/, '');
-  const ownPassword = req.method === 'PUT' && path === `/users/${me}/password`;
-  const ownKey = req.method === 'DELETE' && path.startsWith(`/users/${me}/keys/`) && path.split('/').length === 5;
+  // Compare decoded path segments with the plain name: an escape such as %2B
+  // must match whatever case the client sends, and names compare without case.
+  const parts = req.path.replace(/\/+$/, '').split('/').slice(1).map(part => {
+    try { return decodeURIComponent(part); } catch { return null; }
+  });
+  const own = parts[0] === 'users' && typeof parts[1] === 'string' &&
+    parts[1].toLowerCase() === req.user.username.toLowerCase();
+  const ownPassword = own && req.method === 'PUT' && parts.length === 3 && parts[2] === 'password';
+  const ownKey = own && req.method === 'DELETE' && parts.length === 4 && parts[2] === 'keys' && !!parts[3];
   if (ownPassword || ownKey) return next();
   return res.status(403).json({ error: 'Your user is read-only' });
 }

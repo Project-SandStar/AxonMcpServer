@@ -282,6 +282,7 @@ export class UserStore {
   updateRole(username: string, role: UserRole): boolean {
     const user = this.users.get(username.toLowerCase());
     if (!user) return false;
+    if (role !== 'admin' && this.isLastWorkingAdmin(username)) return false;
 
     user.role = role;
     this.saveUsers();
@@ -289,16 +290,22 @@ export class UserStore {
   }
 
   /**
+   * True when `username` is an admin who is enabled and can log in, and no other
+   * such admin exists. Taking the admin role from this user, or deleting it,
+   * would leave nobody who can run the dashboard.
+   */
+  isLastWorkingAdmin(username: string): boolean {
+    const user = this.users.get(username.toLowerCase());
+    if (!user || user.role !== 'admin' || user.dashboardLogin === false || user.disabled === true) return false;
+    return this.otherWorkingAdmins(user).length === 0;
+  }
+
+  /**
    * Delete a user
    */
   deleteUser(username: string): boolean {
-    // Prevent deleting the last admin
-    const admins = Array.from(this.users.values()).filter(u => u.role === 'admin');
-    const user = this.users.get(username.toLowerCase());
-
-    if (user?.role === 'admin' && admins.length <= 1) {
-      return false; // Cannot delete the last admin
-    }
+    // Never delete the last admin who is enabled and can log in
+    if (this.isLastWorkingAdmin(username)) return false;
 
     const deleted = this.users.delete(username.toLowerCase());
     if (deleted) {

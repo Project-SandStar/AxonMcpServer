@@ -118,15 +118,22 @@ export class TokenCleanupJob {
         },
       });
 
-      // Old user access keys and old access records. A failure here must not stop the rest.
+      // Old user access keys and old access records. Each purge runs on its own:
+      // a failure in one must not stop the other or the rest of the cleanup.
+      let keysDeleted = 0;
+      let auditDeleted = 0;
       try {
-        const keysDeleted = this.keys ? await this.keys.purge(new Date(now.getTime() - KEY_KEEP_DAYS * DAY_MS)) : 0;
-        const auditDeleted = this.audit ? await this.audit.purge(new Date(now.getTime() - AUDIT_KEEP_DAYS * DAY_MS)) : 0;
-        if (keysDeleted > 0 || auditDeleted > 0) {
-          console.error(`[TokenCleanup] Deleted ${keysDeleted} old access keys and ${auditDeleted} old access records`);
-        }
+        keysDeleted = this.keys ? await this.keys.purge(new Date(now.getTime() - KEY_KEEP_DAYS * DAY_MS)) : 0;
       } catch (error: any) {
-        console.error(`[TokenCleanup] Could not clean access keys or access records: ${error?.message ?? error}`);
+        console.error(`[TokenCleanup] Could not clean access keys: ${error?.message ?? error}`);
+      }
+      try {
+        auditDeleted = this.audit ? await this.audit.purge(new Date(now.getTime() - AUDIT_KEEP_DAYS * DAY_MS)) : 0;
+      } catch (error: any) {
+        console.error(`[TokenCleanup] Could not clean access records: ${error?.message ?? error}`);
+      }
+      if (keysDeleted > 0 || auditDeleted > 0) {
+        console.error(`[TokenCleanup] Deleted ${keysDeleted} old access keys and ${auditDeleted} old access records`);
       }
 
       // Delete orphaned sessions (where the access token no longer exists or is revoked)

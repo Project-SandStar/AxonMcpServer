@@ -93,6 +93,20 @@ interface AuditDraft { action: string; status?: string; instance?: string; proje
 
 const whoText = (caller: IdeCaller) => `${caller.username} (${caller.keyPrefix ?? 'login token'})`;
 
+/**
+ * Project and function name of a path below /api/ide, for the access record of a
+ * call that is refused before its route runs. Only plain, decodable segments.
+ */
+function targetOfPath(path: string): { instance?: string; project?: string; name?: string } {
+  const m = /^\/projects\/([^/]+)\/([^/]+)\/functions(?:\/([^/]+))?\/?$/.exec(path);
+  if (!m) return {};
+  const dec = (s: string | undefined) => {
+    if (s === undefined) return undefined;
+    try { return decodeURIComponent(s).slice(0, 200); } catch { return undefined; }
+  };
+  return { instance: dec(m[1]), project: dec(m[2]), name: dec(m[3]) };
+}
+
 export function createIdeRouter(opts: IdeRouterOptions): Router {
   const router = Router();
   const log = opts.log ?? ((line: string) => console.error(line));
@@ -129,7 +143,7 @@ export function createIdeRouter(opts: IdeRouterOptions): Router {
     // A read-only user can list and export only.
     if (caller.role === 'readonly' && req.method !== 'GET' && req.method !== 'HEAD') {
       log(`[ide] refused ${req.method} for the read-only user ${whoText(caller)}`);
-      audit({ action: 'write.denied', status: 'denied', caller });
+      audit({ action: 'write.denied', status: 'denied', caller, ...targetOfPath(req.path) });
       res.status(403).json({ error: 'your user is read-only and cannot commit' });
       return;
     }
@@ -137,12 +151,18 @@ export function createIdeRouter(opts: IdeRouterOptions): Router {
     res.locals.ideCaller = caller;
     const draft: AuditDraft = { action: 'other' };
     res.locals.ideAudit = draft;
-    // One record per call, written when the reply is sent.
-    res.on('finish', () => {
-      const code = res.statusCode;
-      const status = draft.status ?? (code < 400 ? 'ok' : code === 409 ? 'conflict' : 'error');
+    // One record per call. 'finish' comes when the reply is sent; when the client
+    // drops the connection first, only 'close' comes. Write on the first of the two.
+    let recorded = false;
+    const record = () => {
+      if (recorded) return;
+      recorded = true;
+      const code = res.writableFinished ? res.statusCode : 499;
+      const status = draft.status ?? (!res.writableFinished ? 'aborted' : code < 400 ? 'ok' : code === 409 ? 'conflict' : 'error');
       audit({ action: draft.action, status, caller: caller!, instance: draft.instance, project: draft.project, name: draft.name });
-    });
+    };
+    res.on('finish', record);
+    res.on('close', record);
     next();
   });
 

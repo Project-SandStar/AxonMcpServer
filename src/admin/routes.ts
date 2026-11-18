@@ -240,7 +240,15 @@ export function createAdminRouter(context: AdminContext): Router {
           'POST /admin/users': 'Create a new user (admin only)',
           'PUT /admin/users/:username/password': 'Update user password',
           'PUT /admin/users/:username/role': 'Update user role (admin only)',
-          'DELETE /admin/users/:username': 'Delete a user (admin only)'
+          'DELETE /admin/users/:username': 'Delete a user (admin only)',
+          'POST /admin/users/:username/keys': 'Create an access key for a user; the key is shown once (admin only)',
+          'GET /admin/users/:username/keys': 'List the access keys of a user (prefix, created, last used, expiry; never the key)',
+          'DELETE /admin/users/:username/keys/:id': 'Revoke an access key (admin, or the user for an own key)',
+          'PUT /admin/users/:username/disabled': 'Disable or enable a user {disabled: boolean} (admin only)'
+        },
+        access: {
+          'GET /admin/access/keys': 'List the access keys of all users',
+          'GET /admin/access/audit': 'Read the access record of /api/ide and /mcp calls'
         },
         oauth: {
           'GET /admin/oauth/sessions': 'List all OAuth sessions',
@@ -429,12 +437,9 @@ export function createAdminRouter(context: AdminContext): Router {
         return res.status(400).json({ error: 'Role must be "admin", "user" or "readonly"' });
       }
 
-      // Prevent demoting self if last admin
-      if (req.user?.username === username && role !== 'admin') {
-        const admins = userStore.getAllUsers().filter(u => u.role === 'admin');
-        if (admins.length <= 1) {
-          return res.status(400).json({ error: 'Cannot demote the last admin' });
-        }
+      // Never take the admin role from the last admin who is enabled and can log in
+      if (role !== 'admin' && userStore.isLastWorkingAdmin(username)) {
+        return res.status(400).json({ error: 'Cannot demote the last admin' });
       }
 
       const success = userStore.updateRole(username, role);

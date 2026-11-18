@@ -197,6 +197,26 @@ describe('user store: roles and the disabled flag', () => {
     expect(store.setDisabled('bob', true)).toBe(false);
   });
 
+  test('the last working admin cannot lose the admin role or be deleted; a disabled admin does not count', () => {
+    store.createUser('bob', 'bob-password', 'admin');
+    expect(store.setDisabled('bob', true)).toBe(true);
+    // bob is disabled, so admin is the last working admin.
+    expect(store.isLastWorkingAdmin('admin')).toBe(true);
+    expect(store.updateRole('admin', 'user')).toBe(false);
+    expect(store.deleteUser('admin')).toBe(false);
+    expect(store.getUser('admin')?.role).toBe('admin');
+    // A disabled admin can be demoted or deleted.
+    expect(store.updateRole('bob', 'user')).toBe(true);
+    // An admin with no dashboard login does not count either.
+    store.createUser('dora', 'dora-password', 'admin');
+    store.setDashboardLogin('dora', false);
+    expect(store.updateRole('admin', 'readonly')).toBe(false);
+    // With a second working admin the first can be demoted.
+    store.setDashboardLogin('dora', true);
+    expect(store.updateRole('admin', 'user')).toBe(true);
+    expect(store.isLastWorkingAdmin('dora')).toBe(true);
+  });
+
   test('an old users.json with no disabled field loads as enabled and is not rewritten', () => {
     const old = {
       users: [
