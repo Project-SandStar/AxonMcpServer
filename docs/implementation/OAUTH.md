@@ -202,10 +202,11 @@ call with no token is anonymous and no role rule applies to it. Set
 - Behind mcp-proxy the server sees the key of the proxy, not of each
   developer. The access record then names the proxy's user.
 - The keys are in `.cache/usage.db`. "Reset database" on the Usage page
-  deletes that file and with it all keys (admin only).
-- A backup restore on the same host keeps the keys: the restore does not
-  touch `user_api_keys`. The backup file does not hold the keys, so a new
-  host starts with none.
+  empties only the usage tables; the keys, the access record and the OAuth
+  rows stay.
+- A backup never holds `usage.db`, and a restore never writes it, also when an
+  older backup holds one. So a restore cannot bring back a revoked key. OAuth
+  rows are backed up and restored row by row. A new host starts with no keys.
 - Keys that were revoked or that expired more than 90 days ago are deleted by
   the cleanup job. Access record rows are kept for 365 days.
 

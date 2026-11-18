@@ -458,20 +458,14 @@ export class UsageStore {
   }
 
   /**
-   * Reset database - delete file and reinitialize
+   * Reset the usage data. usage.db also holds the OAuth tables, the user access
+   * keys and the access record, and other Prisma clients keep it open, so the file
+   * is never deleted: only the four usage tables are emptied, then the file is
+   * compacted.
    */
   async resetDatabase(): Promise<void> {
-    // Disconnect first
-    await this.prisma.$disconnect();
-    this.initialized = false;
-
-    // Delete the database file if it exists
-    if (fs.existsSync(this.dbPath)) {
-      fs.unlinkSync(this.dbPath);
-    }
-
-    // Reconnect - this will recreate the database
-    await this.ensureInitialized();
+    await this.clear();
+    await this.prisma.$executeRawUnsafe('VACUUM');
   }
 }
 
