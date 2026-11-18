@@ -4,6 +4,27 @@ import * as crypto from 'crypto';
 import { HGrid } from 'haystack-core';
 import { HaystackSkySparkClient } from '../skyspark/haystackClient.js';
 import { EnhancedAxonParser, type EnhancedFunctionMetadata } from '../parser/enhancedAxonParser.js';
+import { isFunctionName, isSafeSegment } from '../ide/names.js';
+import { modToIso, sha256Hex } from '../ide/mod.js';
+
+/** One function of the local copy, as the IDE API sends it. */
+export interface StoredFunction {
+  name: string;
+  src: string;
+  doc: string | null;
+  /** ISO 8601 UTC with milliseconds, or null when the copy does not hold it. */
+  mod: string | null;
+  /** sha256 of src. */
+  hash: string;
+}
+
+/** One project of the local copy. */
+export interface StoredProject {
+  instance: string;
+  project: string;
+  functionCount: number;
+  lastSync: string | null;
+}
 
 interface SyncMetadata {
   instance: string;
@@ -13,8 +34,52 @@ interface SyncMetadata {
   functions: Record<string, FunctionMetadata>;  // Track individual functions
 }
 
-// Extended to include enhanced metadata
-type FunctionMetadata = EnhancedFunctionMetadata;
+// Extended to include enhanced metadata.
+// modIso is the record's mod with milliseconds (lastModified is a display
+// string with seconds only). doc is the record's doc tag, null when it has none.
+type FunctionMetadata = EnhancedFunctionMetadata & { modIso?: string | null; doc?: string | null };
+
+/** Metadata without the source analysis (enhanced parsing off). */
+function basicFunctionMetadata(
+  name: string, hash: string, modTime: string | undefined, instance: string, project: string
+): FunctionMetadata {
+  return {
+    name,
+    hash,
+    lastModified: modTime,
+    synced: new Date().toISOString(),
+    signature: { parameters: [], isAsync: false },
+    dependencies: { functions: [], tags: [], queries: [], externalApis: [] },
+    complexity: { linesOfCode: 0, cyclomaticComplexity: 0, nestedDepth: 0, commentRatio: 0 },
+    operations: { reads: [], writes: [], commits: false, jobs: false, emails: false },
+    documentation: { description: '', examples: [], notes: [] },
+    patterns: { category: 'UNCATEGORIZED', keywords: [], useCase: '' },
+    performance: { estimatedRuntime: 'fast', hasLoops: false, hasRecursion: false, datasetSize: 'small' },
+    context: { siteSpecific: false, projectName: project, instanceName: instance, sharedAcrossProjects: false },
+    quality: { hasDocumentation: false, hasExamples: false, hasErrorHandling: false, hasTests: false },
+    relationships: { similarFunctions: [], relatedEquipTypes: [], prerequisiteFunctions: [] }
+  } as FunctionMetadata;
+}
+
+/** Tags that can follow `doc` in a func/<name>.trio file (see buildTrioMetadata). */
+const TRIO_TAGS_AFTER_DOC = /^(ruleOn|sparkRule|kpiRule|curRule|ruleType|mod|lib|version|author|src)(:|$)/;
+
+/**
+ * The doc tag of a func/<name>.trio file, or null. Used only for a copy that
+ * was synced before the metadata held the doc. The file is written with raw
+ * newlines inside the value, so the doc ends at the next known tag.
+ */
+export function docFromTrio(trio: string): string | null {
+  const lines = trio.split('\n');
+  const start = lines.findIndex(l => l.startsWith('doc:"'));
+  const srcAt = lines.findIndex(l => l === 'src:');
+  if (start < 0 || (srcAt >= 0 && start > srcAt)) return null;
+  let end = start + 1;
+  while (end < lines.length && !TRIO_TAGS_AFTER_DOC.test(lines[end])) end++;
+  let text = lines.slice(start, end).join('\n').slice('doc:"'.length);
+  if (text.endsWith('"')) text = text.slice(0, -1);
+  return text.replace(/\\"/g, '"');
+}
 
 export interface FunctionSyncOptions {
   enableVersioning?: boolean;
@@ -145,7 +210,25 @@ export class FunctionSyncManagerEnhanced {
   private async saveSyncMetadata(metadata: SyncMetadata): Promise<void> {
     const metadataPath = this.getSyncMetadataPath(metadata.instance, metadata.project);
     await fs.mkdir(path.dirname(metadataPath), { recursive: true });
-    await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2));
+    // Write to a temp file, then rename: a reader never sees half a file.
+    const tmpPath = `${metadataPath}.${process.pid}.tmp`;
+    await fs.writeFile(tmpPath, JSON.stringify(metadata, null, 2));
+    await fs.rename(tmpPath, metadataPath);
+  }
+
+  /** One sync or local update at a time for each project. */
+  private readonly projectLocks = new Map<string, Promise<unknown>>();
+
+  private withProjectLock<T>(instance: string, project: string, fn: () => Promise<T>): Promise<T> {
+    const key = `${instance}/${project}`;
+    const previous = this.projectLocks.get(key) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(fn);
+    const tail = run.catch(() => undefined);
+    this.projectLocks.set(key, tail);
+    void tail.then(() => {
+      if (this.projectLocks.get(key) === tail) this.projectLocks.delete(key);
+    });
+    return run;
   }
   
   /**
@@ -347,17 +430,31 @@ export class FunctionSyncManagerEnhanced {
       
       try {
         // Get modification time from row data (readAll(func) includes mod tag)
+        // Always read it: a first (forced) sync must record the mod too, or a
+        // later sync has nothing to compare with.
         let modTime: string | undefined;
-        if (checkModTime && row) {
+        let modIso: string | null = null;
+        let rowDoc: string | null = null;
+        let rowSrc = '';
+        if (row) {
           try {
             const modValue = row.get('mod');
             const modStr = modValue?.toString();
             // Only use mod time if it's a valid value (not null or empty)
             if (modStr && modStr !== 'null' && !modStr.includes('[{val: null}]')) {
               modTime = modStr;
+              modIso = modToIso(modValue);
             }
           } catch {
             // Mod time not available
+          }
+          try {
+            const docValue = row.get('doc');
+            if (docValue !== undefined && docValue !== null) rowDoc = docValue.toString();
+            const srcValue = row.get('src');
+            rowSrc = srcValue ? srcValue.toString() : '';
+          } catch {
+            // Tags not available
           }
         }
         
@@ -371,9 +468,13 @@ export class FunctionSyncManagerEnhanced {
             await fs.access(filePath);
             
             // File exists - check if it changed
-            if (checkModTime && modTime && existingMeta?.lastModified) {
-              // Compare modification times
-              if (modTime !== existingMeta.lastModified) {
+            // Changed when the mod differs or when the source differs. The
+            // source test also covers a copy that never recorded a mod.
+            if (checkModTime) {
+              const modChanged = !!(modTime && existingMeta?.lastModified && modTime !== existingMeta.lastModified);
+              const isoChanged = !!(modIso && existingMeta?.modIso && modIso !== existingMeta.modIso);
+              const srcChanged = rowSrc !== '' && this.hashContent(rowSrc) !== existingMeta?.hash;
+              if (modChanged || isoChanged || srcChanged) {
                 shouldDownload = true;
                 isUpdate = true;
                 if (!silent) {
@@ -391,7 +492,11 @@ export class FunctionSyncManagerEnhanced {
         }
         
         if (!shouldDownload) {
-          results.push({ name: funcName, action: 'skipped', metadata: existingMeta });
+          // Source unchanged: keep the parsed metadata, refresh mod and doc from the record.
+          const kept: FunctionMetadata | undefined = existingMeta && row
+            ? { ...existingMeta, lastModified: modTime ?? existingMeta.lastModified, modIso, doc: rowDoc }
+            : existingMeta;
+          results.push({ name: funcName, action: 'skipped', metadata: kept });
           return;
         }
         
@@ -442,24 +547,10 @@ export class FunctionSyncManagerEnhanced {
             modTime
           );
         } else {
-          // Fallback to basic metadata
-          metadata = {
-            name: funcName,
-            hash,
-            lastModified: modTime,
-            synced: new Date().toISOString(),
-            signature: { parameters: [], isAsync: false },
-            dependencies: { functions: [], tags: [], queries: [], externalApis: [] },
-            complexity: { linesOfCode: 0, cyclomaticComplexity: 0, nestedDepth: 0, commentRatio: 0 },
-            operations: { reads: [], writes: [], commits: false, jobs: false, emails: false },
-            documentation: { description: '', examples: [], notes: [] },
-            patterns: { category: 'UNCATEGORIZED', keywords: [], useCase: '' },
-            performance: { estimatedRuntime: 'fast', hasLoops: false, hasRecursion: false, datasetSize: 'small' },
-            context: { siteSpecific: false, projectName: project, instanceName: instance, sharedAcrossProjects: false },
-            quality: { hasDocumentation: false, hasExamples: false, hasErrorHandling: false, hasTests: false },
-            relationships: { similarFunctions: [], relatedEquipTypes: [], prerequisiteFunctions: [] }
-          };
+          metadata = basicFunctionMetadata(funcName, hash, modTime, instance, project);
         }
+        metadata.modIso = modIso;
+        metadata.doc = rowDoc;
         
         results.push({ 
           name: funcName, 
@@ -485,13 +576,35 @@ export class FunctionSyncManagerEnhanced {
     client: HaystackSkySparkClient,
     instance: string,
     project: string,
-    options: { 
+    options: {
       force?: boolean;        // Force re-download all
       silent?: boolean;       // Suppress output
       checkModTime?: boolean; // Check modification times (slower but accurate)
       concurrency?: number;   // Number of parallel downloads (default: 10)
     } = {}
-  ): Promise<{ 
+  ): Promise<{
+    downloaded: number;
+    updated: number;
+    skipped: number;
+    deleted: number;
+    errors: number;
+  }> {
+    // One at a time for each project: a sync and a commit's local update
+    // must not write the same files and metadata together.
+    return this.withProjectLock(instance, project, () => this.doSyncFunctions(client, instance, project, options));
+  }
+
+  private async doSyncFunctions(
+    client: HaystackSkySparkClient,
+    instance: string,
+    project: string,
+    options: {
+      force?: boolean;
+      silent?: boolean;
+      checkModTime?: boolean;
+      concurrency?: number;
+    } = {}
+  ): Promise<{
     downloaded: number; 
     updated: number;
     skipped: number; 
@@ -614,6 +727,7 @@ export class FunctionSyncManagerEnhanced {
           const filePath = path.join(funcDir, `${funcName}.axon`);
           try {
             await fs.unlink(filePath);
+            await fs.unlink(filePath.replace(/\.axon$/, '.trio')).catch(() => undefined);
             deleted++;
             if (!silent) {
               console.error(`    🗑️  ${funcName}.axon (deleted from server)`);
@@ -748,6 +862,195 @@ export class FunctionSyncManagerEnhanced {
     }
   }
   
+  // ---------------------------------------------------------------------
+  // Local copy for the IDE API and the function commit
+  // ---------------------------------------------------------------------
+
+  /** The project folder, after a check that both names stay inside baseDir. */
+  private safeProjectDir(instance: string, project: string): string {
+    if (!isSafeSegment(instance) || !isSafeSegment(project)) {
+      throw new Error('Invalid instance or project name');
+    }
+    const base = path.resolve(this.baseDir);
+    const dir = path.resolve(base, instance, project);
+    if (!dir.startsWith(base + path.sep)) throw new Error('Invalid instance or project name');
+    return dir;
+  }
+
+  /** Names of the regular func/<name>.axon files whose name is a plain function name. */
+  private async storedFunctionNames(funcDir: string): Promise<string[]> {
+    let entries;
+    try {
+      entries = await fs.readdir(funcDir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    return entries
+      .filter(e => e.isFile() && e.name.endsWith('.axon'))
+      .map(e => e.name.slice(0, -'.axon'.length))
+      .filter(isFunctionName)
+      .sort();
+  }
+
+  private async isDir(dir: string): Promise<boolean> {
+    try {
+      return (await fs.stat(dir)).isDirectory();
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Every project that has a local copy (a func folder or sync metadata).
+   * The names are the folder names, so they are the names a caller reads with.
+   */
+  async listStoredProjects(): Promise<StoredProject[]> {
+    const out: StoredProject[] = [];
+    let instances: string[];
+    try {
+      instances = await fs.readdir(this.baseDir);
+    } catch {
+      return out;
+    }
+    for (const instance of instances.sort()) {
+      if (!isSafeSegment(instance) || instance.startsWith('.')) continue;
+      const instanceDir = path.join(this.baseDir, instance);
+      if (!(await this.isDir(instanceDir))) continue;
+      let projects: string[];
+      try {
+        projects = await fs.readdir(instanceDir);
+      } catch {
+        continue;
+      }
+      for (const project of projects.sort()) {
+        if (!isSafeSegment(project) || project.startsWith('.')) continue;
+        const funcDir = this.getProjectFunctionDir(instance, project);
+        const metadata = await this.loadSyncMetadata(instance, project);
+        if (!metadata && !(await this.isDir(funcDir))) continue;
+        out.push({
+          instance,
+          project,
+          functionCount: (await this.storedFunctionNames(funcDir)).length,
+          lastSync: modToIso(metadata?.lastSync) ?? null,
+        });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * The functions of one project from the local copy, or null when the
+   * project has no local copy. One entry for each func/<name>.axon file.
+   *
+   * `mod` comes from the sync metadata; it is null for a copy that was synced
+   * before the metadata held it (run a sync to fill it).
+   */
+  async readStoredFunctions(
+    instance: string,
+    project: string
+  ): Promise<{ syncedAt: string | null; functions: StoredFunction[] } | null> {
+    this.safeProjectDir(instance, project);
+    const funcDir = this.getProjectFunctionDir(instance, project);
+    const metadata = await this.loadSyncMetadata(instance, project);
+    if (!metadata && !(await this.isDir(funcDir))) return null;
+
+    const functions: StoredFunction[] = [];
+    for (const name of await this.storedFunctionNames(funcDir)) {
+      let src: string;
+      try {
+        src = await fs.readFile(path.join(funcDir, `${name}.axon`), 'utf-8');
+      } catch {
+        continue; // removed while we read
+      }
+      const meta = metadata?.functions?.[name];
+      let doc: string | null = null;
+      if (meta && meta.doc !== undefined) {
+        doc = meta.doc;
+      } else {
+        try {
+          doc = docFromTrio(await fs.readFile(path.join(funcDir, `${name}.trio`), 'utf-8'));
+        } catch {
+          doc = null;
+        }
+      }
+      // The mod is good only for the source it was recorded with.
+      const metaIsCurrent = !!meta && meta.hash === this.hashContent(src);
+      functions.push({
+        name,
+        src,
+        doc,
+        mod: metaIsCurrent ? modToIso(meta!.modIso) : null,
+        hash: sha256Hex(src),
+      });
+    }
+    return { syncedAt: modToIso(metadata?.lastSync) ?? null, functions };
+  }
+
+  /**
+   * Updates the local copy after a commit to SkySpark: func/<name>.axon,
+   * func/<name>.trio and the function's entry in the sync metadata.
+   *
+   * A project that was never synced has no func folder; nothing is written
+   * for it, because one lone file would look like a full copy.
+   */
+  async recordCommittedFunction(
+    instance: string,
+    project: string,
+    fn: {
+      name: string;
+      src: string;
+      doc: string | null;
+      modIso: string | null;
+      record?: { has(name: string): boolean; get(name: string): unknown } | null;
+    }
+  ): Promise<{ files: boolean; metadata: boolean }> {
+    this.safeProjectDir(instance, project);
+    if (!isFunctionName(fn.name)) throw new Error('Invalid function name');
+
+    return this.withProjectLock(instance, project, async () => {
+      const funcDir = this.getProjectFunctionDir(instance, project);
+      if (!(await this.isDir(funcDir))) return { files: false, metadata: false };
+
+      const filePath = path.join(funcDir, `${fn.name}.axon`);
+      if (this.enableVersioning) {
+        try {
+          const previous = await fs.readFile(filePath, 'utf-8');
+          if (previous !== fn.src) await this.createFunctionBackup(instance, project, fn.name, previous);
+        } catch {
+          // New function: nothing to keep
+        }
+      }
+      await fs.writeFile(filePath, fn.src, 'utf-8');
+      await fs.writeFile(
+        path.join(funcDir, `${fn.name}.trio`),
+        this.buildTrioMetadata(fn.record ?? null, fn.src),
+        'utf-8'
+      );
+
+      const metadata = await this.loadSyncMetadata(instance, project);
+      if (!metadata) return { files: true, metadata: false };
+
+      const hash = this.hashContent(fn.src);
+      const modValue = fn.record?.has('mod') ? fn.record.get('mod') : undefined;
+      const modTime = modValue ? String(modValue) : undefined;
+      const entry: FunctionMetadata = this.enableEnhancedParsing
+        ? this.parser.parseEnhancedFunction(fn.src, fn.name, instance, project, hash, modTime)
+        : basicFunctionMetadata(fn.name, hash, modTime, instance, project);
+      entry.modIso = fn.modIso;
+      entry.doc = fn.doc;
+
+      const functions = metadata.functions ?? {};
+      const isNew = !(fn.name in functions);
+      functions[fn.name] = entry;
+      await this.saveSyncMetadata({
+        ...metadata,
+        functions,
+        functionCount: isNew ? (metadata.functionCount ?? 0) + 1 : metadata.functionCount,
+      });
+      return { files: true, metadata: true };
+    });
+  }
+
   /**
    * Clear synced functions for a project
    */
