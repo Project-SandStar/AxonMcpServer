@@ -3,9 +3,21 @@
 ## Unreleased
 
 
+### ⚠ BREAKING CHANGES
+
+* **ide:** the shared token `AXON_IDE_TOKEN` is removed. `/api/ide` now needs a user access key. An admin makes one key for each developer on the dashboard Users page. A call with the old token gets `401`.
+* **auth:** a token on `/mcp` is checked on every call, also when OAuth is off. A token whose user is deleted or disabled, and an OAuth token with no user, is refused.
+* **admin:** `POST /admin/usage/clear` and `POST /admin/usage/reset` are admin only.
+
+
 ### Features
 
-* **ide:** IDE API under `/api/ide` (list projects, export functions, commit one function) behind a bearer token of its own, `AXON_IDE_TOKEN`; see docs/api/IDE-API.md
+* **auth:** user access keys (`axk_...`): made by an admin for one user, stored as a sha256 hash, shown one time, with a readable prefix, an optional expiry, a last-used time and revoke. One key works on `/api/ide` and on `/mcp`
+* **auth:** new role `readonly`: no commit on `/api/ide`, no write tools on `/mcp` (`executeAxonCode`, `commitAxonFunction`, `queryHaystack` and others), read only on the dashboard API
+* **auth:** a user can be disabled; a disabled or deleted user loses the dashboard, the keys and the OAuth logins at once
+* **auth:** access record: one row for each `/api/ide` call and each commit, with the user and the key prefix
+* **dashboard:** Users page: access keys per user (create, copy once, list, revoke), Read-only role, Disable and Enable. Sessions page: an Access keys tab with all keys and the recent IDE and commit activity
+* **ide:** IDE API under `/api/ide` (list projects, export functions, commit one function); see docs/api/IDE-API.md
 * **ide:** `commitAxonFunction` takes an optional `expectedMod`; a stale write returns a conflict and commits nothing
 
 
