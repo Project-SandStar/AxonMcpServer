@@ -13,13 +13,17 @@ import express from 'express';
 import type { AddressInfo } from 'net';
 import type { Server } from 'http';
 import { HDateTime, HDict, HGrid, HMarker, HStr } from 'haystack-core';
-import { createIdeRouter, ideToken, IDE_TOKEN_ENV } from '../ide/ideRouter.js';
+import { createIdeRouter, type IdeAuditEvent, type IdeCaller } from '../ide/ideRouter.js';
 import { buildCommitAxon, commitFunction, CommitArgError, type CommitArgs } from '../ide/commitFunction.js';
 import { axonStr, isFunctionName, isSafeSegment } from '../ide/names.js';
 import { modToIso, sha256Hex } from '../ide/mod.js';
 import { docFromTrio, FunctionSyncManagerEnhanced } from '../sync/functionSyncManagerEnhanced.js';
 
-const TOKEN = 'test-token-0123456789';
+// Made-up keys. The router only sees what verify() says about them.
+const TOKEN = 'axk_0a1b2c3d_alice-test-key-0123456789';
+const READONLY_TOKEN = 'axk_0e0e0e0e_rita-test-key-0123456789';
+const ALICE: IdeCaller = { userId: 'u-alice', username: 'alice', role: 'user', keyId: 'k-alice', keyPrefix: 'axk_0a1b2c3d' };
+const RITA: IdeCaller = { userId: 'u-rita', username: 'rita', role: 'readonly', keyId: 'k-rita', keyPrefix: 'axk_0e0e0e0e' };
 
 /** Reads an Axon string literal (with its quotes) back to the value. */
 function unAxon(literal: string): string {
@@ -148,7 +152,10 @@ let server: Server;
 let base: string;
 let port: number;
 let configured: Array<{ instance: string; project: string }>;
-let currentToken: string | undefined;
+let callers: Map<string, IdeCaller>;
+let verifyBroken: boolean;
+let audits: IdeAuditEvent[];
+let commitBy: string[];
 let syncCalls: string[];
 let commitCalls: string[];
 const logs: string[] = [];
@@ -196,22 +203,30 @@ beforeEach(async () => {
   sky.put('roundTo', '(v, n: 2) => v.format("#." + "0" * n)', null, '2026-01-03T00:00:00.000Z');
   sky.put('trickyOne', TRICKY_SRC, 'Line one\nLine "two"', '2026-01-04T10:20:30.004Z');
   configured = [{ instance: 'demo', project: 'site' }, { instance: 'demo', project: 'empty' }];
-  currentToken = TOKEN;
+  callers = new Map([[TOKEN, ALICE], [READONLY_TOKEN, RITA]]);
+  verifyBroken = false;
+  audits = [];
+  commitBy = [];
   syncCalls = [];
   commitCalls = [];
   logs.length = 0;
 
   const app = express();
   app.use('/api/ide', createIdeRouter({
-    token: () => currentToken,
+    verify: async (bearer) => {
+      if (verifyBroken) throw new Error('database is down');
+      return callers.get(bearer) ?? null;
+    },
+    audit: event => { audits.push(event); },
     store: manager,
     configuredProjects: () => configured,
     sync: async (instance, project) => {
       syncCalls.push(`${instance}/${project}`);
       return manager.syncFunctions(sky as any, instance, project, { silent: true });
     },
-    commit: async (instance, project, args) => {
+    commit: async (instance, project, args, caller) => {
       commitCalls.push(`${instance}/${project}/${args.name}`);
+      commitBy.push(caller.username);
       return commitFunction({ client: sky, instance, project }, args, { baseDir: tmp, store: manager });
     },
     log: line => { logs.push(line); },
@@ -254,18 +269,116 @@ describe('auth', () => {
     expect(res.status).toBe(401);
   });
 
-  test('503 for every request when the token is not set', async () => {
-    currentToken = undefined;
-    expect((await call('GET', '/projects')).status).toBe(503);
-    expect((await call('GET', '/projects', undefined, '')).status).toBe(503);
+  test('503 when the key check cannot run; an empty bearer is a 401', async () => {
+    verifyBroken = true;
+    const down = await call('GET', '/projects');
+    expect(down.status).toBe(503);
+    expect(down.text).not.toContain('database is down');
+    expect((await call('GET', '/projects', undefined, '')).status).toBe(401);
+    expect(audits).toEqual([]);
   });
 
-  test('ideToken: the routes stay off without a token or with a short one', () => {
-    expect(ideToken({})).toEqual({ token: null, reason: `${IDE_TOKEN_ENV} is not set` });
-    expect(ideToken({ [IDE_TOKEN_ENV]: '   ' }).token).toBeNull();
-    expect(ideToken({ [IDE_TOKEN_ENV]: 'short' }).token).toBeNull();
-    expect(ideToken({ [IDE_TOKEN_ENV]: 'short' }).reason).toMatch(/shorter than 16/);
-    expect(ideToken({ [IDE_TOKEN_ENV]: ` ${TOKEN} ` })).toEqual({ token: TOKEN });
+  test('a key that verify no longer knows is a 401 on the next call', async () => {
+    expect((await call('GET', '/projects')).status).toBe(200);
+    callers.delete(TOKEN); // revoked, expired, or the user is disabled or deleted
+    const res = await call('GET', '/projects');
+    expect(res.status).toBe(401);
+    expect(res.json).toEqual({ error: 'unauthorized' });
+  });
+
+  test('no shared token: the old AXON_IDE_TOKEN value is refused', async () => {
+    const old = process.env.AXON_IDE_TOKEN;
+    process.env.AXON_IDE_TOKEN = 'old-shared-token-0123456789';
+    try {
+      expect((await call('GET', '/projects', undefined, 'old-shared-token-0123456789')).status).toBe(401);
+    } finally {
+      if (old === undefined) delete process.env.AXON_IDE_TOKEN; else process.env.AXON_IDE_TOKEN = old;
+    }
+  });
+});
+
+const settle = () => new Promise<void>(ok => setTimeout(ok, 20));
+
+describe('roles and the access record', () => {
+  test('a read-only user can list and export, also with sync=true', async () => {
+    expect((await call('GET', '/projects', undefined, READONLY_TOKEN)).status).toBe(200);
+    expect((await call('GET', fnUrl('demo', 'site'), undefined, READONLY_TOKEN)).status).toBe(200);
+    expect((await call('GET', fnUrl('demo', 'site') + '?sync=true', undefined, READONLY_TOKEN)).status).toBe(200);
+    expect(syncCalls).toEqual(['demo/site']);
+  });
+
+  test('a read-only user cannot POST a commit: 403, nothing reaches SkySpark', async () => {
+    const res = await call('POST', fnUrl('demo', 'site', 'calcDailyAvg'), { src: '() => 1', expectedMod: null }, READONLY_TOKEN);
+    expect(res.status).toBe(403);
+    expect(res.json).toEqual({ error: 'your user is read-only and cannot commit' });
+    expect(commitCalls).toEqual([]);
+    expect(sky.evals).toEqual([]);
+    await settle();
+    expect(audits).toEqual([{ action: 'write.denied', status: 'denied', caller: RITA }]);
+    // The 403 comes before the body is read.
+    expect((await call('POST', fnUrl('demo', 'site', 'calcDailyAvg'), '{not json', READONLY_TOKEN)).status).toBe(403);
+  });
+
+  test('each call gives one record with the user and the key prefix', async () => {
+    await call('GET', '/projects');
+    await call('GET', fnUrl('demo', 'site'));
+    await call('GET', fnUrl('nope', 'nope'));
+    await settle();
+    expect(audits).toEqual([
+      { action: 'projects.list', status: 'ok', caller: ALICE },
+      { action: 'functions.export', status: 'ok', caller: ALICE, instance: 'demo', project: 'site' },
+      { action: 'functions.export', status: 'error', caller: ALICE },
+    ]);
+  });
+
+  test('the commit records the user: ok, conflict and error', async () => {
+    const mod = (await call('GET', fnUrl('demo', 'site'))).json.functions.find((f: any) => f.name === 'roundTo').mod;
+    audits.length = 0;
+    const ok = await call('POST', fnUrl('demo', 'site', 'roundTo'), { src: '(v) => v', expectedMod: mod });
+    expect(ok.status).toBe(200);
+    const stale = await call('POST', fnUrl('demo', 'site', 'roundTo'), { src: '(v) => v + 1', expectedMod: mod });
+    expect(stale.status).toBe(409);
+    const bad = await call('POST', fnUrl('demo', 'site', 'roundTo'), { src: '', expectedMod: mod });
+    expect(bad.status).toBe(400);
+    await settle();
+    expect(commitBy).toEqual(['alice', 'alice']);
+    const commit = { action: 'function.commit', caller: ALICE, instance: 'demo', project: 'site', name: 'roundTo' };
+    expect(audits).toEqual([
+      { ...commit, status: 'ok' },
+      { ...commit, status: 'conflict' },
+      { ...commit, status: 'error' },
+    ]);
+    expect(logs.some(l => l.includes('commit demo/site/roundTo by alice (axk_0a1b2c3d)'))).toBe(true);
+  });
+
+  test('the key is never in a log line, a record or a reply', async () => {
+    await call('GET', '/projects');
+    await call('POST', fnUrl('demo', 'site', 'newFn'), { src: '() => 1', expectedMod: null });
+    const refused = await call('POST', fnUrl('demo', 'site', 'newFn'), { src: '() => 1', expectedMod: null }, READONLY_TOKEN);
+    const wrong = await call('GET', '/projects', undefined, 'axk_ffffffff_not-a-real-key-0123456789');
+    await settle();
+    const all = JSON.stringify(logs) + JSON.stringify(audits) + refused.text + wrong.text;
+    for (const secret of [TOKEN, READONLY_TOKEN, 'not-a-real-key']) expect(all).not.toContain(secret);
+  });
+
+  test('a failing audit callback does not fail the call', async () => {
+    const app = express();
+    app.use('/x', createIdeRouter({
+      verify: async () => ALICE,
+      audit: () => { throw new Error('audit is down'); },
+      store: manager,
+      configuredProjects: () => configured,
+      sync: async () => undefined,
+      commit: async () => { throw new Error('not used'); },
+      log: line => { logs.push(line); },
+    }));
+    const s2: Server = await new Promise(ok => { const s = app.listen(0, '127.0.0.1', () => ok(s)); });
+    try {
+      const res = await fetch(`http://127.0.0.1:${(s2.address() as AddressInfo).port}/x/projects`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+      expect(res.status).toBe(200);
+    } finally {
+      await new Promise<void>(ok => s2.close(() => ok()));
+    }
   });
 });
 
