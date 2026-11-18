@@ -195,18 +195,33 @@ export function buildCommitAxon(args: CommitArgs): string {
 
 /** The dict in an eval result. SkySpark sends a dict as a grid with one row. */
 function resultDict(result: unknown): FuncRecord | null {
-  if (result instanceof HDict) return result as unknown as FuncRecord;
   if (result instanceof HGrid) {
     const row = result.length === 1 ? result.get(0) : undefined;
     return row ? (row as unknown as FuncRecord) : null;
   }
+  if (result instanceof HDict) return result as unknown as FuncRecord;
+  // A dict or a grid from a second copy of haystack-core fails instanceof.
+  const any = result as any;
+  if (any && typeof any.has === 'function' && typeof any.get === 'function') {
+    if (typeof any.length === 'number') {
+      const row = any.length === 1 ? any.get(0) : undefined;
+      return row && typeof row.has === 'function' ? (row as FuncRecord) : null;
+    }
+    return any as FuncRecord;
+  }
   return null;
 }
 
+/** True when the dict holds a value for `tag`. A null grid cell is not a value. */
+function present(dict: FuncRecord, tag: string): boolean {
+  if (!dict.has(tag)) return false;
+  const value = dict.get(tag);
+  return value !== null && value !== undefined;
+}
+
 function str(dict: FuncRecord, tag: string): string | null {
-  if (!dict.has(tag)) return null;
+  if (!present(dict, tag)) return null;
   const value = dict.get(tag) as any;
-  if (value === null || value === undefined) return null;
   return typeof value.value === 'string' ? value.value : String(value);
 }
 
@@ -237,22 +252,25 @@ export async function commitFunction(
   const dict = resultDict(await target.client.evalAxon(code));
   const status = dict ? str(dict, 'ideStatus') : null;
   if (!dict || (status !== 'ok' && status !== 'conflict')) {
-    throw new Error('SkySpark sent a reply to the commit that is not understood.');
+    throw new Error(
+      'SkySpark sent a reply to the commit that is not understood. ' +
+      'The commit may be stored already: read the function again before you retry.'
+    );
   }
 
   if (status === 'conflict') {
-    const exists = dict.has('mod') || dict.has('ideCurSrc');
+    const exists = present(dict, 'mod') || present(dict, 'ideCurSrc');
     const curSrc = str(dict, 'ideCurSrc');
     return {
       status: 'conflict',
-      mod: modToIso(dict.has('mod') ? dict.get('mod') : null),
+      mod: modToIso(present(dict, 'mod') ? dict.get('mod') : null),
       hash: exists ? sha256Hex(curSrc ?? '') : null,
       exists,
     };
   }
 
   const operation = str(dict, 'ideOp') === 'added' ? 'added' : 'updated';
-  const mod = modToIso(dict.has('mod') ? dict.get('mod') : null);
+  const mod = modToIso(present(dict, 'mod') ? dict.get('mod') : null);
   const doc = str(dict, 'doc');
   const baseDir = deps.baseDir ?? 'proj';
   const warnings: string[] = [];

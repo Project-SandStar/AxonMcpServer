@@ -52,6 +52,24 @@ class FakeSkySpark {
   switched: string[] = [];
   private clock = Date.parse('2026-03-01T00:00:00.000Z');
   failNext: string | null = null;
+  /**
+   * The shape of a commit reply. The real client gives a dict back as a grid
+   * with one row, so that is the default. 'gridNulls' adds null cells for the
+   * tags the dict does not hold; 'plain' is a dict that is not an HDict.
+   */
+  replyShape: 'grid' | 'gridNulls' | 'dict' | 'plain' = 'grid';
+
+  private reply(tags: Record<string, any>): unknown {
+    if (this.replyShape === 'dict') return HDict.make(tags);
+    if (this.replyShape === 'plain') {
+      return { has: (k: string) => k in tags, get: (k: string) => tags[k] };
+    }
+    if (this.replyShape === 'gridNulls') {
+      const all: Record<string, any> = { ideStatus: null, ideOp: null, mod: null, doc: null, ideCurSrc: null, idePrevSrc: null, ...tags };
+      return HGrid.make({ rows: [HDict.make(all)] });
+    }
+    return HGrid.make({ rows: [HDict.make(tags)] });
+  }
 
   put(name: string, src: string, doc: string | null, modIso: string) {
     this.recs.set(name, { src, doc, mod: new Date(modIso), tags: '' });
@@ -77,7 +95,7 @@ class FakeSkySpark {
     throw new Error('unexpected eval: ' + code.slice(0, 40));
   }
 
-  private commit(code: string): HDict {
+  private commit(code: string): unknown {
     const lines = code.split('\n');
     const lit = (prefix: string) => {
       const line = lines.find(l => l.startsWith(prefix));
@@ -101,8 +119,8 @@ class FakeSkySpark {
       isStale = !existing || existing.mod.getTime() !== Number(m![1]);
     }
     if (isStale) {
-      if (!existing) return HDict.make({ ideStatus: HStr.make('conflict') });
-      return HDict.make({ ideStatus: HStr.make('conflict'), mod: HDateTime.make(existing.mod.toISOString()), ideCurSrc: HStr.make(existing.src) });
+      if (!existing) return this.reply({ ideStatus: HStr.make('conflict') });
+      return this.reply({ ideStatus: HStr.make('conflict'), mod: HDateTime.make(existing.mod.toISOString()), ideCurSrc: HStr.make(existing.src) });
     }
     this.clock += 1234;
     const next: FakeRec = {
@@ -114,7 +132,7 @@ class FakeSkySpark {
     this.recs.set(name, next);
     const out = this.rec(name, next, { ideStatus: HStr.make('ok'), ideOp: HStr.make(existing ? 'updated' : 'added') });
     if (existing) out.idePrevSrc = HStr.make(existing.src);
-    return HDict.make(out);
+    return this.reply(out);
   }
 
   get commits() { return this.evals.filter(e => e.startsWith('do\n  ideName: ')); }
@@ -652,6 +670,28 @@ describe('commitFunction (the MCP tool path)', () => {
     }
     expect(copy!.functions.length).toBe(sky.recs.size);
     expect(fs.readdirSync(path.join(tmp, 'demo', 'site')).filter(f => f.endsWith('.tmp'))).toEqual([]);
+  });
+
+  test.each(['grid', 'gridNulls', 'dict', 'plain'] as const)('reads the commit reply as a %s', async shape => {
+    sky.replyShape = shape;
+    const ok = await commitFunction(target(), { name: 'roundTo', src: '() => 7', expectedMod: '2026-01-03T00:00:00.000Z' }, deps());
+    expect(ok).toMatchObject({ status: 'ok', operation: 'updated', doc: null, backedUp: true, localCopy: 'updated' });
+    expect((ok as any).mod).toBe(sky.recs.get('roundTo')!.mod.toISOString());
+
+    const added = await commitFunction(target(), { name: 'shapeNew', src: '() => 8', doc: 'd', expectedMod: null }, deps());
+    expect(added).toMatchObject({ status: 'ok', operation: 'added', doc: 'd', backedUp: false });
+
+    const stale = await commitFunction(target(), { name: 'roundTo', src: '() => 9', expectedMod: '2026-01-03T00:00:00.000Z' }, deps());
+    expect(stale).toEqual({ status: 'conflict', mod: (ok as any).mod, hash: sha256Hex('() => 7'), exists: true });
+
+    const gone = await commitFunction(target(), { name: 'neverThere', src: '() => 1', expectedMod: '2026-01-03T00:00:00.000Z' }, deps());
+    expect(gone).toEqual({ status: 'conflict', mod: null, hash: null, exists: false });
+  });
+
+  test('a reply that is not a dict says the commit may be stored', async () => {
+    const odd = { evalAxon: async () => 'ok' };
+    await expect(commitFunction({ client: odd, instance: 'demo', project: 'site' }, { name: 'roundTo', src: '() => 1' }, deps()))
+      .rejects.toThrow(/may be stored already/);
   });
 });
 

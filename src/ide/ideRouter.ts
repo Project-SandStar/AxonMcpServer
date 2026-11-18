@@ -101,19 +101,19 @@ export function createIdeRouter(opts: IdeRouterOptions): Router {
    */
   async function knownProject(
     req: Request, res: Response
-  ): Promise<(ProjectRef & { configured: boolean; stored: boolean }) | null> {
+  ): Promise<(ProjectRef & { configured: boolean }) | null> {
     const ref = { instance: String(req.params.instance), project: String(req.params.project) };
     if (!isSafeSegment(ref.instance) || !isSafeSegment(ref.project)) {
       res.status(400).json({ error: 'invalid project name' });
       return null;
     }
     const configured = opts.configuredProjects().some(p => sameProject(p, ref));
-    const stored = (await opts.store.listStoredProjects()).some(p => sameProject(p, ref));
-    if (!configured && !stored) {
+    // The store reads the metadata of every project, so ask it only when needed.
+    if (!configured && !(await opts.store.listStoredProjects()).some(p => sameProject(p, ref))) {
       res.status(404).json({ error: 'unknown project' });
       return null;
     }
-    return { ...ref, configured, stored };
+    return { ...ref, configured };
   }
 
   router.get('/projects', async (_req: Request, res: Response) => {
