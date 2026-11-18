@@ -55,6 +55,8 @@ import { PerformanceAnalyzer } from './validation/performanceAnalyzer.js';
 import { ErrorRecovery } from './generation/errorRecovery.js';
 import { FunctionSyncManagerEnhanced } from './sync/functionSyncManagerEnhanced.js';
 import { createAdminRouter } from './admin/routes.js';
+import { createIdeRouter, ideToken, IDE_TOKEN_ENV } from './ide/ideRouter.js';
+import { commitFunction, CommitArgError, type CommitArgs, type CommitResult } from './ide/commitFunction.js';
 import { getUsageTracker } from './usage/usageTracker.js';
 import { ServerStatus, InstanceInfo, ProjectInfo, CacheInfo } from './admin/types.js';
 import { WorkflowManager, type ProjectFilter } from './workflows/workflowManager.js';
@@ -1622,7 +1624,11 @@ Response includes 'operation': "added" or "updated".`,
               },
               doc: {
                 type: 'string',
-                description: 'Documentation string (optional)',
+                description: 'Documentation string (optional). When not given, the stored doc is kept. Pass "" to clear it.',
+              },
+              expectedMod: {
+                type: ['string', 'null'],
+                description: 'Optional stale-write check. ISO 8601 date-time: the mod of the record you last read; the commit is refused with status "conflict" when the record has changed since. null: the function must not exist yet. Not given: no check.',
               },
               project: {
                 type: 'string',
@@ -2103,7 +2109,7 @@ Response includes 'operation': "added" or "updated".`,
               'Missing required parameters: name and src'
             );
           }
-          return await this.commitAxonFunction(args as { name: string; src: string; doc?: string; project?: string; appName?: string; view?: string; dis?: string; icon?: string; order?: number; extraTags?: Record<string, any> });
+          return await this.commitAxonFunction(args as { name: string; src: string; doc?: string; expectedMod?: string | null; project?: string; appName?: string; view?: string; dis?: string; icon?: string; order?: number; extraTags?: Record<string, any> });
 
         // ============================================
         // Graph Analysis Tool Handlers
@@ -4373,8 +4379,8 @@ Response includes 'operation': "added" or "updated".`,
   /**
    * Commit an Axon function to the session's active project with backup support.
    */
-  private async commitAxonFunction(args: { name: string; src: string; doc?: string; project?: string; appName?: string; view?: string; dis?: string; icon?: string; order?: number; extraTags?: Record<string, any> }) {
-    const { name, src, doc, project: expectedProject, appName, view, dis, icon, order, extraTags } = args;
+  private async commitAxonFunction(args: { name: string; src: string; doc?: string; expectedMod?: string | null; project?: string; appName?: string; view?: string; dis?: string; icon?: string; order?: number; extraTags?: Record<string, any> }) {
+    const { name, src, doc, expectedMod, project: expectedProject, appName, view, dis, icon, order, extraTags } = args;
 
     if (!this.skysparkClient || !this.configManager) {
       throw new McpError(
@@ -4419,100 +4425,123 @@ Response includes 'operation': "added" or "updated".`,
         `Pass 'project' explicitly on future calls to guard against wrong-project commits.`;
       console.error(`⚠️ commitAxonFunction without explicit project; using ${config.instance}/${config.project}`);
     }
-    const backupDir = path.join('proj', config.instance, config.project, '.backups', name);
+    // The shared commit (src/ide/commitFunction.ts): name check, stale-write check in
+    // the same eval as the commit, doc kept when not given, backup, local copy update.
+    // POST /api/ide/projects/{instance}/{project}/functions/{name} calls the same function.
+    const auxTags: Record<string, any> = { ...(extraTags || {}) };
+    if (appName !== undefined) auxTags.appName = appName;
+    if (view !== undefined) auxTags.view = view;
+    if (dis !== undefined) auxTags.dis = dis;
+    if (icon !== undefined) auxTags.icon = icon;
+    if (order !== undefined) auxTags.order = order;
 
+    const commitArgs: CommitArgs = { name, src, extraTags: auxTags };
+    if (doc !== undefined && doc !== null) commitArgs.doc = doc;
+    if (expectedMod !== undefined) commitArgs.expectedMod = expectedMod;
+
+    let result: CommitResult;
     try {
-      // 1. Check if function exists and create backup
-      let backedUp = false;
-      let backupPath: string | null = null;
+      result = await commitFunction(
+        { client: this.skysparkClient, instance: config.instance, project: config.project },
+        commitArgs,
+        { baseDir: 'proj', store: this.functionSyncManager }
+      );
+    } catch (error: any) {
+      throw new McpError(
+        error instanceof CommitArgError ? ErrorCode.InvalidParams : ErrorCode.InvalidRequest,
+        `Failed to commit function: ${error.message}`
+      );
+    }
 
-      try {
-        const existing = await this.skysparkClient.getFunctionSource(name);
-        if (existing) {
-          // Create backup directory
-          await fs.promises.mkdir(backupDir, { recursive: true });
-
-          // Save backup with timestamp
-          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-          backupPath = path.join(backupDir, `backup-${timestamp}.axon`);
-          await fs.promises.writeFile(backupPath, existing);
-          backedUp = true;
-
-          // Keep only last 10 backups
-          const backups = await fs.promises.readdir(backupDir);
-          const sorted = backups.filter(f => f.startsWith('backup-')).sort().reverse();
-          for (const old of sorted.slice(10)) {
-            await fs.promises.unlink(path.join(backupDir, old));
-          }
-          console.error(`📦 Backed up existing ${name} to ${backupPath}`);
-        }
-      } catch (backupError: any) {
-        // Function might not exist, which is fine
-        console.error(`ℹ️ No existing function ${name} to backup: ${backupError.message}`);
-      }
-
-      // 2. Upsert the function: update existing record by name, or add new.
-      // Folio enforces unique id, NOT unique name on func — without this lookup
-      // every commit would create a duplicate. The whole upsert runs server-side
-      // in one eval so add/update is atomic from our perspective.
-      const escAxon = (v: string) => v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
-      const escapedSrc = escAxon(src);
-      const escapedDoc = escAxon(doc || '');
-
-      // Build the extra-tag fragment shared by add and update paths.
-      // Stringify everything as Axon literals. Markers map to bare tag names.
-      const extraPairs: string[] = [];
-      const auxTags: Record<string, any> = { ...(extraTags || {}) };
-      if (appName !== undefined) auxTags.appName = appName;
-      if (view !== undefined) auxTags.view = view;
-      if (dis !== undefined) auxTags.dis = dis;
-      if (icon !== undefined) auxTags.icon = icon;
-      if (order !== undefined) auxTags.order = order;
-      for (const [k, v] of Object.entries(auxTags)) {
-        if (v === null || v === undefined) continue;
-        if (v === true) { extraPairs.push(k); continue; }                // marker
-        if (typeof v === 'number' || typeof v === 'boolean') { extraPairs.push(`${k}:${v}`); continue; }
-        if (typeof v === 'string') { extraPairs.push(`${k}:"${escAxon(v)}"`); continue; }
-        // Fallback: JSON-stringify then escape as a string literal.
-        extraPairs.push(`${k}:"${escAxon(JSON.stringify(v))}"`);
-      }
-      const extraFrag = extraPairs.length ? ', ' + extraPairs.join(', ') : '';
-
-      // Axon `if` is an inline expression, not a block — `if (cond) thenExpr else elseExpr` (no `end`).
-      // The previous block-style `if ... end` produced `Expected ), not end [eval:10]` on every call.
-      const commitCode = `do
-  existing: read(func and name=="${name}", false)
-  if (existing == null) commit(diff(null, {func, name:"${name}", src:"${escapedSrc}", doc:"${escapedDoc}"${extraFrag}}, {add})) else commit(diff(existing, {src:"${escapedSrc}", doc:"${escapedDoc}"${extraFrag}}))
-end`;
-      await this.skysparkClient.evalAxon(commitCode);
-      const operation = backedUp ? 'updated' : 'added';
-
-      console.error(`✅ ${operation === 'added' ? 'Added' : 'Updated'} function ${name} in ${config.instance}/${config.project}`);
-
+    if (result.status === 'conflict') {
+      const why = result.exists
+        ? `Function ${name} has changed in ${config.instance}/${config.project} since expectedMod. Nothing was committed. Read it again, merge, and retry with the new mod.`
+        : `Function ${name} is not in ${config.instance}/${config.project} any more. Nothing was committed. Retry with expectedMod null to add it.`;
       return {
+        isError: true,
         content: [
           {
             type: 'text',
             text: JSON.stringify({
-              success: true,
+              success: false,
+              status: 'conflict',
               name,
-              operation,
               instance: config.instance,
               project: config.project,
-              backedUp,
-              backupPath: backupPath,
+              exists: result.exists,
+              mod: result.mod,
+              hash: result.hash,
               warning: projectMismatchWarning,
-              message: `Function ${name} ${operation} in ${config.instance}/${config.project}`,
+              message: why,
             }, null, 2),
           },
         ],
       };
-    } catch (error: any) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        `Failed to commit function: ${error.message}`
-      );
     }
+
+    console.error(`✅ ${result.operation === 'added' ? 'Added' : 'Updated'} function ${name} in ${config.instance}/${config.project}`);
+    const warning = [projectMismatchWarning, result.warning].filter(Boolean).join(' ') || undefined;
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            name,
+            operation: result.operation,
+            instance: config.instance,
+            project: config.project,
+            mod: result.mod,
+            hash: result.hash,
+            backedUp: result.backedUp,
+            backupPath: result.backupPath,
+            localCopy: result.localCopy,
+            warning,
+            message: `Function ${name} ${result.operation} in ${config.instance}/${config.project}`,
+          }, null, 2),
+        },
+      ],
+    };
+  }
+
+  /** The projects of the SkySpark config, for the IDE API. */
+  private ideConfiguredProjects(): Array<{ instance: string; project: string }> {
+    if (!this.configManager) return [];
+    return this.configManager.getAllProjects().map(p => ({ instance: p.instance, project: p.project }));
+  }
+
+  /**
+   * A client of its own on one configured project, for the IDE API.
+   * It never uses the session, default, primary or sync client, so a request
+   * cannot land on another project. Names must match exactly.
+   */
+  private ideClientFor(instance: string, project: string): HaystackSkySparkClient {
+    if (!this.configManager) throw new Error('SkySpark is not configured on this server');
+    if (!this.ideConfiguredProjects().some(p => p.instance === instance && p.project === project)) {
+      throw new Error('unknown project');
+    }
+    const client = new HaystackSkySparkClient(this.configManager);
+    client.switchTo(instance, project);
+    const now = client.getCurrentConfig();
+    if (now.instance !== instance || now.project !== project) throw new Error('unknown project');
+    return client;
+  }
+
+  /** IDE API: sync one project into the local copy. */
+  private async ideSyncProject(instance: string, project: string) {
+    const client = this.ideClientFor(instance, project);
+    return this.functionSyncManager.syncFunctions(client, instance, project, {
+      silent: true,
+      checkModTime: true,
+      concurrency: this.syncConcurrency,
+    });
+  }
+
+  /** IDE API: commit one function with the shared commit. */
+  private async ideCommitFunction(instance: string, project: string, args: CommitArgs): Promise<CommitResult> {
+    const client = this.ideClientFor(instance, project);
+    return commitFunction({ client, instance, project }, args, { baseDir: 'proj', store: this.functionSyncManager });
   }
 
   /**
@@ -5830,6 +5859,24 @@ end`;
 
   private async startHttpServer(): Promise<void> {
     const app = express();
+
+    // IDE API (project copy and safe function commit for editor plugins).
+    // It always needs its own bearer token, also when /mcp runs without auth.
+    // Mounted before the global body parser: it reads its body after the token check.
+    const ide = ideToken();
+    if (ide.token) {
+      app.use('/api/ide', createIdeRouter({
+        token: () => ideToken().token,
+        store: this.functionSyncManager,
+        configuredProjects: () => this.ideConfiguredProjects(),
+        sync: (instance, project) => this.ideSyncProject(instance, project),
+        commit: (instance, project, args) => this.ideCommitFunction(instance, project, args),
+      }));
+      console.error('🧩 IDE API enabled at /api/ide (bearer token required)');
+    } else {
+      console.error(`🧩 IDE API is OFF: ${ide.reason}. Set ${IDE_TOKEN_ENV} (16 characters or more) to turn on /api/ide.`);
+    }
+
     app.use(express.json());
     app.use(express.urlencoded({ extended: true })); // For OAuth form submissions
     // Port priority: MCP_PORT env var > config file > default (3847)
