@@ -96,6 +96,8 @@ Body:
 - `doc`: optional. Absent or null: the stored doc is kept. `""` clears it.
 - `expectedMod`: required. The `mod` the client last saw for this function.
   Use `null` for a new function (the function must not exist yet).
+  The value must carry a time zone (`Z` or an offset such as `-05:00`).
+  A date-time with no zone gets `400`.
 - `name`: a letter, then letters, digits or `_` (128 characters at most).
   Other names get `400 {"error":"invalid function name"}`.
 

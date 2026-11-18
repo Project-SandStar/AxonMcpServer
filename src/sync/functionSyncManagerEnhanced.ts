@@ -4,7 +4,7 @@ import * as crypto from 'crypto';
 import { HGrid } from 'haystack-core';
 import { HaystackSkySparkClient } from '../skyspark/haystackClient.js';
 import { EnhancedAxonParser, type EnhancedFunctionMetadata } from '../parser/enhancedAxonParser.js';
-import { isFunctionName, isSafeSegment } from '../ide/names.js';
+import { axonStr, isFunctionName, isSafeSegment } from '../ide/names.js';
 import { modToIso, sha256Hex } from '../ide/mod.js';
 
 /** One function of the local copy, as the IDE API sends it. */
@@ -509,7 +509,7 @@ export class FunctionSyncManagerEnhanced {
         
         // Fallback to evalAxon if src not in row
         if (!source) {
-          const sourceResult = await client.evalAxon(`func("${funcName}").src`);
+          const sourceResult = await client.evalAxon(`func(${axonStr(funcName)}).src`);
           source = sourceResult.toString();
         }
         
@@ -660,7 +660,17 @@ export class FunctionSyncManagerEnhanced {
       
       const funcName = row.get('name')?.toString();
       if (!funcName) continue;
-      
+
+      // The name comes from the server and goes into a file path. A name such
+      // as "../../x" must never reach the disk, so it is counted as an error.
+      if (!isFunctionName(funcName)) {
+        errors++;
+        if (!silent) {
+          console.error(`    ⚠️  Skipped a func with a name that is not a valid function name`);
+        }
+        continue;
+      }
+
       currentFunctions.add(funcName);
       const filePath = path.join(funcDir, `${funcName}.axon`);
       const existingMeta = existingFunctions[funcName];
@@ -724,6 +734,8 @@ export class FunctionSyncManagerEnhanced {
     if (existingMetadata) {
       for (const funcName of Object.keys(existingFunctions)) {
         if (!currentFunctions.has(funcName)) {
+          // A metadata key is not trusted as a file name either.
+          if (!isFunctionName(funcName)) continue;
           const filePath = path.join(funcDir, `${funcName}.axon`);
           try {
             await fs.unlink(filePath);

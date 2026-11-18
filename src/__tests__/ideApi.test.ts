@@ -451,6 +451,37 @@ describe('unknown project and bad names', () => {
     expect(res.json.functions.map((f: any) => f.name)).toEqual(['calcDailyAvg', 'roundTo', 'trickyOne']);
   });
 
+  test('a sync does not write a func whose name from the server is a path', async () => {
+    sky.put('../../escaped', '() => "out"', null, '2026-02-04T00:00:00.000Z');
+    sky.put('..\\escaped', '() => "out"', null, '2026-02-04T00:00:00.000Z');
+    sky.put('has space', '() => "out"', null, '2026-02-04T00:00:00.000Z');
+    sky.put('goodOne', '() => "in"', null, '2026-02-04T00:00:00.000Z');
+
+    const res = await call('GET', fnUrl('demo', 'site') + '?sync=true');
+    expect(res.status).toBe(200);
+    expect(res.json.functions.map((f: any) => f.name)).toEqual(['calcDailyAvg', 'goodOne', 'roundTo', 'trickyOne']);
+    // Nothing left the func folder, and nothing with a bad name is in it.
+    expect(fs.existsSync(path.join(tmp, 'demo', 'escaped.axon'))).toBe(false);
+    expect(fs.existsSync(path.join(tmp, 'demo', 'escaped.trio'))).toBe(false);
+    expect(fs.readdirSync(path.join(tmp, 'demo')).sort()).toEqual(['empty', 'site'].filter(d => fs.existsSync(path.join(tmp, 'demo', d))));
+    expect(fs.readdirSync(funcDir()).filter(f => !isFunctionName(f.replace(/\.(axon|trio)$/, '')))).toEqual([]);
+    expect(Object.keys(readMeta().functions).sort()).toEqual(['calcDailyAvg', 'goodOne', 'roundTo', 'trickyOne']);
+    // The source fallback never puts a raw name into Axon text.
+    expect(sky.evals.filter(c => c.includes('escaped'))).toEqual([]);
+  });
+
+  test('expectedMod with no time zone is a 400, not a guess', async () => {
+    const url = fnUrl('demo', 'site', 'roundTo');
+    for (const expectedMod of ['2026-01-03T00:00:00.000', '2026-01-03T00:00:00', '2026-01-03T00:00', '2026-01-03']) {
+      const res = await call('POST', url, { src: '() => 1', expectedMod });
+      expect(res.status).toBe(400);
+    }
+    expect(sky.commits).toEqual([]);
+    // The same instant with a zone or an offset is accepted.
+    const ok = await call('POST', url, { src: '() => 1', expectedMod: '2026-01-02T19:00:00.000-05:00' });
+    expect(ok.status).toBe(200);
+  });
+
   test('bad bodies are a 400', async () => {
     const url = fnUrl('demo', 'site', 'calcDailyAvg');
     for (const body of [{}, { src: '', expectedMod: null }, { src: 5, expectedMod: null }, { src: '() => 1' },
@@ -718,7 +749,10 @@ describe('helpers', () => {
     expect(modToIso('2026-01-02T03:04:05.678912345Z UTC')).toBe('2026-01-02T03:04:05.678Z');
     expect(modToIso('2026-01-01T22:04:05.678-05:00 New_York')).toBe('2026-01-02T03:04:05.678Z');
     expect(modToIso(new Date(0))).toBe('1970-01-01T00:00:00.000Z');
+    expect(modToIso('2026-01-02T03:04:05.678+00:00')).toBe('2026-01-02T03:04:05.678Z');
     for (const bad of [null, undefined, '', 'yesterday', '1/1/2026, 9:04:05 PM UTC', 5, {}]) expect(modToIso(bad)).toBeNull();
+    // No zone: JS would read these as local time, so they are refused.
+    for (const bad of ['2026-01-02T03:04:05.678', '2026-01-02T03:04:05', '2026-01-02T', '2026-01-02Tjunk']) expect(modToIso(bad)).toBeNull();
   });
 
   test('docFromTrio', () => {

@@ -26,7 +26,9 @@ export function modToIso(value: unknown): string | null {
     date = (value as any).date;
   } else if (typeof value === 'string') {
     const iso = value.trim().split(/\s+/)[0];
-    if (!/^\d{4}-\d{2}-\d{2}T/.test(iso)) return null;
+    // The zone is required ("Z" or an offset). JS reads a date-time with no
+    // zone as local time, so the result would depend on the zone of the server.
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/i.test(iso)) return null;
     date = new Date(iso);
   }
   if (!date || Number.isNaN(date.getTime())) return null;
