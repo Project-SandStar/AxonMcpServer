@@ -281,7 +281,7 @@ describe('bearer check', () => {
     const info = await verifierFor('ide').verifyAccessToken(key);
     expect(info).toEqual({
       token: key,
-      clientId: KEY_CLIENT_ID,
+      clientId: `${KEY_CLIENT_ID}:${row.id}`,
       scopes: ['mcp:read', 'mcp:write'],
       expiresAt: Math.floor(T0 / 1000) + NO_EXPIRY_SECONDS,
       extra: { userId: 'u-alice', username: 'alice', role: 'user', keyId: row.id, keyPrefix: row.prefix, kind: 'key' },
@@ -293,6 +293,12 @@ describe('bearer check', () => {
     expect(info2.expiresAt).toBe(Math.floor((T0 + 30 * DAY) / 1000));
     expect(info2.scopes).toEqual(['mcp:read', 'mcp:write', 'mcp:admin']);
     expect(scopesForRole('readonly')).toEqual(['mcp:read']);
+
+    // Two keys of one user have two client ids, so each editor keeps its own saved project.
+    const second = await store.create({ userId: 'u-alice', name: 'second editor' });
+    const info3 = await verifierFor('mcp').verifyAccessToken(second.key);
+    expect(info3.clientId).not.toBe(info.clientId);
+    expect(info3.extra?.userId).toBe(info.extra?.userId);
   });
 
   test('a use is recorded with the door it came through', async () => {

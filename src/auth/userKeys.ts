@@ -13,8 +13,17 @@ import * as crypto from 'crypto';
 import { generateToken, hashToken } from './tokenUtils.js';
 
 export const KEY_MARK = 'axk_';
-/** AuthInfo.clientId of every call made with a user key. */
+/** Start of AuthInfo.clientId of every call made with a user key. */
 export const KEY_CLIENT_ID = 'axon-user-key';
+
+/**
+ * AuthInfo.clientId of a call made with the key `keyId`. Each key has its own
+ * client id, so two editors of one user, each with its own key, keep their own
+ * saved project (the saved project is per user and client id).
+ */
+export function keyClientId(keyId: string): string {
+  return `${KEY_CLIENT_ID}:${keyId}`;
+}
 /** lastUsedAt is written at most once in this time per key. */
 export const TOUCH_INTERVAL_MS = 60_000;
 

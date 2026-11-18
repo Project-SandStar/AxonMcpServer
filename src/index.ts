@@ -5936,6 +5936,15 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
     const userStore = initUserStore(configDir);
     const userKeys = new UserKeyStore(prisma);
     const accessAudit = new AccessAudit(prisma);
+    // The key tables come from a migration. Outside Docker it runs with `npm start`
+    // (db:migrate); when it did not run, say so once at start, not on every call.
+    try {
+      await prisma.userApiKey.count();
+      await prisma.accessAuditEvent.count();
+    } catch (error: any) {
+      console.error('❌ The access key tables are missing: run "npm run db:migrate" (prisma migrate deploy) ' +
+        `and restart. Until then /api/ide and keys on /mcp answer 503. (${error?.message?.split('\n')[0] ?? error})`);
+    }
     this.userKeys = userKeys;
     this.accessAudit = accessAudit;
     // One bearer check for both doors: a user access key or an OAuth login token.

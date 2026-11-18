@@ -12,7 +12,7 @@
 import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type { UserPublic, UserRole } from '../admin/userStore.js';
-import { KEY_CLIENT_ID, looksLikeUserKey, type KeyInfo, type KeyUse } from './userKeys.js';
+import { keyClientId, looksLikeUserKey, type KeyInfo, type KeyUse } from './userKeys.js';
 
 export const REFUSED_TEXT = 'Invalid access token';
 /** A key with no expiry still needs a number for the SDK (bearerAuth.js checks it). */
@@ -84,7 +84,7 @@ export function createBearerVerifier(opts: BearerVerifierOptions): { verifyAcces
         };
         return {
           token,
-          clientId: KEY_CLIENT_ID,
+          clientId: keyClientId(key.id),
           scopes: scopesForRole(user.role),
           expiresAt: key.expiresAt
             ? Math.floor(key.expiresAt.getTime() / 1000)
