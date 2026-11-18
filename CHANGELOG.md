@@ -15,6 +15,8 @@
 * **commit:** the function name is validated, and `$`, CR and tab in source are escaped in the Axon literal
 * **commit:** the local copy (`func/<name>.axon`, `.trio`, sync metadata) is updated after a good commit
 * **sync:** a first sync records `mod`, and a later sync sees a changed source also when the old copy holds no `mod`
+* **sync:** a func whose name from the server is not a valid function name (for example a path) is skipped and counted as an error; it is never written to disk
+* **ide:** `expectedMod` must carry a time zone; a date-time with no zone is refused (it was read as the local time of the server)
 
 ## [1.2.1](https://github.com/Project-SandStar/AxonMcpServer/compare/v1.2.0...v1.2.1) (2026-10-27)
 
