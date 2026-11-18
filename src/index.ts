@@ -55,7 +55,7 @@ import { PerformanceAnalyzer } from './validation/performanceAnalyzer.js';
 import { ErrorRecovery } from './generation/errorRecovery.js';
 import { FunctionSyncManagerEnhanced } from './sync/functionSyncManagerEnhanced.js';
 import { createAdminRouter } from './admin/routes.js';
-import { createIdeRouter, ideToken, IDE_TOKEN_ENV } from './ide/ideRouter.js';
+import { createIdeRouter, type IdeCaller } from './ide/ideRouter.js';
 import { commitFunction, CommitArgError, type CommitArgs, type CommitResult } from './ide/commitFunction.js';
 import { getUsageTracker } from './usage/usageTracker.js';
 import { ServerStatus, InstanceInfo, ProjectInfo, CacheInfo } from './admin/types.js';
@@ -66,6 +66,11 @@ import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelconte
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { initUserStore, getUserStore } from './admin/userStore.js';
 import { BackupManager } from './admin/backupManager.js';
+import { UserKeyStore } from './auth/userKeys.js';
+import { AccessAudit } from './auth/accessAudit.js';
+import { createBearerVerifier, callerFromAuthInfo, verifyCaller } from './auth/bearerVerifier.js';
+import { toolDenied } from './auth/toolAccess.js';
+import type { UserRole } from './admin/userStore.js';
 
 /** Per-call scope: the MCP session, its caller (from the OAuth token, if any) and a client override. */
 interface SessionStore {
@@ -73,6 +78,10 @@ interface SessionStore {
   userId?: string;
   username?: string;
   clientId?: string;
+  /** Role of the caller, and the access key the call came with (if any) */
+  role?: UserRole;
+  keyId?: string;
+  keyPrefix?: string;
   /** Project pinned by the connection (?project= or X-Axon-Project); wins over the saved scope */
   pinned?: { instance: string; project: string } | null;
   /** Owner key for the saved scope when there is no user (one per mcp-proxy client) */
@@ -174,6 +183,10 @@ class AxonMCPServer {
   // OAuth 2.1 components
   private oauthProvider?: AxonOAuthProvider;
   private tokenCleanupJob?: TokenCleanupJob;
+
+  // User access keys and the access record (HTTP mode only)
+  private userKeys?: UserKeyStore;
+  private accessAudit?: AccessAudit;
 
   // Backup manager
   private backupManager?: BackupManager;
@@ -521,11 +534,15 @@ class AxonMCPServer {
    * project is kept per proxy client.
    */
   private callScope(meta: Record<string, unknown> | undefined, extra: any): SessionStore {
+    const caller = callerFromAuthInfo(extra?.authInfo);
     const store: SessionStore = {
       sessionId: extra?.sessionId,
       userId: extra?.authInfo?.extra?.userId as string | undefined,
       username: extra?.authInfo?.extra?.username as string | undefined,
       clientId: extra?.authInfo?.clientId,
+      role: caller?.role,
+      keyId: caller?.keyId,
+      keyPrefix: caller?.keyPrefix,
       pinned: connectionProject(extra?.requestInfo?.headers),
     };
     const proxied = proxyConnection(meta);
@@ -755,6 +772,8 @@ class AxonMCPServer {
       getOAuthProvider: () => this.oauthProvider,
       getBackupManager: () => this.backupManager,
       getPrisma: () => this.prisma ?? null,
+      getUserKeys: () => this.userKeys,
+      getAccessAudit: () => this.accessAudit,
       searchDocs: async (query: string, options?: { limit?: number; library?: string }) => {
         return this.flexSearchIndex.search(query, options || {});
       },
@@ -1886,6 +1905,12 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
         async () => {
       await this.prepareSessionClient();
       const { name, arguments: args } = request.params;
+
+      // A read-only user cannot call a write tool (src/auth/toolAccess.ts)
+      const denied = toolDenied(name, this.sessionScope.getStore()?.role);
+      if (denied) {
+        throw new McpError(ErrorCode.InvalidRequest, denied);
+      }
 
       // Track the tool call
       const completeTracking = this.usageTracker.trackToolCall(
@@ -4453,6 +4478,7 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
         { baseDir: 'proj', store: this.functionSyncManager }
       );
     } catch (error: any) {
+      this.recordMcpCommit('error', config.instance, config.project, name);
       throw new McpError(
         error instanceof CommitArgError ? ErrorCode.InvalidParams : ErrorCode.InvalidRequest,
         `Failed to commit function: ${error.message}`
@@ -4460,6 +4486,7 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
     }
 
     if (result.status === 'conflict') {
+      this.recordMcpCommit('conflict', config.instance, config.project, name);
       const why = result.exists
         ? `Function ${name} has changed in ${config.instance}/${config.project} since expectedMod. Nothing was committed. Read it again, merge, and retry with the new mod.`
         : `Function ${name} is not in ${config.instance}/${config.project} any more. Nothing was committed. Retry with expectedMod null to add it.`;
@@ -4485,7 +4512,8 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
       };
     }
 
-    console.error(`✅ ${result.operation === 'added' ? 'Added' : 'Updated'} function ${name} in ${config.instance}/${config.project}`);
+    this.recordMcpCommit('ok', config.instance, config.project, name);
+    console.error(`✅ ${result.operation === 'added' ? 'Added' : 'Updated'} function ${name} in ${config.instance}/${config.project} by ${this.mcpCallerText()}`);
     const warning = [projectMismatchWarning, result.warning].filter(Boolean).join(' ') || undefined;
 
     return {
@@ -4534,9 +4562,52 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
     return client;
   }
 
-  /** IDE API: sync one project into the local copy. */
-  private async ideSyncProject(instance: string, project: string) {
+  /** Who makes the current MCP call, for a log line: the user name and the key prefix. */
+  private mcpCallerText(): string {
+    const store = this.sessionScope.getStore();
+    if (!store?.username) return 'anonymous';
+    return store.keyPrefix ? `${store.username} (${store.keyPrefix})` : store.username;
+  }
+
+  /** One access record for a commit made with the commitAxonFunction tool. */
+  private recordMcpCommit(status: 'ok' | 'conflict' | 'error', instance: string, project: string, name: string): void {
+    const store = this.sessionScope.getStore();
+    this.accessAudit?.record({
+      source: 'mcp',
+      action: 'function.commit',
+      status,
+      userId: store?.userId,
+      username: store?.username ?? 'anonymous',
+      keyId: store?.keyId,
+      keyPrefix: store?.keyPrefix,
+      instance,
+      project,
+      name,
+    });
+  }
+
+  /** The shared Prisma client on .cache/usage.db, made on first use. */
+  private async ensurePrisma(): Promise<any> {
+    if (!this.prisma) {
+      const { PrismaClient } = await import('./generated/prisma/client.js');
+      const { PrismaBetterSqlite3 } = await import('@prisma/adapter-better-sqlite3');
+      const cacheDir = path.join(PROJECT_ROOT, this.config.cache?.directory || '.cache');
+      if (!fs.existsSync(cacheDir)) {
+        fs.mkdirSync(cacheDir, { recursive: true });
+      }
+      const dbPath = path.join(cacheDir, 'usage.db');
+      const adapter = new PrismaBetterSqlite3({ url: `file:${dbPath}` });
+      const prisma = new PrismaClient({ adapter });
+      await prisma.$connect();
+      this.prisma = prisma;
+    }
+    return this.prisma;
+  }
+
+  /** IDE API: sync one project into the local copy. The caller is the user of the key. */
+  private async ideSyncProject(instance: string, project: string, caller: IdeCaller) {
     const client = this.ideClientFor(instance, project);
+    console.error(`[ide] sync ${instance}/${project} by ${caller.username}`);
     return this.functionSyncManager.syncFunctions(client, instance, project, {
       silent: true,
       checkModTime: true,
@@ -4544,8 +4615,11 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
     });
   }
 
-  /** IDE API: commit one function with the shared commit. */
-  private async ideCommitFunction(instance: string, project: string, args: CommitArgs): Promise<CommitResult> {
+  /**
+   * IDE API: commit one function with the shared commit. The router writes the
+   * access record and the log line with the caller.
+   */
+  private async ideCommitFunction(instance: string, project: string, args: CommitArgs, _caller: IdeCaller): Promise<CommitResult> {
     const client = this.ideClientFor(instance, project);
     return commitFunction({ client, instance, project }, args, { baseDir: 'proj', store: this.functionSyncManager });
   }
@@ -4556,18 +4630,7 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
   private async handleGraphTool(toolName: string, args: Record<string, unknown>) {
     try {
       // Initialize prisma on demand if not yet available (e.g., stdio mode)
-      if (!this.prisma) {
-        const { PrismaClient } = await import('./generated/prisma/client.js');
-        const { PrismaBetterSqlite3 } = await import('@prisma/adapter-better-sqlite3');
-        const cacheDir = path.join(PROJECT_ROOT, this.config.cache?.directory || '.cache');
-        if (!fs.existsSync(cacheDir)) {
-          fs.mkdirSync(cacheDir, { recursive: true });
-        }
-        const dbPath = path.join(cacheDir, 'usage.db');
-        const adapter = new PrismaBetterSqlite3({ url: `file:${dbPath}` });
-        this.prisma = new PrismaClient({ adapter });
-        await this.prisma.$connect();
-      }
+      await this.ensurePrisma();
 
       // Lazy import and use singleton handler
       const { getGraphToolHandler } = await import('./graph/graphToolHandlers.js');
@@ -5866,22 +5929,51 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
   private async startHttpServer(): Promise<void> {
     const app = express();
 
+    // Users, access keys and the access record. /api/ide and /mcp need them, also when OAuth is off.
+    const prisma = await this.ensurePrisma();
+    const configDir = path.join(PROJECT_ROOT, 'config');
+    const userStore = initUserStore(configDir);
+    const userKeys = new UserKeyStore(prisma);
+    const accessAudit = new AccessAudit(prisma);
+    this.userKeys = userKeys;
+    this.accessAudit = accessAudit;
+    // One bearer check for both doors: a user access key or an OAuth login token.
+    const verifierFor = (from: 'ide' | 'mcp') =>
+      createBearerVerifier({ keys: userKeys, users: userStore, oauth: () => this.oauthProvider, from });
+    const ideVerifier = verifierFor('ide');
+    const mcpVerifier = verifierFor('mcp');
+
     // IDE API (project copy and safe function commit for editor plugins).
-    // It always needs its own bearer token, also when /mcp runs without auth.
-    // Mounted before the global body parser: it reads its body after the token check.
-    const ide = ideToken();
-    if (ide.token) {
-      app.use('/api/ide', createIdeRouter({
-        token: () => ideToken().token,
-        store: this.functionSyncManager,
-        configuredProjects: () => this.ideConfiguredProjects(),
-        sync: (instance, project) => this.ideSyncProject(instance, project),
-        commit: (instance, project, args) => this.ideCommitFunction(instance, project, args),
-      }));
-      console.error('🧩 IDE API enabled at /api/ide (bearer token required)');
-    } else {
-      console.error(`🧩 IDE API is OFF: ${ide.reason}. Set ${IDE_TOKEN_ENV} (16 characters or more) to turn on /api/ide.`);
+    // It always needs a user access key, also when /mcp runs without auth.
+    // Mounted before the global body parser: it reads its body after the key check.
+    app.use('/api/ide', createIdeRouter({
+      verify: (bearer) => verifyCaller(ideVerifier, bearer),
+      audit: (event) => accessAudit.record({
+        source: 'ide',
+        action: event.action,
+        status: event.status,
+        userId: event.caller.userId,
+        username: event.caller.username,
+        keyId: event.caller.keyId,
+        keyPrefix: event.caller.keyPrefix,
+        instance: event.instance,
+        project: event.project,
+        name: event.name,
+      }),
+      store: this.functionSyncManager,
+      configuredProjects: () => this.ideConfiguredProjects(),
+      sync: (instance, project, caller) => this.ideSyncProject(instance, project, caller),
+      commit: (instance, project, args, caller) => this.ideCommitFunction(instance, project, args, caller),
+    }));
+    console.error('🧩 IDE API enabled at /api/ide (a user access key is required)');
+    if (process.env.AXON_IDE_TOKEN) {
+      // The value is never printed.
+      console.error('⚠️ AXON_IDE_TOKEN is set but no longer used; make a user key on the Users page');
     }
+
+    // Hourly cleanup of old OAuth tokens, old keys and old access records
+    this.tokenCleanupJob = new TokenCleanupJob(prisma, { keys: userKeys, audit: accessAudit });
+    this.tokenCleanupJob.start();
 
     app.use(express.json());
     app.use(express.urlencoded({ extended: true })); // For OAuth form submissions
@@ -5896,23 +5988,7 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
     const oauthEnabled = this.config.oauth?.enabled !== false;
     const mcpRequireAuth = this.config.mcpRequireAuth === true;
     if (oauthEnabled) {
-      // Initialize Prisma client for OAuth
-      const { PrismaClient } = await import('./generated/prisma/client.js');
-      const { PrismaBetterSqlite3 } = await import('@prisma/adapter-better-sqlite3');
-      const cacheDir = path.join(PROJECT_ROOT, this.config.cache?.directory || '.cache');
-      if (!fs.existsSync(cacheDir)) {
-        fs.mkdirSync(cacheDir, { recursive: true });
-      }
-      const dbPath = path.join(cacheDir, 'usage.db');
-      const adapter = new PrismaBetterSqlite3({ url: `file:${dbPath}` });
-      const prisma = new PrismaClient({ adapter });
-      await prisma.$connect();
-      this.prisma = prisma;
       initScopeStore(prisma);
-
-      // Initialize user store for OAuth authentication
-      const configDir = path.join(PROJECT_ROOT, 'config');
-      const userStore = initUserStore(configDir);
 
       // Create OAuth provider
       const scopesSupported = this.config.oauth?.scopesSupported || ['mcp:read', 'mcp:write', 'mcp:admin'];
@@ -5921,10 +5997,6 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
         refreshTokenTtl: this.config.oauth?.refreshTokenTtl,
         scopesSupported,
       });
-
-      // Start token cleanup job
-      this.tokenCleanupJob = new TokenCleanupJob(prisma);
-      this.tokenCleanupJob.start();
 
       // Initialize backup manager
       this.backupManager = new BackupManager(
@@ -6017,21 +6089,18 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
     // Auth on /mcp. Required: the SDK's requireBearerAuth (401 + WWW-Authenticate without a
     // valid token). Optional: verify a token if one is sent, else go on anonymously.
     // Either way req.auth reaches the tool handlers as extra.authInfo.
-    const bearerAuth = this.oauthProvider
-      ? requireBearerAuth({
-          verifier: this.oauthProvider,
-          resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(issuerUrl),
-        })
-      : undefined;
+    // The check accepts a user access key or an OAuth login token, also when OAuth is off.
+    const bearerAuth = requireBearerAuth({
+      verifier: mcpVerifier,
+      resourceMetadataUrl: this.oauthProvider ? getOAuthProtectedResourceMetadataUrl(issuerUrl) : undefined,
+    });
     const mcpAuth: RequestHandler = (req, res, next) => {
-      if (!bearerAuth) {
-        if (!mcpRequireAuth) return next();
-        res.status(503).json({ error: 'server_error', error_description: 'mcpRequireAuth is on but OAuth is disabled' });
-        return;
-      }
       if (mcpRequireAuth || req.headers.authorization) return bearerAuth(req, res, next);
       next();
     };
+    if (!mcpRequireAuth) {
+      console.error('⚠️ MCP_REQUIRE_AUTH is off: calls with no token are anonymous and no role rule applies to them');
+    }
 
     // MCP endpoint - handles POST (messages), GET (SSE stream), DELETE (terminate)
     app.post('/mcp', mcpAuth, async (req: Request, res: Response) => {
