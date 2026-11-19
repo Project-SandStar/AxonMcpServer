@@ -158,6 +158,25 @@ describe('an OAuth login token on /api/ide', () => {
     expect(post.status).toBe(403);
   });
 
+  test('a role change works on the next call with the same token (role is read from the user, not the token)', async () => {
+    const token = await loginToken('alice', 'alice-password');
+    expect(users.updateRole('alice', 'readonly')).toBe(true);
+    const post = await fetch(base + '/projects/demo/site/functions/f1', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: '{"src":"() => 1","expectedMod":null}',
+    });
+    expect(post.status).toBe(403);
+    expect(audits.filter(a => a.action === 'write.denied')).toHaveLength(1);
+    expect(audits[0].caller).toMatchObject({ username: 'alice', role: 'readonly' });
+  });
+
+  test('a new user with the name of a deleted user does not inherit its token', async () => {
+    const token = await loginToken('alice', 'alice-password');
+    users.deleteUser('alice');
+    users.createUser('alice', 'alice-password', 'user');
+    expect((await getProjects(token)).status).toBe(401);
+    expect((await getProjects(await loginToken('alice', 'alice-password'))).status).toBe(200);
+  });
+
   test('401 for a revoked token, a token of a deleted or disabled user, and with OAuth off', async () => {
     const token = await loginToken('alice', 'alice-password');
     expect((await getProjects(token)).status).toBe(200);
