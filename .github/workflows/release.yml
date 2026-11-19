@@ -43,6 +43,9 @@ jobs:
           cache: npm
 
       - run: npm ci
+        env:
+          # onnxruntime-node fetches CUDA binaries at install time; the server runs on the CPU.
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
       - run: npx prisma generate
       - run: npm run build
 

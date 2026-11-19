@@ -14,13 +14,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 22, as in the Dockerfile: the mdream native binding (HTML docs to
+      # Markdown) needs Node >= 22, and npm skips it on Node 20.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
         run: npm ci
+        env:
+          # onnxruntime-node fetches CUDA binaries at install time; the server runs on the CPU.
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
 
       - name: Generate Prisma client
         run: npx prisma generate
@@ -28,7 +33,10 @@ jobs:
       - name: Build
         run: npm run build
 
+      # A failing test fails the build. The tests use temp folders, fakes and
+      # 127.0.0.1 only: no SkySpark, no network, no local data.
       - name: Test
-        run: npm test --if-present
-        # Tests may require external services; keep informational until hardened.
-        continue-on-error: true
+        run: npm test
+
+      - name: Test (ESM)
+        run: npm run test:esm

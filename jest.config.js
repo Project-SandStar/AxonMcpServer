@@ -14,8 +14,10 @@ export default {
     ],
   },
   testMatch: ['**/*.test.ts'],
-  // *.esm.test.ts need ESM (web-tree-sitter): run with `npm run test:esm`
-  testPathIgnorePatterns: ['/node_modules/', '\\.esm\\.test\\.ts$'],
+  // *.esm.test.ts need ESM (web-tree-sitter): run with `npm run test:esm`.
+  // vscode-extension/ is its own npm package with its own jest config and
+  // dependencies (the 'vscode' module); the root `npm ci` does not install them.
+  testPathIgnorePatterns: ['/node_modules/', '\\.esm\\.test\\.ts$', '<rootDir>/vscode-extension/'],
   collectCoverageFrom: [
     'src/**/*.ts',
     '!src/**/*.d.ts',
