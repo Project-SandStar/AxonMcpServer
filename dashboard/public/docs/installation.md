@@ -6,7 +6,7 @@ This guide covers how to build, configure, and connect the Axon MCP Server to va
 
 ## Prerequisites
 
-- **Node.js** >= 18.0.0
+- **Node.js** >= 22
 - **npm** (included with Node.js)
 
 Verify your installation:
@@ -384,7 +384,7 @@ Open `http://localhost:{{PORT}}/dashboard/` in your browser to access the admin 
 
 **Symptom:** The server exits immediately or prints an error on startup.
 
-- Verify Node.js version: `node --version` (must be >= 18.0.0)
+- Verify Node.js version: `node --version` (must be >= 22)
 - Verify the build completed: check that `{{SERVER_DIR}}/dist/index.js` exists
 - Rebuild if needed: `cd {{SERVER_DIR}} && npm run build`
 - Check for port conflicts in HTTP mode: `lsof -i :{{PORT}}`

@@ -41,7 +41,7 @@
   "author": "Anka Labs, Inc. (https://ankalabs.com)",
   "license": "SEE LICENSE IN LICENSE",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.92.0",

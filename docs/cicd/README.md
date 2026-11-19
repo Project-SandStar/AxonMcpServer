@@ -38,7 +38,7 @@ to work around to make it run under the `Project-SandStar` GitHub organization.
 Runs on `pull_request` and pushes to `main`:
 
 ```
-checkout → setup-node 20 (npm cache) → npm ci → npx prisma generate → npm run build → npm test (informational)
+checkout → setup-node 22 (npm cache) → npm ci → npx prisma generate → npm run build → npm test (informational)
 ```
 
 `prisma generate` runs before `build` because the build (`tsc && cp -r src/generated dist/`)

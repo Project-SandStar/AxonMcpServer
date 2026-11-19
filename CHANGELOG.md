@@ -8,6 +8,7 @@
 * **ide:** the shared token `AXON_IDE_TOKEN` is removed. `/api/ide` now needs a user access key (or, when OAuth is on, an OAuth login token of a user). An admin makes one key for each developer on the dashboard Users page. A call with the old token gets `401`.
 * **auth:** a token on `/mcp` is checked on every call, also when OAuth is off. A token whose user is deleted or disabled, and an OAuth token with no user, is refused.
 * **admin:** `POST /admin/usage/clear` and `POST /admin/usage/reset` are admin only.
+* **node:** the server needs Node 22 or newer. `package.json` `engines.node` is `>=22`, and CI and the release build run on Node 22.
 * **db:** a migration adds the tables `user_api_keys` and `access_audit_events`. It must run before the server starts. The Docker image runs it; outside Docker `npm start` and `npm run start:http` now run `npm run db:migrate` first. Without it the server logs an error at start and `/api/ide` answers `503`.
 * **mcp:** with `MCP_REQUIRE_AUTH` off (the default) a call with no token is read-only: it can use the read tools but no write tool. Give each client an access key, or set `MCP_ANONYMOUS_ROLE=user` to keep the old behaviour.
 * **usage:** "Reset database" empties the usage tables only. A backup no longer holds `usage.db`, and a restore never writes it.
