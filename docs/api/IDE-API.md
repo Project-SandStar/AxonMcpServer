@@ -181,6 +181,11 @@ with no sync.
 - `doc` not given: the stored doc is kept (before, it was cleared).
 - The function name is validated.
 - A stale write returns a result with `"status": "conflict"` and `isError`.
+- One func record per name. An existing record is updated in place. If older
+  records with the same name are there (an old commit added a new record each
+  time), the newest one is updated and the others are removed in the same
+  eval. Their source goes to the backups, and `removedDuplicates` in the reply
+  counts them. This holds for this POST route too.
 - A user with the `readonly` role cannot call it (see docs/implementation/OAUTH.md,
   "User access keys"). This rule needs a token on the call.
 

@@ -1626,7 +1626,7 @@ ALWAYS call this before any mutation (commitAxonFunction, commit/diff/remove via
           name: 'commitAxonFunction',
           description: `Upsert an Axon function in the active project. If a func record with this name exists, it is UPDATED in place (same id); otherwise a new record is added. Keeps the last 10 source backups under proj/<instance>/<project>/.backups/<name>/ when overwriting.
 
-Note: Folio enforces unique id, not unique name on func — this tool looks up the existing record by name and updates it. Do NOT pre-delete before calling; that's wasted work and pollutes history.
+Note: Folio enforces unique id, not unique name on func — this tool looks up the existing record by name and updates it (no {add}). If older records with the same name are already there, it updates the newest one and removes the others in the same eval; their src goes to the backups and 'removedDuplicates' counts them. Do NOT pre-delete before calling; that's wasted work and pollutes history.
 
 SAFETY: pass 'project' explicitly ("instance/project" or "project") to assert the expected target. If the explicit value does not match the active project, the call FAILS instead of committing to the wrong place. If 'project' is omitted, the response includes a warning — call getPrimaryProject first to confirm routing.
 
@@ -1636,7 +1636,7 @@ STALE WRITES: pass 'expectedMod' (the mod of the record you last read, ISO 8601;
 
 The name must be a letter, then letters, digits or "_". After a good commit the server's local copy (func/<name>.axon, .trio, sync metadata) is updated.
 
-Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha256 of src).`,
+Response includes 'operation': "added" or "updated", plus 'mod', 'hash' (sha256 of src), 'doc' (the stored doc) and 'removedDuplicates'.`,
           inputSchema: {
             type: 'object',
             properties: {

@@ -29,6 +29,7 @@
 * **commit:** a commit without `doc` keeps the stored doc (it was cleared)
 * **commit:** the function name is validated, and `$`, CR and tab in source are escaped in the Axon literal
 * **commit:** the local copy (`func/<name>.axon`, `.trio`, sync metadata) is updated after a good commit
+* **commit:** one func record per name: `commitAxonFunction` and the IDE commit update the newest record in place and remove older records with the same name in the same eval; their source goes to the backups and the reply counts them (`removedDuplicates`)
 * **sync:** a first sync records `mod`, and a later sync sees a changed source also when the old copy holds no `mod`
 * **sync:** a func whose name from the server is not a valid function name (for example a path) is skipped and counted as an error; it is never written to disk
 * **ide:** `expectedMod` must carry a time zone; a date-time with no zone is refused (it was read as the local time of the server)

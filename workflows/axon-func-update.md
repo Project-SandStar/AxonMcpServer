@@ -1,18 +1,24 @@
 ---
-title: Update an Axon Function (Without Creating Duplicates)
-description: Step-by-step guide for committing axon function changes via MCP without leaving stale duplicate records in folio
+title: Update an Axon Function (One Record per Name)
+description: Step-by-step guide for committing axon function changes via MCP with commitAxonFunction, with the stale-write check and one func record per name
 category: code-management
 tags: [function, deploy, commit, axon, mcp, duplicates, folio]
-version: 1.0
+version: 2.0
 ---
 
 # Update Axon Function Workflow
 
 ## Overview
 
-`mcp__axon-mcp__commitAxonFunction` always uses Folio's `{add}` flag under the hood, so every call creates a **new record**. Without explicit cleanup the project ends up with multiple `func` records all sharing the same `name`. Folio's lookup-by-name is non-deterministic when duplicates exist, so subsequent runs of the function may invoke the *old* version and silently regress.
+`mcp__axon-mcp__commitAxonFunction` keeps exactly one `func` record per name:
 
-This workflow shows the disciplined find-then-clean-then-commit-then-verify pattern that keeps exactly one record per function name.
+- A function that exists is **updated in place** (`commit(diff(existing, changes))`, no `{add}`). The record keeps its id.
+- A new function is added (`{add}`). This is the only case that adds a record.
+- If older records with the same name are already there (an old server build added a new record on every commit), the tool updates the newest one (largest `mod`) and **removes the others in the same eval**. Their `src` goes to the backups, and `removedDuplicates` in the reply counts them.
+
+Do **not** delete records before you commit. The tool does the clean-up.
+
+The MCP tool and the IDE API (`POST /api/ide/projects/{instance}/{project}/functions/{name}`) use the same code: `commitFunction()` in `src/ide/commitFunction.ts`.
 
 ## When to Use This Workflow
 
@@ -27,50 +33,18 @@ Trigger words from the user that should make you run this workflow automatically
 
 ## Prerequisites
 
-1. **Active project context**: every `executeAxonCode` is routed through the primary project. After an MCP server restart or new session, you usually need:
-   ```
-   mcp__axon-mcp__setPrimaryProject(instanceName="<inst>", projectName="<proj>")
-   ```
-   If `executeAxonCode` returns `403` or `UnknownRecErr`, this is the cause.
-2. **The new source code** ready to commit, either from disk or from an in-conversation snippet.
+1. **Active project**: call `mcp__axon-mcp__getPrimaryProject` and confirm the instance and project. Pass `project` ("instance/project") on the commit: a wrong project makes the call fail instead of writing to the wrong place.
+2. **The new source code**, from disk or from the conversation.
 
-## Step 1: Locate Existing Records by Name
+## Step 1: Read the Current Record (for the stale-write check)
 
 ```axon
-readAll(func and name == "<funcName>").map(r => {id: r->id.toStr, mod: r["mod"]})
+read(func and name == "<funcName>", false).map(r => {mod: r["mod"], doc: r["doc"]})
 ```
 
-Three possible outcomes:
+Note the `mod`. If the function is new, there is no row; use `expectedMod: null` in Step 3.
 
-| Outcome | Action |
-|---------|--------|
-| **Zero rows** — first deploy | Skip Step 2; jump to Step 3 |
-| **One row** — normal case | Note the id; jump to Step 3 (Step 4 verifies) |
-| **Two or more rows** — pre-existing duplication | Run Step 2 to remove all-but-the-newest **before** Step 3 |
-
-Identify the newest by largest `mod` value. Remove the rest by id in Step 2.
-
-## Step 2: Delete Stale Duplicates by ID
-
-For each row to remove, run **one delete per call** with the explicit ref form:
-
-```axon
-commit(diff(readById(@<id>), null, {remove}))
-```
-
-⚠️ **Always delete by single id** — never via `readAll(...).each` mass deletion. The mass form trips the MCP safety prompt as it's considered a shared-state risk.
-
-✅ Allowed:
-```axon
-commit(diff(readById(@317e39ce-677bef51), null, {remove}))
-```
-
-❌ Blocked:
-```axon
-readAll(func and name == "X").each(r => commit(diff(r, null, {remove})))
-```
-
-## Step 3: Validate Before Committing
+## Step 2: Validate Before Committing
 
 ```
 mcp__axon-mcp__validateAxonCode(
@@ -80,11 +54,7 @@ mcp__axon-mcp__validateAxonCode(
 )
 ```
 
-Look for:
-- `syntax.valid: true`
-- `semantic.valid: true`
-
-The `semantic.warnings` about *"Direct tag access without null check"* are stylistic and can be ignored for `dict["key"]` reads.
+Look for `syntax.valid: true` and `semantic.valid: true`. The `semantic.warnings` about *"Direct tag access without null check"* are stylistic and can be ignored for `dict["key"]` reads.
 
 ### Common Axon Syntax Gotchas
 
@@ -95,76 +65,63 @@ The `semantic.warnings` about *"Direct tag access without null check"* are styli
 | `.year` / `.month` on Dates | dot-call ambiguity in some scopes | Use `year(d)` / `month(d)` |
 | `Number.toFloat` | `Unknown symbol 'toFloat'` | Divide by the unit (e.g. `(d2 - d1) / 1day`) to coerce |
 
-## Step 4: Commit the New Version
+## Step 3: Commit
 
 ```
 mcp__axon-mcp__commitAxonFunction(
   name: "<funcName>",
-  doc: "<one-line summary>",
-  src: "<full source>"
+  src: "<full source>",
+  project: "<instance>/<project>",
+  expectedMod: "<mod from Step 1, or null for a new function>"
 )
 ```
 
-The MCP tool keeps **10 rolling backups** under
-`proj/<instance>/<project>/.backups/<funcName>/backup-<ts>.axon`
-automatically, so even a buggy commit has a safety net.
+Rules:
 
-## Step 5: Verify Exactly One Record Exists
+| Argument | Effect |
+|----------|--------|
+| `doc` not given | The stored doc is kept. Pass `""` to clear it. |
+| `expectedMod` ISO date-time | The commit is refused if the record's `mod` is not that time. |
+| `expectedMod: null` | The function must not exist yet. |
+| `expectedMod` not given | No stale-write check. |
+| `name` | A letter, then letters, digits or `_`. Other names are refused before anything is sent. |
+
+The reply:
+
+- `"status": "ok"`: `operation` ("added" or "updated"), the new `mod` (use it as the next `expectedMod`), `hash` (sha256 of src), `doc`, `backupPath`, `removedDuplicates`.
+- `"status": "conflict"` (an error reply): the function changed since you read it. Nothing was written. The reply holds the server's `mod` and `hash`. Read the function again, merge, and commit with the new `mod`.
+
+The tool keeps the last **10 backups** of the replaced source (and of each removed duplicate) under
+`proj/<instance>/<project>/.backups/<funcName>/backup-<ts>.axon`.
+
+## Step 4 (optional): Verify
 
 ```axon
 readAll(func and name == "<funcName>").map(r => {id: r->id.toStr, mod: r["mod"]})
 ```
 
-Should be exactly one row, with `mod` showing your new commit time.
+There should be one row, with the `mod` from the reply.
 
-If two rows appear (Step 2 was needed but skipped on a duplicate state), repeat Step 2 to remove the older one, then re-verify.
-
-## Quick Recipe (Copy-Paste Template)
+## Quick Recipe
 
 ```text
-1. Set primary project:
-   mcp__axon-mcp__setPrimaryProject(instanceName="...", projectName="...")
-
-2. Find existing:
-   mcp__axon-mcp__executeAxonCode(code:
-     readAll(func and name == "FUNC_NAME").map(r => {id: r->id.toStr, mod: r["mod"]})
-   )
-
-3. (If 2+ rows) delete olders by id:
-   mcp__axon-mcp__executeAxonCode(code:
-     commit(diff(readById(@OLD_ID), null, {remove}))
-   )
-
-4. Validate:
-   mcp__axon-mcp__validateAxonCode(code: "<src>", includePerformance: false)
-
-5. Commit:
-   mcp__axon-mcp__commitAxonFunction(name: "FUNC_NAME", doc: "...", src: "<src>")
-
-6. Verify single row:
-   mcp__axon-mcp__executeAxonCode(code:
-     readAll(func and name == "FUNC_NAME").map(r => {id: r->id.toStr, mod: r["mod"]})
-   )
+1. mcp__axon-mcp__getPrimaryProject()
+2. mcp__axon-mcp__executeAxonCode(code:
+     read(func and name == "FUNC_NAME", false).map(r => {mod: r["mod"]}))
+3. mcp__axon-mcp__validateAxonCode(code: "<src>", includePerformance: false)
+4. mcp__axon-mcp__commitAxonFunction(name: "FUNC_NAME", src: "<src>",
+     project: "INSTANCE/PROJECT", expectedMod: "<mod>")
+5. On "conflict": read again, merge, retry with the new mod.
 ```
 
-## Why We Don't Just Use Update Semantics
+## Why One Record per Name Matters
 
-Folio supports updating a record in place via `commit(diff(rec, {tag: val}))` without the `{add}` flag — that *would* avoid duplication. But the MCP tool doesn't expose that path; it always uses `{add}`.
+Folio has a unique `id` but no unique `name` on `func`. With two records of one name:
 
-Until the MCP server is patched to fall back to update-by-name, the find-then-commit-then-verify pattern above is the workaround.
+- `func and name == "X"` picks one of them, so a call may run the old source.
+- The records may hold different source, so behaviour changes from call to call.
 
-If you find yourself doing this often, consider patching the MCP server's `commitAxonFunction` to first do a `read(func and name==X)` and then commit with `diff(existing, ...)` instead of `diff(null, ..., {add})`. That fix lives in `/Users/<user>/Code/axon-mcp-server/dist/index.js` around line ~3027.
-
-## Why This Matters
-
-Each duplicate is a silent correctness hazard:
-
-- Folio resolves `func and name == "X"` non-deterministically. Calls might invoke any of the duplicates at random.
-- The duplicates may have *different* source bodies, so behavior changes from call to call.
-- Backup retention (10 copies) is per-name, but only on the most-recently committed-over record; stale duplicates lose their history.
-- Memory + storage waste accumulates over many deploys.
-
-So: **always Step 1 + Step 5**. The verify-after-commit step catches the case where Step 2 was needed but skipped.
+That is why the tool updates in place and removes older records with the same name.
 
 ## Reference: Folio Diff Operations
 
@@ -175,11 +132,4 @@ So: **always Step 1 + Step 5**. The verify-after-commit step catches the case wh
 | `diff(rec, null, {remove})` | Delete a record |
 | `diff(rec, {tag: removeMarker()})` | Remove a single tag from a record |
 
-The MCP `commitAxonFunction` always uses the first form. To do an in-place update without the duplication side-effect, you'd use the second form via `executeAxonCode` directly:
-
-```axon
-existing: read(func and name == "myFunc")
-commit(diff(existing, {src: "<new src>", doc: "<new doc>"}))
-```
-
-This bypasses the MCP tool but works around its `{add}` behavior cleanly. Call out that this is what you're doing, since it skips the auto-backup the MCP tool provides.
+`commitAxonFunction` uses the second form for a function that exists and the first form only for a new one.
