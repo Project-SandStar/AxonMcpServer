@@ -293,16 +293,7 @@ describe('auth', () => {
     expect(res.status).toBe(401);
     expect(res.json).toEqual({ error: 'unauthorized' });
   });
-
-  test('no shared token: the old AXON_IDE_TOKEN value is refused', async () => {
-    const old = process.env.AXON_IDE_TOKEN;
-    process.env.AXON_IDE_TOKEN = 'old-shared-token-0123456789';
-    try {
-      expect((await call('GET', '/projects', undefined, 'old-shared-token-0123456789')).status).toBe(401);
-    } finally {
-      if (old === undefined) delete process.env.AXON_IDE_TOKEN; else process.env.AXON_IDE_TOKEN = old;
-    }
-  });
+  // The old shared AXON_IDE_TOKEN: see ideOAuth.test.ts (real bearer check).
 });
 
 const settle = () => new Promise<void>(ok => setTimeout(ok, 20));

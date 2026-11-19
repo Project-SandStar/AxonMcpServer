@@ -5,10 +5,10 @@
  *   GET  /api/ide/projects/{instance}/{project}/functions?sync=true|false
  *   POST /api/ide/projects/{instance}/{project}/functions/{name}
  *
- * Auth: `Authorization: Bearer <user access key>` on every route. The key
- * belongs to one dashboard user (an admin makes it on the Users page). A key
- * is always required, also when /mcp runs without auth. There is no shared
- * token.
+ * Auth: `Authorization: Bearer <token>` on every route. The token is a user
+ * access key (an admin makes it on the Users page) or, when OAuth is on, an
+ * OAuth login token. Both belong to one dashboard user. A token is always
+ * required, also when /mcp runs without auth. There is no shared token.
  *
  * A user with the 'readonly' role can list and export, but cannot commit.
  * Every call that passes the key check gives one access record with the user.

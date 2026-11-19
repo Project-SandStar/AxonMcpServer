@@ -5954,7 +5954,7 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
     const mcpVerifier = verifierFor('mcp');
 
     // IDE API (project copy and safe function commit for editor plugins).
-    // It always needs a user access key, also when /mcp runs without auth.
+    // It always needs a user access key or an OAuth login token, also when /mcp runs without auth.
     // Mounted before the global body parser: it reads its body after the key check.
     app.use('/api/ide', createIdeRouter({
       verify: (bearer) => verifyCaller(ideVerifier, bearer),
@@ -5975,7 +5975,7 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
       sync: (instance, project, caller) => this.ideSyncProject(instance, project, caller),
       commit: (instance, project, args, caller) => this.ideCommitFunction(instance, project, args, caller),
     }));
-    console.error('🧩 IDE API enabled at /api/ide (a user access key is required)');
+    console.error('🧩 IDE API enabled at /api/ide (a user access key or an OAuth login token is required)');
     if (process.env.AXON_IDE_TOKEN) {
       // The value is never printed.
       console.error('⚠️ AXON_IDE_TOKEN is set but no longer used; make a user key on the Users page');
