@@ -921,6 +921,25 @@ describe('one func record per name', () => {
     expect(res).toMatchObject({ status: 'conflict', exists: true });
     expect(sky.count('roundTo')).toBe(2);
   });
+
+  test('more removed records than maxBackups: every removed src keeps its backup', async () => {
+    const dir = path.join(tmp, 'demo', 'site', '.backups', 'roundTo');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'backup-2020-01-01T00-00-00-000Z.axon'), 'an old backup');
+    for (const n of [1, 2, 3]) sky.putDuplicate('roundTo', `() => "dup ${n}"`, `202${n}-01-01T00:00:00.000Z`);
+    const before = sky.recs.get('roundTo')!.src;
+
+    const res = await commitFunction(target(), { name: 'roundTo', src: '() => "new"' }, { ...deps(), maxBackups: 2 });
+    expect(res).toMatchObject({ status: 'ok', removedDuplicates: 3, backedUp: true });
+    expect((res as any).warning).toContain('Their src is in the backups.');
+
+    const saved = fs.readdirSync(dir).map(f => fs.readFileSync(path.join(dir, f), 'utf8')).sort();
+    expect(saved).toEqual([before, '() => "dup 1"', '() => "dup 2"', '() => "dup 3"'].sort());
+
+    // The next commit trims back to maxBackups.
+    await commitFunction(target(), { name: 'roundTo', src: '() => "newer"' }, { ...deps(), maxBackups: 2 });
+    expect(fs.readdirSync(dir).length).toBe(2);
+  });
 });
 
 describe('the commitAxonFunction tool reply', () => {

@@ -249,23 +249,52 @@ function str(dict: FuncRecord, tag: string): string | null {
   return typeof value.value === 'string' ? value.value : String(value);
 }
 
-async function exists(file: string): Promise<boolean> {
-  try { await fs.access(file); return true; } catch { return false; }
+/** Writes a new file; a name that is taken gets a number (two backups in one millisecond). */
+async function writeNewFile(dir: string, stamp: string, src: string): Promise<string> {
+  for (let n = 0; ; n++) {
+    const file = path.join(dir, n === 0 ? `backup-${stamp}.axon` : `backup-${stamp}-${n}.axon`);
+    try {
+      await fs.writeFile(file, src, { flag: 'wx' });
+      return file;
+    } catch (error: any) {
+      if (error?.code !== 'EEXIST') throw error;
+    }
+  }
 }
 
-async function writeBackup(
-  baseDir: string, target: CommitTarget, name: string, prevSrc: string, keep: number
-): Promise<string> {
+/**
+ * Writes one backup per src. files[i] is the file of srcs[i], or null when it
+ * was not written. Old backups are trimmed to `keep`, but the files of this
+ * commit are never trimmed: they may hold the only copy of a removed record.
+ */
+async function writeBackups(
+  baseDir: string, target: CommitTarget, name: string, srcs: string[], keep: number
+): Promise<{ files: Array<string | null>; errors: string[] }> {
+  const files: Array<string | null> = [];
+  const errors: string[] = [];
   const dir = path.join(baseDir, target.instance, target.project, '.backups', name);
-  await fs.mkdir(dir, { recursive: true });
+  try {
+    await fs.mkdir(dir, { recursive: true });
+  } catch (error: any) {
+    return { files: srcs.map(() => null), errors: [error.message] };
+  }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  // Two backups in one millisecond (a removed duplicate) get a number.
-  let file = path.join(dir, `backup-${stamp}.axon`);
-  for (let n = 1; await exists(file); n++) file = path.join(dir, `backup-${stamp}-${n}.axon`);
-  await fs.writeFile(file, prevSrc);
-  const old = (await fs.readdir(dir)).filter(f => f.startsWith('backup-')).sort().reverse().slice(keep);
-  for (const f of old) await fs.unlink(path.join(dir, f));
-  return file;
+  for (const src of srcs) {
+    try {
+      files.push(await writeNewFile(dir, stamp, src));
+    } catch (error: any) {
+      files.push(null);
+      errors.push(error.message);
+    }
+  }
+  try {
+    const mine = new Set(files.filter((f): f is string => f !== null).map(f => path.basename(f)));
+    const others = (await fs.readdir(dir)).filter(f => f.startsWith('backup-') && !mine.has(f)).sort().reverse();
+    for (const f of others.slice(Math.max(0, keep - mine.size))) await fs.unlink(path.join(dir, f));
+  } catch (error: any) {
+    errors.push(`old backups were not trimmed: ${error.message}`);
+  }
+  return { files, errors };
 }
 
 /**
@@ -305,32 +334,23 @@ export async function commitFunction(
   const baseDir = deps.baseDir ?? 'proj';
   const warnings: string[] = [];
 
-  // Backup of the source that the commit replaced (it came back in the same eval).
-  let backupPath: string | null = null;
+  // Backups of the source that the commit replaced and of each removed
+  // duplicate (oldest last). Both came back in the same eval.
   const prevSrc = str(dict, 'idePrevSrc');
-  if (prevSrc) {
-    try {
-      backupPath = await writeBackup(baseDir, target, args.name, prevSrc, deps.maxBackups ?? 10);
-    } catch (error: any) {
-      warnings.push(`The backup was not written: ${error.message}`);
-    }
-  }
-
-  // The src of each removed duplicate gets a backup too (oldest last).
   const dupSrcs = strList(dict, 'ideDupSrcs');
-  if (dupSrcs.length) {
-    warnings.push(
-      `Removed ${dupSrcs.length} older func record(s) with the name ${args.name}; ` +
-      'their src is in the backups.'
-    );
-    for (const dupSrc of dupSrcs) {
-      try {
-        const file = await writeBackup(baseDir, target, args.name, dupSrc, deps.maxBackups ?? 10);
-        if (!backupPath) backupPath = file;
-      } catch (error: any) {
-        warnings.push(`A backup of a removed duplicate was not written: ${error.message}`);
-      }
+  const saves = [...(prevSrc ? [prevSrc] : []), ...dupSrcs];
+  let backupPath: string | null = null;
+  if (saves.length) {
+    const { files, errors } = await writeBackups(baseDir, target, args.name, saves, deps.maxBackups ?? 10);
+    backupPath = files.find(f => f !== null) ?? null;
+    if (dupSrcs.length) {
+      const missing = files.slice(saves.length - dupSrcs.length).filter(f => f === null).length;
+      warnings.push(
+        `Removed ${dupSrcs.length} older func record(s) with the name ${args.name}.` +
+        (missing === 0 ? ' Their src is in the backups.' : ` ${missing} of them have no backup.`)
+      );
     }
+    if (errors.length) warnings.push(`A backup was not written: ${errors.join('; ')}`);
   }
 
   // Local copy: the commit is done, so a failure here is a warning only.
