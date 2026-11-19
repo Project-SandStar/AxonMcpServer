@@ -13,7 +13,7 @@ import express from 'express';
 import type { AddressInfo } from 'net';
 import type { Server } from 'http';
 import { jest } from '@jest/globals';
-import { createAdminRouter } from '../admin/routes.js';
+import { createAdminRouter, maskSecrets } from '../admin/routes.js';
 import { getUserStore } from '../admin/userStore.js';
 import { getUsageStore } from '../usage/usageStore.js';
 import { AxonOAuthProvider } from '../auth/oauthProvider.js';
@@ -348,6 +348,25 @@ describe('connection files and settings: admin only', () => {
     expect((await call('DELETE', '/config/demo-conn.json', 'admin')).status).toBe(200);
     expect(fs.existsSync(connFile())).toBe(false);
     expect(reloads).toBe(reloadsBefore + 4);
+  });
+});
+
+describe('maskSecrets', () => {
+  test('text in a list or an object below a secret key is masked; numbers and other keys stay', () => {
+    const value = {
+      auth: { accessTokenTtl: 3600, refreshTokenTtl: 7200 },
+      search: { minTokenLength: 2 },
+      apiKeys: ['made-up-key-1', 'made-up-key-2'],
+      credentials: { user: 'demo-user', value: 'made-up-nested-secret' },
+      fallback: { username: 'demo-user', password: 'made-up-pw', pwd: 'made-up-pwd' },
+    };
+    const masked = maskSecrets(value) as any;
+    expect(JSON.stringify(masked)).not.toMatch(/made-up/);
+    expect(masked.auth).toEqual({ accessTokenTtl: 3600, refreshTokenTtl: 7200 });
+    expect(masked.search).toEqual({ minTokenLength: 2 });
+    expect(masked.apiKeys).toEqual(['********', '********']);
+    expect(masked.fallback).toEqual({ username: 'demo-user', password: '********', pwd: '********' });
+    expect(value.fallback.password).toBe('made-up-pw');
   });
 });
 

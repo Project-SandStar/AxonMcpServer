@@ -85,15 +85,19 @@ interface AdminContext {
   getWorkflowVectorIndex?: () => import('../workflows/workflowVectorIndex.js').WorkflowVectorIndex | undefined;
 }
 
-/** A key whose text value is a secret: password, secret, token, API key, credential. */
-const SECRET_KEY = /pass(word|wd)?$|secret|token|api[-_]?key|credential/i;
+/** A key whose text value is a secret: password, passphrase, secret, token, API key, credential. */
+const SECRET_KEY = /pass(word|wd|phrase)?$|^pwd$|secret|token|api[-_]?key|credential/i;
 
-/** A copy of `value` with the text of every secret key replaced by "********". */
-export function maskSecrets(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(maskSecrets);
+/**
+ * A copy of `value` with every text below a secret key replaced by "********",
+ * also inside a list or an object under that key. Numbers stay (accessTokenTtl).
+ */
+export function maskSecrets(value: unknown, secret = false): unknown {
+  if (typeof value === 'string') return secret ? '********' : value;
+  if (Array.isArray(value)) return value.map(v => maskSecrets(v, secret));
   if (!value || typeof value !== 'object') return value;
   return Object.fromEntries(Object.entries(value).map(([k, v]) =>
-    [k, typeof v === 'string' && SECRET_KEY.test(k) ? '********' : maskSecrets(v)]));
+    [k, maskSecrets(v, secret || SECRET_KEY.test(k))]));
 }
 
 /**
