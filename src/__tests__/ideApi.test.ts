@@ -25,25 +25,33 @@ const READONLY_TOKEN = 'axk_0e0e0e0e_rita-test-key-0123456789';
 const ALICE: IdeCaller = { userId: 'u-alice', username: 'alice', role: 'user', keyId: 'k-alice', keyPrefix: 'axk_0a1b2c3d' };
 const RITA: IdeCaller = { userId: 'u-rita', username: 'rita', role: 'readonly', keyId: 'k-rita', keyPrefix: 'axk_0e0e0e0e' };
 
-/** Reads an Axon string literal (with its quotes) back to the value. */
+/**
+ * Reads an Axon string literal (with its quotes) back to the value.
+ * Plain checks in the loop and one expect at the end: an expect per character
+ * made a 300 kB body take over 4 s (near the 5 s test timeout).
+ */
 function unAxon(literal: string): string {
-  expect(literal.startsWith('"') && literal.endsWith('"')).toBe(true);
+  if (!(literal.length >= 2 && literal.startsWith('"') && literal.endsWith('"'))) {
+    throw new Error('not an Axon string literal: ' + literal.slice(0, 40));
+  }
   const body = literal.slice(1, -1);
+  const map: Record<string, string> = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', '\\': '\\', '"': '"', $: '$' };
+  const bad: string[] = [];
   let out = '';
   for (let i = 0; i < body.length; i++) {
     const ch = body[i];
     if (ch !== '\\') {
       // A raw quote, dollar or newline would end or break the literal in Axon.
-      expect(['"', '$', '\n', '\r']).not.toContain(ch);
+      if (ch === '"' || ch === '$' || ch === '\n' || ch === '\r') bad.push(`raw ${JSON.stringify(ch)} at ${i}`);
       out += ch;
       continue;
     }
     const next = body[++i];
     if (next === 'u') { out += String.fromCharCode(parseInt(body.slice(i + 1, i + 5), 16)); i += 4; continue; }
-    const map: Record<string, string> = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', '\\': '\\', '"': '"', $: '$' };
-    expect(Object.keys(map)).toContain(next);
+    if (!(next in map)) { bad.push(`unknown escape \\${next} at ${i}`); continue; }
     out += map[next];
   }
+  expect(bad).toEqual([]);
   return out;
 }
 
@@ -875,6 +883,16 @@ describe('helpers', () => {
       expect(unAxon(lit)).toBe(s);
     }
     expect(axonStr('a"b$c\\d\n')).toBe('"a\\"b\\$c\\\\d\\n"');
+  });
+
+  test('the fake still refuses a raw quote, dollar or newline and an unknown escape', () => {
+    for (const bad of ['"a"b"', '"a$b"', '"a\nb"', '"a\rb"', '"a\\qb"', 'no quotes']) {
+      expect(() => unAxon(bad)).toThrow();
+    }
+    // A 300 kB literal is read fast (one expect, not one per character).
+    const started = Date.now();
+    expect(unAxon(axonStr('x'.repeat(300 * 1024))).length).toBe(300 * 1024);
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 
   test('modToIso: one form for dates, Haystack date-times and ISO text', () => {
