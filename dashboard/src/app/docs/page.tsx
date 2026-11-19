@@ -52,6 +52,8 @@ function SourceBadge({ sources }: { sources: string[] }) {
 
 export default function DocsViewer() {
   const queryClient = useQueryClient();
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe, retry: false });
+  const isAdmin = me?.role === 'admin';
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDoc, setSelectedDoc] = useState<DocsSearchResultItem | null>(null);
 
@@ -120,14 +122,14 @@ export default function DocsViewer() {
             )}
             {buildMutation.isPending ? 'Embedding...' : 'Build Doc Vectors'}
           </button>
-          <button
+          {isAdmin && <button
             onClick={() => clearMutation.mutate()}
             disabled={clearMutation.isPending}
             className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
           >
             <Trash2 className="h-4 w-4" />
             Clear Cache
-          </button>
+          </button>}
         </div>
       </div>
 
