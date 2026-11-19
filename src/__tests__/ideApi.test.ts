@@ -655,7 +655,7 @@ describe('unknown project and bad names', () => {
     const res = await call('POST', fnUrl('demo', 'site', 'bigOne'), { src: big, expectedMod: null });
     expect(res.status).toBe(200);
     expect(sky.recs.get('bigOne')!.src).toBe(big);
-  });
+  }, 30000); // 4 to 8 s on a loaded machine; the 5 s default made it flaky.
 });
 
 describe('POST function (commit)', () => {
