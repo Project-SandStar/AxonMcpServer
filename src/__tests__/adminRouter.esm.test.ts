@@ -1,8 +1,8 @@
 /**
  * The real admin router (createAdminRouter in src/admin/routes.ts), mounted
  * as src/index.ts mounts it: the guard order, the delete of a user (its keys
- * and OAuth logins stop), and the admin-only routes for a user and a
- * read-only user. Fakes stand in for Prisma; no network past 127.0.0.1.
+ * and OAuth logins stop), the admin-only routes for a user and a read-only
+ * user, and the connection files and settings (they hold passwords). Fakes stand in for Prisma; no network past 127.0.0.1.
  * Needs ESM (routes.ts loads config.ts, which reads import.meta): run with
  * `npm run test:esm`. All names, keys and tokens here are made up.
  */
@@ -75,6 +75,8 @@ let db: ReturnType<typeof fakePrisma>;
 let provider: AxonOAuthProvider;
 let keys: UserKeyStore;
 let logSpy: ReturnType<typeof jest.spyOn>;
+/** Calls of the context reloadConfig (PUT /config, DELETE /config, POST /config/reload, PUT /settings). */
+let reloads = 0;
 
 const notUsed = () => { throw new Error('not used in this test'); };
 
@@ -96,6 +98,7 @@ beforeAll(async () => {
     configDir, cacheDir: path.join(tmp, 'cache'),
     getOAuthProvider: () => provider,
     getUserKeys: () => keys,
+    reloadConfig: () => { reloads++; },
   });
   // The router made the user store (the default admin/admin) in configDir.
   const users = getUserStore()!;
@@ -155,6 +158,11 @@ const ADMIN_ONLY: Array<[string, string, unknown?]> = [
   ['POST', '/backups', {}],
   ['POST', '/usage/clear'],
   ['GET', '/keys'],
+  ['GET', '/config/demo-conn.json'],
+  ['PUT', '/config/demo-conn.json', { content: { name: 'demo-conn', password: 'x-password' } }],
+  ['DELETE', '/config/demo-conn.json'],
+  ['POST', '/config/reload'],
+  ['PUT', '/settings', { server: { port: 1 } }],
 ];
 
 describe('guard order', () => {
@@ -252,6 +260,94 @@ describe('config files: only a plain file name in the config folder', () => {
     expect((await call('GET', '/config/demo-site.json', 'admin')).json.content).toEqual({ name: 'demo' });
     expect((await call('DELETE', '/config/demo-site.json', 'admin')).status).toBe(200);
     expect(fs.existsSync(path.join(tmp, 'config', 'demo-site.json'))).toBe(false);
+  });
+});
+
+describe('connection files and settings: admin only', () => {
+  // Made-up secrets: no response to a user or a read-only user may hold them.
+  const CONN_PW = 'made-up-conn-secret';
+  const FALLBACK_PW = 'made-up-fallback-secret';
+  const connFile = () => path.join(tmp, 'config', 'demo-conn.json');
+  const settingsFile = () => path.join(tmp, 'config', 'axonMcpServer-config.json');
+  const settings = {
+    skyspark: { autoDiscover: true, fallback: { host: '127.0.0.1', username: 'demo-user', password: FALLBACK_PW } },
+    server: { port: 3999 },
+    auth: { accessTokenTtl: 3600 },
+  };
+
+  beforeAll(async () => {
+    const res = await call('PUT', '/config/demo-conn.json', 'admin', {
+      content: { name: 'demo-conn', host: '127.0.0.1', username: 'demo-user', password: CONN_PW },
+    });
+    expect(res.status).toBe(200);
+    fs.writeFileSync(settingsFile(), JSON.stringify(settings, null, 2));
+  });
+
+  test('a user and a read-only user cannot read, write, delete or reload; nothing changes', async () => {
+    const connBefore = fs.readFileSync(connFile(), 'utf-8');
+    const settingsBefore = fs.readFileSync(settingsFile(), 'utf-8');
+    const reloadsBefore = reloads;
+    const calls: Array<[string, string, unknown?]> = [
+      ['GET', '/config/demo-conn.json'],
+      ['PUT', '/config/demo-conn.json', { content: { name: 'demo-conn', password: 'x-password' } }],
+      ['PUT', '/config/new-conn.json', { content: { name: 'new-conn' } }],
+      ['DELETE', '/config/demo-conn.json'],
+      ['POST', '/config/reload'],
+      ['PUT', '/settings', { server: { port: 1 } }],
+    ];
+    for (const who of ['alice', 'rita']) {
+      for (const [method, url, body] of calls) {
+        const res = await call(method, url, who, body);
+        expect([who, method, url, res.status]).toEqual([who, method, url, 403]);
+        expect(JSON.stringify(res.json)).not.toContain(CONN_PW);
+      }
+    }
+    expect(fs.readFileSync(connFile(), 'utf-8')).toBe(connBefore);
+    expect(fs.readFileSync(settingsFile(), 'utf-8')).toBe(settingsBefore);
+    expect(fs.existsSync(path.join(tmp, 'config', 'new-conn.json'))).toBe(false);
+    expect(reloads).toBe(reloadsBefore);
+  });
+
+  test('the list of connection files stays open: names only, no content', async () => {
+    for (const who of ['alice', 'rita']) {
+      const res = await call('GET', '/config', who);
+      expect(res.status).toBe(200);
+      expect(res.json.map((f: any) => f.name)).toContain('demo-conn.json');
+      expect(JSON.stringify(res.json)).not.toContain(CONN_PW);
+    }
+  });
+
+  test('a user and a read-only user read the settings with every secret masked', async () => {
+    for (const who of ['alice', 'rita']) {
+      const res = await call('GET', '/settings', who);
+      expect(res.status).toBe(200);
+      expect(JSON.stringify(res.json)).not.toContain(FALLBACK_PW);
+      expect(res.json.skyspark.fallback).toEqual({ host: '127.0.0.1', username: 'demo-user', password: '********' });
+      expect(res.json.server).toEqual({ port: 3999 });
+      expect(res.json.auth).toEqual({ accessTokenTtl: 3600 });
+    }
+    expect((await call('GET', '/settings', 'admin')).json).toEqual(settings);
+  });
+
+  test('an admin reads, writes, reloads and deletes', async () => {
+    const reloadsBefore = reloads;
+    const read = await call('GET', '/config/demo-conn.json', 'admin');
+    expect(read.status).toBe(200);
+    expect(read.json.content.password).toBe(CONN_PW);
+
+    const content = { name: 'demo-conn', host: '127.0.0.1', username: 'demo-user', password: 'made-up-new-secret' };
+    expect((await call('PUT', '/config/demo-conn.json', 'admin', { content })).status).toBe(200);
+    expect(JSON.parse(fs.readFileSync(connFile(), 'utf-8'))).toEqual(content);
+
+    expect((await call('POST', '/config/reload', 'admin')).status).toBe(200);
+
+    const next = { ...settings, server: { port: 4001 } };
+    expect((await call('PUT', '/settings', 'admin', next)).status).toBe(200);
+    expect(JSON.parse(fs.readFileSync(settingsFile(), 'utf-8'))).toEqual(next);
+
+    expect((await call('DELETE', '/config/demo-conn.json', 'admin')).status).toBe(200);
+    expect(fs.existsSync(connFile())).toBe(false);
+    expect(reloads).toBe(reloadsBefore + 4);
   });
 });
 

@@ -85,6 +85,17 @@ interface AdminContext {
   getWorkflowVectorIndex?: () => import('../workflows/workflowVectorIndex.js').WorkflowVectorIndex | undefined;
 }
 
+/** A key whose text value is a secret: password, secret, token, API key, credential. */
+const SECRET_KEY = /pass(word|wd)?$|secret|token|api[-_]?key|credential/i;
+
+/** A copy of `value` with the text of every secret key replaced by "********". */
+export function maskSecrets(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(maskSecrets);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([k, v]) =>
+    [k, typeof v === 'string' && SECRET_KEY.test(k) ? '********' : maskSecrets(v)]));
+}
+
 /**
  * Create admin router with injected dependencies
  */
@@ -850,7 +861,8 @@ export function createAdminRouter(context: AdminContext): Router {
     }
   });
 
-  router.get('/config/:name', (req: Request, res: Response) => {
+  // A connection file holds the SkySpark user and password: admin only.
+  router.get('/config/:name', requireAdmin, (req: Request, res: Response) => {
     try {
       const filePath = configFilePath(req.params.name);
       if (!filePath || !fs.existsSync(filePath)) {
@@ -863,7 +875,7 @@ export function createAdminRouter(context: AdminContext): Router {
     }
   });
 
-  router.put('/config/:name', (req: Request, res: Response) => {
+  router.put('/config/:name', requireAdmin, (req: Request, res: Response) => {
     try {
       const filePath = configFilePath(req.params.name);
       if (!filePath) {
@@ -889,7 +901,7 @@ export function createAdminRouter(context: AdminContext): Router {
     }
   });
 
-  router.delete('/config/:name', (req: Request, res: Response) => {
+  router.delete('/config/:name', requireAdmin, (req: Request, res: Response) => {
     try {
       const filePath = configFilePath(req.params.name);
       if (!filePath) {
@@ -916,7 +928,7 @@ export function createAdminRouter(context: AdminContext): Router {
 
   // Manual reload endpoint — used by the dashboard's Refresh buttons and as a
   // safety net for cases where config files are edited on disk directly.
-  router.post('/config/reload', (_req: Request, res: Response) => {
+  router.post('/config/reload', requireAdmin, (_req: Request, res: Response) => {
     try {
       if (!context.reloadConfig) {
         return res.status(501).json({ error: 'reloadConfig not wired in this server' });
@@ -934,19 +946,21 @@ export function createAdminRouter(context: AdminContext): Router {
 
   const settingsFile = path.join(context.configDir, 'axonMcpServer-config.json');
 
-  router.get('/settings', (_req: Request, res: Response) => {
+  // The file can hold a password (skyspark.fallback.password): a user that is
+  // not an admin gets the settings with every secret masked.
+  router.get('/settings', (req: Request, res: Response) => {
     try {
       if (!fs.existsSync(settingsFile)) {
         return res.status(404).json({ error: 'Settings file not found' });
       }
-      const content = fs.readFileSync(settingsFile, 'utf-8');
-      res.json(JSON.parse(content));
+      const content = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
+      res.json(req.user?.role === 'admin' ? content : maskSecrets(content));
     } catch (error) {
       res.status(500).json({ error: 'Failed to read settings' });
     }
   });
 
-  router.put('/settings', (req: Request, res: Response) => {
+  router.put('/settings', requireAdmin, (req: Request, res: Response) => {
     try {
       // Backup existing file
       if (fs.existsSync(settingsFile)) {
