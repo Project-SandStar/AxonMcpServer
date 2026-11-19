@@ -820,11 +820,26 @@ export function createAdminRouter(context: AdminContext): Router {
 
   // Files that are not SkySpark connection configs (handled by /admin/settings)
   const excludedConfigFiles = ['axonMcpServer-config.json', 'admin.json'];
+  // Never read, written or deleted through /config: the users and their password hashes.
+  const protectedConfigFiles = ['users.json'];
+
+  /**
+   * The path of a config file named in the URL, or null. Only a plain file name
+   * in configDir is allowed: no "/", "\", leading dot or NUL (the name arrives
+   * URL-decoded, so "..%2Fx.json" would else leave the folder), and not users.json.
+   */
+  const configFilePath = (name: string): string | null => {
+    if (typeof name !== 'string' || !name.endsWith('.json') || name.startsWith('.')) return null;
+    if (/[\\/\0]/.test(name) || protectedConfigFiles.includes(name.toLowerCase())) return null;
+    const dir = path.resolve(context.configDir);
+    const filePath = path.resolve(dir, name);
+    return path.dirname(filePath) === dir ? filePath : null;
+  };
 
   router.get('/config', (_req: Request, res: Response) => {
     try {
       const configFiles = fs.readdirSync(context.configDir)
-        .filter(f => f.endsWith('.json') && !excludedConfigFiles.includes(f))
+        .filter(f => f.endsWith('.json') && !excludedConfigFiles.includes(f) && !protectedConfigFiles.includes(f.toLowerCase()))
         .map(f => ({
           name: f,
           path: path.join(context.configDir, f),
@@ -837,8 +852,8 @@ export function createAdminRouter(context: AdminContext): Router {
 
   router.get('/config/:name', (req: Request, res: Response) => {
     try {
-      const filePath = path.join(context.configDir, req.params.name);
-      if (!fs.existsSync(filePath) || !req.params.name.endsWith('.json')) {
+      const filePath = configFilePath(req.params.name);
+      if (!filePath || !fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'Config file not found' });
       }
       const content = fs.readFileSync(filePath, 'utf-8');
@@ -850,8 +865,8 @@ export function createAdminRouter(context: AdminContext): Router {
 
   router.put('/config/:name', (req: Request, res: Response) => {
     try {
-      const filePath = path.join(context.configDir, req.params.name);
-      if (!req.params.name.endsWith('.json')) {
+      const filePath = configFilePath(req.params.name);
+      if (!filePath) {
         return res.status(400).json({ error: 'Invalid config file name' });
       }
 
@@ -876,8 +891,8 @@ export function createAdminRouter(context: AdminContext): Router {
 
   router.delete('/config/:name', (req: Request, res: Response) => {
     try {
-      const filePath = path.join(context.configDir, req.params.name);
-      if (!req.params.name.endsWith('.json')) {
+      const filePath = configFilePath(req.params.name);
+      if (!filePath) {
         return res.status(400).json({ error: 'Invalid config file name' });
       }
       if (!fs.existsSync(filePath)) {

@@ -220,6 +220,41 @@ describe('admin-only routes', () => {
   });
 });
 
+describe('config files: only a plain file name in the config folder', () => {
+  test('a name that leaves the folder is refused, and nothing is written outside', async () => {
+    const outside = path.join(tmp, 'escape.json');
+    for (const name of ['..%2Fescape.json', '..%5Cescape.json', '.hidden.json', '%2E%2E%2Fescape.json']) {
+      expect([name, (await call('PUT', `/config/${name}`, 'admin', { content: { a: 1 } })).status]).toEqual([name, 400]);
+      expect([name, (await call('GET', `/config/${name}`, 'admin')).status]).toEqual([name, 404]);
+      expect([name, (await call('DELETE', `/config/${name}`, 'admin')).status]).toEqual([name, 400]);
+    }
+    expect(fs.existsSync(outside)).toBe(false);
+  });
+
+  test('users.json (password hashes) is not listed, read, written or deleted through /config', async () => {
+    const usersFile = path.join(tmp, 'config', 'users.json');
+    // A Basic login sets lastLogin; every other field must stay the same.
+    const usersNow = () => JSON.parse(fs.readFileSync(usersFile, 'utf-8')).users.map(({ lastLogin: _l, ...rest }: any) => rest);
+    const before = usersNow();
+    const list = await call('GET', '/config', 'admin');
+    expect(list.json.map((f: any) => f.name)).not.toContain('users.json');
+    for (const name of ['users.json', 'USERS.json']) {
+      expect((await call('GET', `/config/${name}`, 'admin')).status).toBe(404);
+      expect((await call('PUT', `/config/${name}`, 'admin', { content: { users: [] } })).status).toBe(400);
+      expect((await call('DELETE', `/config/${name}`, 'admin')).status).toBe(400);
+    }
+    expect(usersNow()).toEqual(before);
+    expect(before.length).toBeGreaterThan(0);
+  });
+
+  test('a plain connection file still works', async () => {
+    expect((await call('PUT', '/config/demo-site.json', 'admin', { content: { name: 'demo' } })).status).toBe(200);
+    expect((await call('GET', '/config/demo-site.json', 'admin')).json.content).toEqual({ name: 'demo' });
+    expect((await call('DELETE', '/config/demo-site.json', 'admin')).status).toBe(200);
+    expect(fs.existsSync(path.join(tmp, 'config', 'demo-site.json'))).toBe(false);
+  });
+});
+
 describe('delete a user', () => {
   test('the keys and OAuth logins of the user are revoked; other users keep theirs', async () => {
     const users = getUserStore()!;
