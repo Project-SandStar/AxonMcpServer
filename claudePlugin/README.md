@@ -17,7 +17,7 @@ hooks fail open: a server that is down never blocks a prompt.
 
 ## Install
 
-You need Node 22+ and the `claude` CLI. The server must run on `:3847`, and the mcp-proxy
+You need Node 20+ and the `claude` CLI. The server must run on `:3847`, and the mcp-proxy
 on `:9191` serves it as `/axon/mcp`.
 
 ```bash

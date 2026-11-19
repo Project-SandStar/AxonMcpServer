@@ -12,7 +12,7 @@ This guide covers how to build, configure, and connect the Axon MCP Server to va
 Verify your installation:
 
 ```bash
-node --version   # Should print v18.x.x or higher
+node --version   # Should print v22.x.x or higher
 npm --version
 ```
 
