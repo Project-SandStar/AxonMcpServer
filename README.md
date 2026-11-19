@@ -422,8 +422,9 @@ through three routes under `/api/ide`:
 Every route needs `Authorization: Bearer <key>`. The key is a **user access
 key**: an admin makes it for one user on the dashboard **Users** page (button
 **Access keys**), the dashboard shows it one time, and the developer pastes it
-in the plugin. The server keeps only a hash. There is no shared token:
-`AXON_IDE_TOKEN` is no longer used.
+in the plugin. The server keeps only a hash. When OAuth is on, an OAuth login
+token of a user works too. There is no shared token: `AXON_IDE_TOKEN` is no
+longer used.
 
 - The same key works on `/mcp`, so one key serves the IDE and MCP clients.
 - A key stops at once when it is revoked or expired, or when its user is

@@ -5,7 +5,7 @@
 
 ### ⚠ BREAKING CHANGES
 
-* **ide:** the shared token `AXON_IDE_TOKEN` is removed. `/api/ide` now needs a user access key. An admin makes one key for each developer on the dashboard Users page. A call with the old token gets `401`.
+* **ide:** the shared token `AXON_IDE_TOKEN` is removed. `/api/ide` now needs a user access key (or, when OAuth is on, an OAuth login token of a user). An admin makes one key for each developer on the dashboard Users page. A call with the old token gets `401`.
 * **auth:** a token on `/mcp` is checked on every call, also when OAuth is off. A token whose user is deleted or disabled, and an OAuth token with no user, is refused.
 * **admin:** `POST /admin/usage/clear` and `POST /admin/usage/reset` are admin only.
 * **db:** a migration adds the tables `user_api_keys` and `access_audit_events`. It must run before the server starts. The Docker image runs it; outside Docker `npm start` and `npm run start:http` now run `npm run db:migrate` first. Without it the server logs an error at start and `/api/ide` answers `503`.
@@ -26,6 +26,7 @@
 
 ### Bug Fixes
 
+* **admin:** `/admin/config/{name}` takes a plain file name in the config folder only; a name such as `..%2Fx.json` is refused, and `users.json` cannot be listed, read, written or deleted through it
 * **commit:** a commit without `doc` keeps the stored doc (it was cleared)
 * **commit:** the function name is validated, and `$`, CR and tab in source are escaped in the Axon literal
 * **commit:** the local copy (`func/<name>.axon`, `.trio`, sync metadata) is updated after a good commit
