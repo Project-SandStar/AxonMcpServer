@@ -12,6 +12,9 @@
  *    `expectedMod: null`: the function must not exist yet.
  *    `expectedMod: "<ISO>"`: the record's `mod` must be that time.
  *    The check and the commit run in one eval on the server.
+ *  - One func record per name. An existing record is updated in place (no
+ *    {add}). Older records with the same name are removed in the same eval
+ *    and their src goes to the backups.
  *  - After a good commit the local copy (func/<name>.axon, .trio and the
  *    sync metadata) is updated, so an export shows the new source and `mod`.
  */
@@ -79,6 +82,8 @@ export interface CommitOk {
   doc: string | null;
   backedUp: boolean;
   backupPath: string | null;
+  /** Older records with the same name that the commit removed (0 in the normal case). */
+  removedDuplicates: number;
   /** files + metadata written, files only (project never synced), none, or failed. */
   localCopy: 'updated' | 'files-only' | 'none' | 'failed';
   warning?: string;
@@ -155,7 +160,10 @@ function tagPairs(extraTags: Record<string, unknown> | undefined): string[] {
  * The Axon that does the check and the commit in one eval.
  *
  * Folio has a unique id but no unique name on func, so the record is looked
- * up by name and updated in place. Axon `if` is an expression; each branch
+ * up by name and updated in place. When older records with the same name are
+ * there (left by an old commit that always added), the newest one is updated
+ * and the others are removed in the same eval; their src comes back for a
+ * backup. A new function is the only case that adds a record. Axon `if` is an expression; each branch
  * here is a `do ... end` block.
  */
 export function buildCommitAxon(args: CommitArgs): string {
@@ -177,7 +185,11 @@ export function buildCommitAxon(args: CommitArgs): string {
   ];
   if (args.doc !== undefined) lines.push(`  ideDoc: ${axonStr(args.doc)}`);
   lines.push(
-    '  existing: read(func and name==ideName, false)',
+    // Newest first. Folio does not stop two func records with one name; the
+    // newest one is updated and the others are removed in the same eval.
+    '  recs: readAll(func and name==ideName).sortr("mod").toRecList',
+    '  existing: recs.first',
+    '  extras: if (recs.size > 1) recs[1..-1] else []',
     '  curMs: if (existing == null) null else toJavaMillis(existing->mod)',
     `  stale: ${stale}`,
     `  changes: {${changes.join(', ')}}`,
@@ -186,7 +198,8 @@ export function buildCommitAxon(args: CommitArgs): string {
     '    if (existing == null) {ideStatus: "conflict"} else {ideStatus: "conflict", mod: existing->mod, ideCurSrc: existing["src"]}',
     '  end else do',
     '    rec: if (existing == null) commit(diff(null, merge({func, name: ideName}, changes), {add})) else commit(diff(existing, changes))',
-    '    merge(rec.findAll((v, n) => keep.contains(n)), {ideStatus: "ok", ideOp: if (existing == null) "added" else "updated", idePrevSrc: if (existing == null) null else existing["src"]})',
+    '    extras.each(x => commit(diff(x, null, {remove})))',
+    '    merge(rec.findAll((v, n) => keep.contains(n)), {ideStatus: "ok", ideOp: if (existing == null) "added" else "updated", idePrevSrc: if (existing == null) null else existing["src"], ideDupSrcs: extras.map(x => x["src"])})',
     '  end',
     'end',
   );
@@ -219,10 +232,25 @@ function present(dict: FuncRecord, tag: string): boolean {
   return value !== null && value !== undefined;
 }
 
+/** A list of strings in the dict (an HList of HStr, or a plain array). */
+function strList(dict: FuncRecord, tag: string): string[] {
+  if (!present(dict, tag)) return [];
+  const value = dict.get(tag) as any;
+  const items: unknown[] = Array.isArray(value) ? value
+    : typeof value?.toArray === 'function' ? value.toArray() : [];
+  return items
+    .filter(v => v !== null && v !== undefined)
+    .map((v: any) => (typeof v.value === 'string' ? v.value : String(v)));
+}
+
 function str(dict: FuncRecord, tag: string): string | null {
   if (!present(dict, tag)) return null;
   const value = dict.get(tag) as any;
   return typeof value.value === 'string' ? value.value : String(value);
+}
+
+async function exists(file: string): Promise<boolean> {
+  try { await fs.access(file); return true; } catch { return false; }
 }
 
 async function writeBackup(
@@ -231,7 +259,9 @@ async function writeBackup(
   const dir = path.join(baseDir, target.instance, target.project, '.backups', name);
   await fs.mkdir(dir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const file = path.join(dir, `backup-${stamp}.axon`);
+  // Two backups in one millisecond (a removed duplicate) get a number.
+  let file = path.join(dir, `backup-${stamp}.axon`);
+  for (let n = 1; await exists(file); n++) file = path.join(dir, `backup-${stamp}-${n}.axon`);
   await fs.writeFile(file, prevSrc);
   const old = (await fs.readdir(dir)).filter(f => f.startsWith('backup-')).sort().reverse().slice(keep);
   for (const f of old) await fs.unlink(path.join(dir, f));
@@ -286,6 +316,23 @@ export async function commitFunction(
     }
   }
 
+  // The src of each removed duplicate gets a backup too (oldest last).
+  const dupSrcs = strList(dict, 'ideDupSrcs');
+  if (dupSrcs.length) {
+    warnings.push(
+      `Removed ${dupSrcs.length} older func record(s) with the name ${args.name}; ` +
+      'their src is in the backups.'
+    );
+    for (const dupSrc of dupSrcs) {
+      try {
+        const file = await writeBackup(baseDir, target, args.name, dupSrc, deps.maxBackups ?? 10);
+        if (!backupPath) backupPath = file;
+      } catch (error: any) {
+        warnings.push(`A backup of a removed duplicate was not written: ${error.message}`);
+      }
+    }
+  }
+
   // Local copy: the commit is done, so a failure here is a warning only.
   let localCopy: CommitOk['localCopy'] = 'none';
   if (deps.store) {
@@ -308,6 +355,7 @@ export async function commitFunction(
     doc,
     backedUp: backupPath !== null,
     backupPath,
+    removedDuplicates: dupSrcs.length,
     localCopy,
     ...(warnings.length ? { warning: warnings.join(' ') } : {}),
   };

@@ -12,9 +12,10 @@ import * as path from 'path';
 import express from 'express';
 import type { AddressInfo } from 'net';
 import type { Server } from 'http';
-import { HDateTime, HDict, HGrid, HMarker, HStr } from 'haystack-core';
+import { HDateTime, HDict, HGrid, HList, HMarker, HStr } from 'haystack-core';
 import { createIdeRouter, type IdeAuditEvent, type IdeCaller } from '../ide/ideRouter.js';
 import { buildCommitAxon, commitFunction, CommitArgError, type CommitArgs } from '../ide/commitFunction.js';
+import { commitToolReply, toCommitArgs } from '../ide/commitTool.js';
 import { axonStr, isFunctionName, isSafeSegment } from '../ide/names.js';
 import { modToIso, sha256Hex } from '../ide/mod.js';
 import { docFromTrio, FunctionSyncManagerEnhanced } from '../sync/functionSyncManagerEnhanced.js';
@@ -52,6 +53,8 @@ interface FakeRec { src: string; doc: string | null; mod: Date; tags: string }
 /** A SkySpark project in memory. It answers the two evals the server sends. */
 class FakeSkySpark {
   recs = new Map<string, FakeRec>();
+  /** Older func records with the same name as one in recs (Folio allows them). */
+  dups = new Map<string, FakeRec[]>();
   evals: string[] = [];
   switched: string[] = [];
   private clock = Date.parse('2026-03-01T00:00:00.000Z');
@@ -77,6 +80,18 @@ class FakeSkySpark {
 
   put(name: string, src: string, doc: string | null, modIso: string) {
     this.recs.set(name, { src, doc, mod: new Date(modIso), tags: '' });
+  }
+
+  /** An older record with the same name, as an old commit with {add} left it. */
+  putDuplicate(name: string, src: string, modIso: string) {
+    const list = this.dups.get(name) ?? [];
+    list.push({ src, doc: null, mod: new Date(modIso), tags: '' });
+    this.dups.set(name, list);
+  }
+
+  /** How many func records have this name. */
+  count(name: string): number {
+    return (this.recs.has(name) ? 1 : 0) + (this.dups.get(name)?.length ?? 0);
   }
 
   switchTo(instance: string, project: string) { this.switched.push(`${instance}/${project}`); }
@@ -111,7 +126,9 @@ class FakeSkySpark {
     const stale = lines.find(l => l.startsWith('  stale: '))!.slice('  stale: '.length);
     const changes = lines.find(l => l.startsWith('  changes: '))!;
     expect(changes.includes('doc: ideDoc')).toBe(doc !== undefined);
-    expect(lines).toContain('  existing: read(func and name==ideName, false)');
+    expect(lines).toContain('  recs: readAll(func and name==ideName).sortr("mod").toRecList');
+    expect(lines).toContain('  existing: recs.first');
+    expect(lines).toContain('    extras.each(x => commit(diff(x, null, {remove})))');
 
     const existing = this.recs.get(name);
     let isStale: boolean;
@@ -134,7 +151,13 @@ class FakeSkySpark {
       tags: changes,
     };
     this.recs.set(name, next);
-    const out = this.rec(name, next, { ideStatus: HStr.make('ok'), ideOp: HStr.make(existing ? 'updated' : 'added') });
+    const extras = this.dups.get(name) ?? [];
+    this.dups.delete(name);
+    const out = this.rec(name, next, {
+      ideStatus: HStr.make('ok'),
+      ideOp: HStr.make(existing ? 'updated' : 'added'),
+      ideDupSrcs: HList.make(extras.map(x => HStr.make(x.src))),
+    });
     if (existing) out.idePrevSrc = HStr.make(existing.src);
     return this.reply(out);
   }
@@ -857,6 +880,95 @@ describe('commitFunction (the MCP tool path)', () => {
     const odd = { evalAxon: async () => 'ok' };
     await expect(commitFunction({ client: odd, instance: 'demo', project: 'site' }, { name: 'roundTo', src: '() => 1' }, deps()))
       .rejects.toThrow(/may be stored already/);
+  });
+});
+
+describe('one func record per name', () => {
+  const target = () => ({ client: sky, instance: 'demo', project: 'site' });
+  const deps = () => ({ baseDir: tmp, store: manager });
+
+  test('a commit updates in place: three commits leave one record', async () => {
+    for (const n of [1, 2, 3]) {
+      const res = await commitFunction(target(), { name: 'roundTo', src: `() => ${n}` }, deps());
+      expect(res).toMatchObject({ status: 'ok', operation: 'updated', removedDuplicates: 0 });
+    }
+    expect(sky.count('roundTo')).toBe(1);
+    for (const code of sky.commits) {
+      expect(code).toContain('else commit(diff(existing, changes))');
+    }
+  });
+
+  test('older records with the same name are removed, and their src backed up', async () => {
+    sky.putDuplicate('roundTo', '() => "old one"', '2025-01-01T00:00:00.000Z');
+    sky.putDuplicate('roundTo', '() => "older one"', '2024-01-01T00:00:00.000Z');
+    expect(sky.count('roundTo')).toBe(3);
+    const before = sky.recs.get('roundTo')!.src;
+
+    const res = await commitFunction(target(), { name: 'roundTo', src: '() => "new"' }, deps());
+    expect(res).toMatchObject({ status: 'ok', operation: 'updated', removedDuplicates: 2, backedUp: true });
+    expect((res as any).warning).toContain('Removed 2 older func record(s)');
+    expect(sky.count('roundTo')).toBe(1);
+    expect(sky.recs.get('roundTo')!.src).toBe('() => "new"');
+
+    const dir = path.join(tmp, 'demo', 'site', '.backups', 'roundTo');
+    const saved = fs.readdirSync(dir).map(f => fs.readFileSync(path.join(dir, f), 'utf8')).sort();
+    expect(saved).toEqual([before, '() => "old one"', '() => "older one"'].sort());
+  });
+
+  test('a stale write with duplicates removes nothing', async () => {
+    sky.putDuplicate('roundTo', '() => "old one"', '2025-01-01T00:00:00.000Z');
+    const res = await commitFunction(target(), { name: 'roundTo', src: '() => 1', expectedMod: '2020-01-01T00:00:00Z' }, deps());
+    expect(res).toMatchObject({ status: 'conflict', exists: true });
+    expect(sky.count('roundTo')).toBe(2);
+  });
+});
+
+describe('the commitAxonFunction tool reply', () => {
+  const where = { name: 'roundTo', instance: 'demo', project: 'site' };
+  const parse = (reply: { content: Array<{ text: string }> }) => JSON.parse(reply.content[0].text);
+  const target = () => ({ client: sky, instance: 'demo', project: 'site' });
+  const deps = () => ({ baseDir: tmp, store: manager });
+
+  test('tool arguments: doc left out or null keeps the stored doc; tags go to extraTags', async () => {
+    expect(toCommitArgs({ name: 'a', src: 'b' })).toEqual({ name: 'a', src: 'b', extraTags: {} });
+    expect(toCommitArgs({ name: 'a', src: 'b', doc: null })).not.toHaveProperty('doc');
+    expect(toCommitArgs({ name: 'a', src: 'b', doc: '' })).toMatchObject({ doc: '' });
+    expect(toCommitArgs({ name: 'a', src: 'b', expectedMod: null })).toMatchObject({ expectedMod: null });
+    expect(toCommitArgs({ name: 'a', src: 'b', dis: 'D', order: 2, extraTags: { x: 1 } }).extraTags).toEqual({ x: 1, dis: 'D', order: 2 });
+
+    sky.put('calcDailyAvg', '() => "theirs"', 'Their doc', '2026-02-09T08:07:06.005Z');
+    const res = await commitFunction(target(), toCommitArgs({ name: 'calcDailyAvg', src: '() => "mine"' }), deps());
+    expect(sky.recs.get('calcDailyAvg')!.doc).toBe('Their doc');
+    expect(parse(commitToolReply(res, { ...where, name: 'calcDailyAvg' }))).toMatchObject({ success: true, status: 'ok', doc: 'Their doc' });
+  });
+
+  test('ok: the reply has the new mod and hash', async () => {
+    const res = await commitFunction(target(), toCommitArgs({ name: 'roundTo', src: '() => 5', expectedMod: '2026-01-03T00:00:00.000Z' }), deps());
+    const reply = commitToolReply(res, where);
+    expect(reply.isError).toBeUndefined();
+    expect(parse(reply)).toMatchObject({
+      success: true, status: 'ok', operation: 'updated', instance: 'demo', project: 'site',
+      mod: sky.recs.get('roundTo')!.mod.toISOString(), hash: sha256Hex('() => 5'), removedDuplicates: 0,
+    });
+  });
+
+  test('conflict: an error reply with the server mod and hash; nothing written', async () => {
+    const before = sky.recs.get('roundTo')!.src;
+    const res = await commitFunction(target(), toCommitArgs({ name: 'roundTo', src: '() => 6', expectedMod: '2020-01-01T00:00:00Z' }), deps());
+    const reply = commitToolReply(res, { ...where, warning: 'no project given' });
+    expect(reply.isError).toBe(true);
+    expect(parse(reply)).toMatchObject({
+      success: false, status: 'conflict', exists: true,
+      mod: '2026-01-03T00:00:00.000Z', hash: sha256Hex(before), warning: 'no project given',
+    });
+    expect(sky.recs.get('roundTo')!.src).toBe(before);
+  });
+
+  test('bad name: refused before any eval', async () => {
+    for (const name of ['../x', 'a b', '1abc', 'x") or read(point']) {
+      await expect(commitFunction(target(), toCommitArgs({ name, src: '() => 1' }), deps())).rejects.toBeInstanceOf(CommitArgError);
+    }
+    expect(sky.evals).toEqual([]);
   });
 });
 

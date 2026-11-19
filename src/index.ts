@@ -57,6 +57,7 @@ import { FunctionSyncManagerEnhanced } from './sync/functionSyncManagerEnhanced.
 import { createAdminRouter } from './admin/routes.js';
 import { createIdeRouter, type IdeCaller } from './ide/ideRouter.js';
 import { commitFunction, CommitArgError, type CommitArgs, type CommitResult } from './ide/commitFunction.js';
+import { commitToolReply, toCommitArgs, type CommitToolArgs } from './ide/commitTool.js';
 import { getUsageTracker } from './usage/usageTracker.js';
 import { ServerStatus, InstanceInfo, ProjectInfo, CacheInfo } from './admin/types.js';
 import { WorkflowManager, type ProjectFilter } from './workflows/workflowManager.js';
@@ -2141,7 +2142,7 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
               'Missing required parameters: name and src'
             );
           }
-          return await this.commitAxonFunction(args as { name: string; src: string; doc?: string; expectedMod?: string | null; project?: string; appName?: string; view?: string; dis?: string; icon?: string; order?: number; extraTags?: Record<string, any> });
+          return await this.commitAxonFunction(args as unknown as CommitToolArgs);
 
         // ============================================
         // Graph Analysis Tool Handlers
@@ -4411,8 +4412,8 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
   /**
    * Commit an Axon function to the session's active project with backup support.
    */
-  private async commitAxonFunction(args: { name: string; src: string; doc?: string; expectedMod?: string | null; project?: string; appName?: string; view?: string; dis?: string; icon?: string; order?: number; extraTags?: Record<string, any> }) {
-    const { name, src, doc, expectedMod, project: expectedProject, appName, view, dis, icon, order, extraTags } = args;
+  private async commitAxonFunction(args: CommitToolArgs) {
+    const { name, project: expectedProject } = args;
 
     if (!this.skysparkClient || !this.configManager) {
       throw new McpError(
@@ -4460,16 +4461,7 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
     // The shared commit (src/ide/commitFunction.ts): name check, stale-write check in
     // the same eval as the commit, doc kept when not given, backup, local copy update.
     // POST /api/ide/projects/{instance}/{project}/functions/{name} calls the same function.
-    const auxTags: Record<string, any> = { ...(extraTags || {}) };
-    if (appName !== undefined) auxTags.appName = appName;
-    if (view !== undefined) auxTags.view = view;
-    if (dis !== undefined) auxTags.dis = dis;
-    if (icon !== undefined) auxTags.icon = icon;
-    if (order !== undefined) auxTags.order = order;
-
-    const commitArgs: CommitArgs = { name, src, extraTags: auxTags };
-    if (doc !== undefined && doc !== null) commitArgs.doc = doc;
-    if (expectedMod !== undefined) commitArgs.expectedMod = expectedMod;
+    const commitArgs = toCommitArgs(args);
 
     let result: CommitResult;
     try {
@@ -4486,58 +4478,15 @@ Response includes 'operation': "added" or "updated", plus 'mod' and 'hash' (sha2
       );
     }
 
+    const where = { name, instance: config.instance, project: config.project, warning: projectMismatchWarning };
     if (result.status === 'conflict') {
       this.recordMcpCommit('conflict', config.instance, config.project, name);
-      const why = result.exists
-        ? `Function ${name} has changed in ${config.instance}/${config.project} since expectedMod. Nothing was committed. Read it again, merge, and retry with the new mod.`
-        : `Function ${name} is not in ${config.instance}/${config.project} any more. Nothing was committed. Retry with expectedMod null to add it.`;
-      return {
-        isError: true,
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              success: false,
-              status: 'conflict',
-              name,
-              instance: config.instance,
-              project: config.project,
-              exists: result.exists,
-              mod: result.mod,
-              hash: result.hash,
-              warning: projectMismatchWarning,
-              message: why,
-            }, null, 2),
-          },
-        ],
-      };
+      return commitToolReply(result, where);
     }
 
     this.recordMcpCommit('ok', config.instance, config.project, name);
     console.error(`✅ ${result.operation === 'added' ? 'Added' : 'Updated'} function ${name} in ${config.instance}/${config.project} by ${this.mcpCallerText()}`);
-    const warning = [projectMismatchWarning, result.warning].filter(Boolean).join(' ') || undefined;
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            success: true,
-            name,
-            operation: result.operation,
-            instance: config.instance,
-            project: config.project,
-            mod: result.mod,
-            hash: result.hash,
-            backedUp: result.backedUp,
-            backupPath: result.backupPath,
-            localCopy: result.localCopy,
-            warning,
-            message: `Function ${name} ${result.operation} in ${config.instance}/${config.project}`,
-          }, null, 2),
-        },
-      ],
-    };
+    return commitToolReply(result, where);
   }
 
   /** The projects of the SkySpark config, for the IDE API. */
