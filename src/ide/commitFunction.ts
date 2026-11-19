@@ -187,7 +187,7 @@ export function buildCommitAxon(args: CommitArgs): string {
   lines.push(
     // Newest first. Folio does not stop two func records with one name; the
     // newest one is updated and the others are removed in the same eval.
-    '  recs: readAll(func and name==ideName).sortr("mod").toRecList',
+    '  recs: readAll(func and name==ideName).toRecList.sortr((a, b) => a->mod <=> b->mod)',
     '  existing: recs.first',
     '  extras: if (recs.size > 1) recs[1..-1] else []',
     '  curMs: if (existing == null) null else toJavaMillis(existing->mod)',

@@ -126,7 +126,7 @@ class FakeSkySpark {
     const stale = lines.find(l => l.startsWith('  stale: '))!.slice('  stale: '.length);
     const changes = lines.find(l => l.startsWith('  changes: '))!;
     expect(changes.includes('doc: ideDoc')).toBe(doc !== undefined);
-    expect(lines).toContain('  recs: readAll(func and name==ideName).sortr("mod").toRecList');
+    expect(lines).toContain('  recs: readAll(func and name==ideName).toRecList.sortr((a, b) => a->mod <=> b->mod)');
     expect(lines).toContain('  existing: recs.first');
     expect(lines).toContain('    extras.each(x => commit(diff(x, null, {remove})))');
 
