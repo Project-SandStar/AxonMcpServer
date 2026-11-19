@@ -144,6 +144,92 @@ curl -X POST http://localhost:3847/token \
 | `mcp:write` | Execute Axon code, modify SkySpark data |
 | `mcp:admin` | Full administrative access |
 
+## User access keys
+
+A user access key is a long-lived bearer token that belongs to one dashboard
+user. It is for clients that cannot do the OAuth browser login, such as the
+IntelliJ plugin. One key works on `/api/ide` and on `/mcp`.
+
+| Item | Value |
+|------|-------|
+| Key text | `axk_<8 hex>_<43 random characters>` |
+| Prefix | `axk_<8 hex>`: shown on the dashboard and in logs |
+| Storage | table `user_api_keys`: sha256 hash of the key, never the key |
+| Shown | one time, in the reply of "create a key" |
+| Expiry | optional (1 to 3650 days), or never |
+| Who makes a key | an admin only |
+| Who revokes a key | an admin, or the user for their own key |
+
+### One check for both doors
+
+`src/auth/bearerVerifier.ts` is the bearer check of `/api/ide` and `/mcp`:
+
+1. A token that starts with `axk_` is looked up by its hash. A key that is
+   unknown, revoked or expired is refused.
+2. Any other token goes to the OAuth provider (when OAuth is on).
+3. In both cases the user is loaded by id from the user store. A user that
+   is deleted or disabled is refused. A token with no user is refused.
+4. The role comes from the user, not from the key or the token.
+
+Every refusal gives the client the same text, `Invalid access token`. The
+server log has the true reason and the key prefix.
+
+### Roles
+
+| Role | `/api/ide` | `/mcp` tools | Dashboard API (`/admin`) |
+|------|-----------|--------------|--------------------------|
+| `admin` | all | all | all |
+| `user` | all | all | as before |
+| `readonly` | list, export, sync; no commit (403) | read tools only | read only (own password and own key revoke stay open) |
+
+On `/mcp` a read-only user cannot call the write tools: `executeAxonCode`,
+`commitAxonFunction`, `queryHaystack`, `getProjectSchema`,
+`saveProjectWorkflow`, `clearProjectCache`, `setPrimaryProject`,
+`reauthenticateSkySparkProject`, `discoverInstanceProjects`,
+`buildProjectGraph` and `buildProjectEmbeddings`. `queryHaystack` and
+`getProjectSchema` are on the list because their filter text is sent to
+SkySpark as Axon. The lists are in `src/auth/toolAccess.ts`. A tool that is
+on no list is refused for a read-only user.
+
+**The role rule on `/mcp` needs a token.** While `MCP_REQUIRE_AUTH` is off, a
+call with no token is anonymous and no role rule applies to it. Set
+`MCP_REQUIRE_AUTH=true` when every MCP client sends a key or logs in.
+
+### Things to know
+
+- A key never works on `/admin`. The dashboard API uses Basic auth.
+- A lost key cannot be shown again. Revoke it and make a new one.
+- Behind mcp-proxy the server sees the key of the proxy, not of each
+  developer. The access record then names the proxy's user.
+- The keys are in `.cache/usage.db`. "Reset database" on the Usage page
+  empties only the usage tables; the keys, the access record and the OAuth
+  rows stay.
+- A backup never holds `usage.db`, and a restore never writes it, also when an
+  older backup holds one. So a restore cannot bring back a revoked key. OAuth
+  rows are backed up and restored row by row. A new host starts with no keys.
+- Keys that were revoked or that expired more than 90 days ago are deleted by
+  the cleanup job. Access record rows are kept for 365 days.
+
+### Admin API
+
+All routes use Basic auth and send `Cache-Control: no-store`.
+
+| Route | Who | Use |
+|-------|-----|-----|
+| `POST /admin/users/:username/keys` | admin | Make a key. Body `{"name": "...", "expiresInDays": 365}` (`null` = no expiry). `201` with the row and `key`. |
+| `GET /admin/users/:username/keys` | admin, or the user | List the keys of one user. |
+| `DELETE /admin/users/:username/keys/:id` | admin, or the user | Revoke a key. |
+| `PUT /admin/users/:username/disabled` | admin | Body `{"disabled": true}`. |
+| `GET /admin/access/keys` | admin | All keys. |
+| `GET /admin/access/audit?limit=100` | admin | The access record, newest first. |
+
+```bash
+# Made-up names. Make a key for alice that expires in 90 days:
+curl -s -u admin1 -X POST -H "Content-Type: application/json" \
+  -d '{"name":"laptop IntelliJ","expiresInDays":90}' \
+  http://localhost:3847/admin/users/alice/keys
+```
+
 ## Token Expiration
 
 | Token Type | Default TTL | Configurable |
@@ -173,7 +259,12 @@ Configure in `config/axonMcpServer-config.json`:
 | `src/auth/prismaClientsStore.ts` | Stores registered OAuth clients in Prisma |
 | `src/auth/authorizePage.ts` | Renders the login/consent HTML page |
 | `src/auth/tokenUtils.ts` | Token generation, PKCE validation |
-| `src/auth/tokenCleanup.ts` | Background job to delete expired tokens |
+| `src/auth/tokenCleanup.ts` | Background job to delete expired tokens, old keys and old access records |
+| `src/auth/userKeys.ts` | User access keys: make, find by hash, revoke |
+| `src/auth/bearerVerifier.ts` | The bearer check of `/api/ide` and `/mcp` (key or OAuth token, then the user) |
+| `src/auth/toolAccess.ts` | Read and write lists of the MCP tools for the role rule |
+| `src/auth/accessAudit.ts` | The access record |
+| `src/admin/userKeys.ts` | Admin API for keys, the disabled switch and the access record |
 | `src/admin/routes.ts` | Admin API endpoints for OAuth management |
 | `dashboard/src/app/sessions/page.tsx` | Sessions management UI |
 | `prisma/schema.prisma` | Database schema for OAuth tables |
@@ -189,6 +280,10 @@ The OAuth sessions page at `/dashboard/sessions` provides:
   - Created time and last activity
   - User agent and IP address
   - Revoke individual sessions
+
+- **Access keys Tab**: All user access keys (user, name, prefix, state,
+  last used, used from, expires, revoke) and the recent IDE and commit
+  activity
 
 - **Clients Tab**: View registered OAuth clients
   - Client ID and name

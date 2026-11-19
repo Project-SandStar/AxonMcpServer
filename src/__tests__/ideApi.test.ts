@@ -12,14 +12,19 @@ import * as path from 'path';
 import express from 'express';
 import type { AddressInfo } from 'net';
 import type { Server } from 'http';
-import { HDateTime, HDict, HGrid, HMarker, HStr } from 'haystack-core';
-import { createIdeRouter, ideToken, IDE_TOKEN_ENV } from '../ide/ideRouter.js';
-import { buildCommitAxon, commitFunction, CommitArgError, type CommitArgs } from '../ide/commitFunction.js';
+import { HDateTime, HDict, HGrid, HList, HMarker, HNum, HRef, HStr } from 'haystack-core';
+import { createIdeRouter, type IdeAuditEvent, type IdeCaller } from '../ide/ideRouter.js';
+import { buildCommitAxon, buildReadRecordsAxon, commitFunction, CommitArgError, CommitBackupError, type CommitArgs } from '../ide/commitFunction.js';
+import { commitToolReply, toCommitArgs } from '../ide/commitTool.js';
 import { axonStr, isFunctionName, isSafeSegment } from '../ide/names.js';
 import { modToIso, sha256Hex } from '../ide/mod.js';
 import { docFromTrio, FunctionSyncManagerEnhanced } from '../sync/functionSyncManagerEnhanced.js';
 
-const TOKEN = 'test-token-0123456789';
+// Made-up keys. The router only sees what verify() says about them.
+const TOKEN = 'axk_0a1b2c3d_alice-test-key-0123456789';
+const READONLY_TOKEN = 'axk_0e0e0e0e_rita-test-key-0123456789';
+const ALICE: IdeCaller = { userId: 'u-alice', username: 'alice', role: 'user', keyId: 'k-alice', keyPrefix: 'axk_0a1b2c3d' };
+const RITA: IdeCaller = { userId: 'u-rita', username: 'rita', role: 'readonly', keyId: 'k-rita', keyPrefix: 'axk_0e0e0e0e' };
 
 /** Reads an Axon string literal (with its quotes) back to the value. */
 function unAxon(literal: string): string {
@@ -43,15 +48,20 @@ function unAxon(literal: string): string {
   return out;
 }
 
-interface FakeRec { src: string; doc: string | null; mod: Date; tags: string }
+interface FakeRec { id: string; src: string; doc: string | null; mod: Date; tags: string; extra?: Record<string, string> }
 
 /** A SkySpark project in memory. It answers the two evals the server sends. */
 class FakeSkySpark {
   recs = new Map<string, FakeRec>();
+  /** Older func records with the same name as one in recs (Folio allows them). */
+  dups = new Map<string, FakeRec[]>();
   evals: string[] = [];
   switched: string[] = [];
   private clock = Date.parse('2026-03-01T00:00:00.000Z');
   failNext: string | null = null;
+  private nextId = 1;
+  /** Runs after the read of the func records and before the commit eval (a change by someone else). */
+  afterRead: (() => void) | null = null;
   /**
    * The shape of a commit reply. The real client gives a dict back as a grid
    * with one row, so that is the default. 'gridNulls' adds null cells for the
@@ -72,13 +82,25 @@ class FakeSkySpark {
   }
 
   put(name: string, src: string, doc: string | null, modIso: string) {
-    this.recs.set(name, { src, doc, mod: new Date(modIso), tags: '' });
+    this.recs.set(name, { id: `r:fake-${this.nextId++}`, src, doc, mod: new Date(modIso), tags: '' });
+  }
+
+  /** An older record with the same name, as an old commit with {add} left it. */
+  putDuplicate(name: string, src: string, modIso: string, extra?: Record<string, string>) {
+    const list = this.dups.get(name) ?? [];
+    list.push({ id: `r:fake-${this.nextId++}`, src, doc: null, mod: new Date(modIso), tags: '', extra });
+    this.dups.set(name, list);
+  }
+
+  /** How many func records have this name. */
+  count(name: string): number {
+    return (this.recs.has(name) ? 1 : 0) + (this.dups.get(name)?.length ?? 0);
   }
 
   switchTo(instance: string, project: string) { this.switched.push(`${instance}/${project}`); }
 
   private rec(name: string, r: FakeRec, more: Record<string, any> = {}) {
-    const tags: Record<string, any> = { name: HStr.make(name), mod: HDateTime.make(r.mod.toISOString()), ...more };
+    const tags: Record<string, any> = { id: HRef.make(r.id), name: HStr.make(name), mod: HDateTime.make(r.mod.toISOString()), ...more };
     if (r.doc !== null) tags.doc = HStr.make(r.doc);
     return tags;
   }
@@ -91,8 +113,25 @@ class FakeSkySpark {
         rows: [...this.recs].map(([name, r]) => HDict.make(this.rec(name, r, { func: HMarker.make(), src: HStr.make(r.src) }))),
       });
     }
+    if (code.startsWith('readAll(func and name==')) return this.read(code);
     if (code.startsWith('do\n  ideName: ')) return this.commit(code);
     throw new Error('unexpected eval: ' + code.slice(0, 40));
+  }
+
+  /** Every func record with the name, with all its tags, in no order. */
+  private read(code: string): unknown {
+    const m = /^readAll\(func and name==(".*")\)$/.exec(code);
+    expect(m).not.toBeNull();
+    const name = unAxon(m![1]);
+    const all = [...(this.recs.has(name) ? [this.recs.get(name)!] : []), ...(this.dups.get(name) ?? [])].reverse();
+    const grid = HGrid.make({
+      rows: all.map(r => HDict.make(this.rec(name, r, {
+        func: HMarker.make(), src: HStr.make(r.src),
+        ...Object.fromEntries(Object.entries(r.extra ?? {}).map(([k, v]) => [k, HStr.make(v)])),
+      }))),
+    });
+    if (this.afterRead) { const f = this.afterRead; this.afterRead = null; f(); }
+    return grid;
   }
 
   private commit(code: string): unknown {
@@ -107,7 +146,19 @@ class FakeSkySpark {
     const stale = lines.find(l => l.startsWith('  stale: '))!.slice('  stale: '.length);
     const changes = lines.find(l => l.startsWith('  changes: '))!;
     expect(changes.includes('doc: ideDoc')).toBe(doc !== undefined);
-    expect(lines).toContain('  existing: read(func and name==ideName, false)');
+    expect(lines).toContain('  recs: readAll(func and name==ideName).toRecList.sortr((a, b) => a->mod <=> b->mod)');
+    expect(lines).toContain('  existing: recs.first');
+    expect(lines).toContain('    gone.each(x => commit(diff(x, null, {remove})))');
+    expect(lines.some(l => l.includes('extras.each('))).toBe(false);
+    // The fake does this filter in JS below, so the Axon line must be the one
+    // it copies: a record goes only when its id and its mod match a backup.
+    expect(lines).toContain('  gone: extras.findAll(x => ideBacked.any(b => b->id == x->id and b->ms == toJavaMillis(x->mod)))');
+    expect(lines.find(l => l.includes('ideRemoved: '))).toContain('ideRemoved: gone.map(x => x->id), ideLeft: extras.size - gone.size}');
+    // The records that have a backup: their id and their mod when backed up.
+    const backedLine = lines.find(l => l.startsWith('  ideBacked: '))!;
+    expect(backedLine).toBeDefined();
+    const backed = [...backedLine.matchAll(/\{id: parseRef\(("(?:[^"\\]|\\.)*")\), ms: (\d+)ms\}/g)]
+      .map(x => ({ id: unAxon(x[1]), ms: Number(x[2]) }));
 
     const existing = this.recs.get(name);
     let isStale: boolean;
@@ -124,13 +175,24 @@ class FakeSkySpark {
     }
     this.clock += 1234;
     const next: FakeRec = {
+      id: existing ? existing.id : `r:fake-${this.nextId++}`,
       src,
       doc: doc !== undefined ? doc : existing ? existing.doc : null,
       mod: new Date(this.clock),
       tags: changes,
     };
     this.recs.set(name, next);
-    const out = this.rec(name, next, { ideStatus: HStr.make('ok'), ideOp: HStr.make(existing ? 'updated' : 'added') });
+    // Only the duplicates with a backup of the same mod go.
+    const extras = this.dups.get(name) ?? [];
+    const gone = extras.filter(x => backed.some(b => b.id === x.id && b.ms === x.mod.getTime()));
+    const left = extras.filter(x => !gone.includes(x));
+    if (left.length) this.dups.set(name, left); else this.dups.delete(name);
+    const out = this.rec(name, next, {
+      ideStatus: HStr.make('ok'),
+      ideOp: HStr.make(existing ? 'updated' : 'added'),
+      ideRemoved: HList.make(gone.map(x => HRef.make(x.id))),
+      ideLeft: HNum.make(left.length),
+    });
     if (existing) out.idePrevSrc = HStr.make(existing.src);
     return this.reply(out);
   }
@@ -148,7 +210,10 @@ let server: Server;
 let base: string;
 let port: number;
 let configured: Array<{ instance: string; project: string }>;
-let currentToken: string | undefined;
+let callers: Map<string, IdeCaller>;
+let verifyBroken: boolean;
+let audits: IdeAuditEvent[];
+let commitBy: string[];
 let syncCalls: string[];
 let commitCalls: string[];
 const logs: string[] = [];
@@ -196,22 +261,30 @@ beforeEach(async () => {
   sky.put('roundTo', '(v, n: 2) => v.format("#." + "0" * n)', null, '2026-01-03T00:00:00.000Z');
   sky.put('trickyOne', TRICKY_SRC, 'Line one\nLine "two"', '2026-01-04T10:20:30.004Z');
   configured = [{ instance: 'demo', project: 'site' }, { instance: 'demo', project: 'empty' }];
-  currentToken = TOKEN;
+  callers = new Map([[TOKEN, ALICE], [READONLY_TOKEN, RITA]]);
+  verifyBroken = false;
+  audits = [];
+  commitBy = [];
   syncCalls = [];
   commitCalls = [];
   logs.length = 0;
 
   const app = express();
   app.use('/api/ide', createIdeRouter({
-    token: () => currentToken,
+    verify: async (bearer) => {
+      if (verifyBroken) throw new Error('database is down');
+      return callers.get(bearer) ?? null;
+    },
+    audit: event => { audits.push(event); },
     store: manager,
     configuredProjects: () => configured,
     sync: async (instance, project) => {
       syncCalls.push(`${instance}/${project}`);
       return manager.syncFunctions(sky as any, instance, project, { silent: true });
     },
-    commit: async (instance, project, args) => {
+    commit: async (instance, project, args, caller) => {
       commitCalls.push(`${instance}/${project}/${args.name}`);
+      commitBy.push(caller.username);
       return commitFunction({ client: sky, instance, project }, args, { baseDir: tmp, store: manager });
     },
     log: line => { logs.push(line); },
@@ -254,18 +327,137 @@ describe('auth', () => {
     expect(res.status).toBe(401);
   });
 
-  test('503 for every request when the token is not set', async () => {
-    currentToken = undefined;
-    expect((await call('GET', '/projects')).status).toBe(503);
-    expect((await call('GET', '/projects', undefined, '')).status).toBe(503);
+  test('503 when the key check cannot run; an empty bearer is a 401', async () => {
+    verifyBroken = true;
+    const down = await call('GET', '/projects');
+    expect(down.status).toBe(503);
+    expect(down.text).not.toContain('database is down');
+    expect((await call('GET', '/projects', undefined, '')).status).toBe(401);
+    expect(audits).toEqual([]);
   });
 
-  test('ideToken: the routes stay off without a token or with a short one', () => {
-    expect(ideToken({})).toEqual({ token: null, reason: `${IDE_TOKEN_ENV} is not set` });
-    expect(ideToken({ [IDE_TOKEN_ENV]: '   ' }).token).toBeNull();
-    expect(ideToken({ [IDE_TOKEN_ENV]: 'short' }).token).toBeNull();
-    expect(ideToken({ [IDE_TOKEN_ENV]: 'short' }).reason).toMatch(/shorter than 16/);
-    expect(ideToken({ [IDE_TOKEN_ENV]: ` ${TOKEN} ` })).toEqual({ token: TOKEN });
+  test('a key that verify no longer knows is a 401 on the next call', async () => {
+    expect((await call('GET', '/projects')).status).toBe(200);
+    callers.delete(TOKEN); // revoked, expired, or the user is disabled or deleted
+    const res = await call('GET', '/projects');
+    expect(res.status).toBe(401);
+    expect(res.json).toEqual({ error: 'unauthorized' });
+  });
+
+  test('no shared token: the old AXON_IDE_TOKEN value is refused', async () => {
+    const old = process.env.AXON_IDE_TOKEN;
+    process.env.AXON_IDE_TOKEN = 'old-shared-token-0123456789';
+    try {
+      expect((await call('GET', '/projects', undefined, 'old-shared-token-0123456789')).status).toBe(401);
+    } finally {
+      if (old === undefined) delete process.env.AXON_IDE_TOKEN; else process.env.AXON_IDE_TOKEN = old;
+    }
+  });
+});
+
+const settle = () => new Promise<void>(ok => setTimeout(ok, 20));
+
+describe('roles and the access record', () => {
+  test('a read-only user can list and export, also with sync=true', async () => {
+    expect((await call('GET', '/projects', undefined, READONLY_TOKEN)).status).toBe(200);
+    expect((await call('GET', fnUrl('demo', 'site'), undefined, READONLY_TOKEN)).status).toBe(200);
+    expect((await call('GET', fnUrl('demo', 'site') + '?sync=true', undefined, READONLY_TOKEN)).status).toBe(200);
+    expect(syncCalls).toEqual(['demo/site']);
+  });
+
+  test('a read-only user cannot POST a commit: 403, nothing reaches SkySpark', async () => {
+    const res = await call('POST', fnUrl('demo', 'site', 'calcDailyAvg'), { src: '() => 1', expectedMod: null }, READONLY_TOKEN);
+    expect(res.status).toBe(403);
+    expect(res.json).toEqual({ error: 'your user is read-only and cannot commit' });
+    expect(commitCalls).toEqual([]);
+    expect(sky.evals).toEqual([]);
+    await settle();
+    // The record of a refused commit names the project and the function.
+    expect(audits).toEqual([{
+      action: 'write.denied', status: 'denied', caller: RITA, instance: 'demo', project: 'site', name: 'calcDailyAvg',
+    }]);
+    // The 403 comes before the body is read.
+    expect((await call('POST', fnUrl('demo', 'site', 'calcDailyAvg'), '{not json', READONLY_TOKEN)).status).toBe(403);
+  });
+
+  test('each call gives one record with the user and the key prefix', async () => {
+    await call('GET', '/projects');
+    await call('GET', fnUrl('demo', 'site'));
+    await call('GET', fnUrl('nope', 'nope'));
+    await settle();
+    expect(audits).toEqual([
+      { action: 'projects.list', status: 'ok', caller: ALICE },
+      { action: 'functions.export', status: 'ok', caller: ALICE, instance: 'demo', project: 'site' },
+      { action: 'functions.export', status: 'error', caller: ALICE },
+    ]);
+  });
+
+  test('a call whose client drops the connection still leaves one record', async () => {
+    const http = await import('http');
+    const url = new URL(base + fnUrl('demo', 'site'));
+    // A request that never reads its reply: close the socket as soon as the reply starts.
+    await new Promise<void>(done => {
+      const req = http.request({
+        host: url.hostname, port: url.port, path: url.pathname, method: 'GET',
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      });
+      req.on('response', r => { r.destroy(); req.destroy(); done(); });
+      req.on('error', () => done());
+      req.end();
+    });
+    await settle();
+    expect(audits.length).toBe(1);
+    expect(audits[0]).toMatchObject({ action: 'functions.export', caller: ALICE });
+  });
+
+  test('the commit records the user: ok, conflict and error', async () => {
+    const mod = (await call('GET', fnUrl('demo', 'site'))).json.functions.find((f: any) => f.name === 'roundTo').mod;
+    audits.length = 0;
+    const ok = await call('POST', fnUrl('demo', 'site', 'roundTo'), { src: '(v) => v', expectedMod: mod });
+    expect(ok.status).toBe(200);
+    const stale = await call('POST', fnUrl('demo', 'site', 'roundTo'), { src: '(v) => v + 1', expectedMod: mod });
+    expect(stale.status).toBe(409);
+    const bad = await call('POST', fnUrl('demo', 'site', 'roundTo'), { src: '', expectedMod: mod });
+    expect(bad.status).toBe(400);
+    await settle();
+    expect(commitBy).toEqual(['alice', 'alice']);
+    const commit = { action: 'function.commit', caller: ALICE, instance: 'demo', project: 'site', name: 'roundTo' };
+    expect(audits).toEqual([
+      { ...commit, status: 'ok' },
+      { ...commit, status: 'conflict' },
+      { ...commit, status: 'error' },
+    ]);
+    expect(logs.some(l => l.includes('commit demo/site/roundTo by alice (axk_0a1b2c3d)'))).toBe(true);
+  });
+
+  test('the key is never in a log line, a record or a reply', async () => {
+    await call('GET', '/projects');
+    await call('POST', fnUrl('demo', 'site', 'newFn'), { src: '() => 1', expectedMod: null });
+    const refused = await call('POST', fnUrl('demo', 'site', 'newFn'), { src: '() => 1', expectedMod: null }, READONLY_TOKEN);
+    const wrong = await call('GET', '/projects', undefined, 'axk_ffffffff_not-a-real-key-0123456789');
+    await settle();
+    const all = JSON.stringify(logs) + JSON.stringify(audits) + refused.text + wrong.text;
+    for (const secret of [TOKEN, READONLY_TOKEN, 'not-a-real-key']) expect(all).not.toContain(secret);
+  });
+
+  test('a failing audit callback does not fail the call', async () => {
+    const app = express();
+    app.use('/x', createIdeRouter({
+      verify: async () => ALICE,
+      audit: () => { throw new Error('audit is down'); },
+      store: manager,
+      configuredProjects: () => configured,
+      sync: async () => undefined,
+      commit: async () => { throw new Error('not used'); },
+      log: line => { logs.push(line); },
+    }));
+    const s2: Server = await new Promise(ok => { const s = app.listen(0, '127.0.0.1', () => ok(s)); });
+    try {
+      const res = await fetch(`http://127.0.0.1:${(s2.address() as AddressInfo).port}/x/projects`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+      expect(res.status).toBe(200);
+    } finally {
+      await new Promise<void>(ok => s2.close(() => ok()));
+    }
   });
 });
 
@@ -498,7 +690,7 @@ describe('unknown project and bad names', () => {
     const res = await call('POST', fnUrl('demo', 'site', 'bigOne'), { src: big, expectedMod: null });
     expect(res.status).toBe(200);
     expect(sky.recs.get('bigOne')!.src).toBe(big);
-  });
+  }, 30000); // 4 to 8 s on a loaded machine; the 5 s default made it flaky.
 });
 
 describe('POST function (commit)', () => {
@@ -507,7 +699,8 @@ describe('POST function (commit)', () => {
     const newSrc = '(pt) => pt.hisRead(lastWeek).avg';
     const res = await call('POST', fnUrl('demo', 'site', 'calcDailyAvg'), { src: newSrc, expectedMod: before.mod });
     expect(res.status).toBe(200);
-    expect(Object.keys(res.json).sort()).toEqual(['hash', 'mod', 'status']);
+    expect(Object.keys(res.json).sort()).toEqual(['hash', 'mod', 'removedDuplicates', 'status']);
+    expect(res.json.removedDuplicates).toEqual([]);
     expect(res.json.status).toBe('ok');
     expect(res.json.hash).toBe(sha256Hex(newSrc));
     expect(res.json.mod).toBe(sky.recs.get('calcDailyAvg')!.mod.toISOString());
@@ -720,9 +913,279 @@ describe('commitFunction (the MCP tool path)', () => {
   });
 
   test('a reply that is not a dict says the commit may be stored', async () => {
-    const odd = { evalAxon: async () => 'ok' };
+    // The read of the records is understood (no records); the commit reply is not.
+    const odd = { evalAxon: async (code: string) => (code.startsWith('readAll(') ? HGrid.make({ rows: [] }) : 'ok') };
     await expect(commitFunction({ client: odd, instance: 'demo', project: 'site' }, { name: 'roundTo', src: '() => 1' }, deps()))
       .rejects.toThrow(/may be stored already/);
+  });
+
+  test('a read reply that is not a grid stops the commit: nothing was committed', async () => {
+    const evals: string[] = [];
+    const odd = { evalAxon: async (code: string) => { evals.push(code); return 'ok'; } };
+    await expect(commitFunction({ client: odd, instance: 'demo', project: 'site' }, { name: 'roundTo', src: '() => 1' }, deps()))
+      .rejects.toThrow(/Nothing was committed/);
+    expect(evals).toEqual([buildReadRecordsAxon('roundTo')]);
+  });
+});
+
+describe('one func record per name', () => {
+  const target = () => ({ client: sky, instance: 'demo', project: 'site' });
+  const deps = () => ({ baseDir: tmp, store: manager });
+
+  test('a commit updates in place: three commits leave one record', async () => {
+    for (const n of [1, 2, 3]) {
+      const res = await commitFunction(target(), { name: 'roundTo', src: `() => ${n}` }, deps());
+      expect(res).toMatchObject({ status: 'ok', operation: 'updated', removedDuplicates: [] });
+    }
+    expect(sky.count('roundTo')).toBe(1);
+    for (const code of sky.commits) {
+      expect(code).toContain('else commit(diff(existing, changes))');
+    }
+  });
+
+  const backupDir = () => path.join(tmp, 'demo', 'site', '.backups', 'roundTo');
+  const removedFiles = () => (fs.existsSync(backupDir()) ? fs.readdirSync(backupDir()).filter(f => f.startsWith('removed-')) : []);
+  const dupIds = () => (sky.dups.get('roundTo') ?? []).map(d => d.id);
+
+  test('two older records: each whole record is backed up, then removed', async () => {
+    sky.putDuplicate('roundTo', '() => "old one"', '2025-01-01T00:00:00.000Z', { appName: 'demoApp' });
+    sky.putDuplicate('roundTo', '() => "older one"', '2024-01-01T00:00:00.000Z');
+    const [oldId, olderId] = dupIds();
+    expect(sky.count('roundTo')).toBe(3);
+    const before = sky.recs.get('roundTo')!.src;
+
+    const res = await commitFunction(target(), { name: 'roundTo', src: '() => "new"' }, deps());
+    expect(res).toMatchObject({ status: 'ok', operation: 'updated', backedUp: true });
+    if (res.status !== 'ok') throw new Error('not ok');
+    expect(res.removedDuplicates.map(r => [r.id, r.mod])).toEqual([
+      [oldId, '2025-01-01T00:00:00.000Z'],
+      [olderId, '2024-01-01T00:00:00.000Z'],
+    ]);
+    expect(res.warning).toContain('Removed 2 older func record(s)');
+    expect(sky.count('roundTo')).toBe(1);
+    expect(sky.recs.get('roundTo')!.src).toBe('() => "new"');
+
+    // The read came first, then the one commit eval, which names both ids.
+    expect(sky.evals[0]).toBe(buildReadRecordsAxon('roundTo'));
+    expect(sky.commits).toHaveLength(1);
+    expect(sky.commits[0]).toContain(`parseRef(${axonStr(oldId)}), ms: ${Date.parse('2025-01-01T00:00:00.000Z')}ms`);
+    expect(sky.commits[0]).toContain(`parseRef(${axonStr(olderId)}), ms: ${Date.parse('2024-01-01T00:00:00.000Z')}ms`);
+
+    // Each backup holds the whole record: id, mod, src, doc and its other tags.
+    for (const r of res.removedDuplicates) {
+      expect(path.dirname(r.backup)).toBe(backupDir());
+      const saved = JSON.parse(fs.readFileSync(r.backup, 'utf8'));
+      expect(saved).toMatchObject({ name: 'roundTo', instance: 'demo', project: 'site', id: r.id, mod: r.mod });
+      expect(saved.record.id).toMatchObject({ _kind: 'ref', val: r.id });
+      expect(saved.record.func).toMatchObject({ _kind: 'marker' });
+      expect(saved.record.mod).toMatchObject({ _kind: 'dateTime' });
+      expect(saved.record.src).toBe(saved.src);
+    }
+    const first = JSON.parse(fs.readFileSync(res.removedDuplicates[0].backup, 'utf8'));
+    expect(first.src).toBe('() => "old one"');
+    expect(first.record.appName).toBe('demoApp');
+    expect(JSON.parse(fs.readFileSync(res.removedDuplicates[1].backup, 'utf8')).src).toBe('() => "older one"');
+
+    // The src that the commit replaced has its usual backup too.
+    const axonFiles = fs.readdirSync(backupDir()).filter(f => f.endsWith('.axon'));
+    expect(axonFiles.map(f => fs.readFileSync(path.join(backupDir(), f), 'utf8'))).toEqual([before]);
+  });
+
+  test('a backup that cannot be written: nothing is committed and nothing is removed', async () => {
+    sky.putDuplicate('roundTo', '() => "old one"', '2025-01-01T00:00:00.000Z');
+    sky.putDuplicate('roundTo', '() => "older one"', '2024-01-01T00:00:00.000Z');
+    const before = sky.recs.get('roundTo')!;
+    // A file where the backup folder should be: mkdir fails.
+    fs.writeFileSync(path.join(tmp, 'demo', 'site', '.backups'), 'not a folder');
+
+    await expect(commitFunction(target(), { name: 'roundTo', src: '() => "new"' }, deps()))
+      .rejects.toBeInstanceOf(CommitBackupError);
+    await expect(commitFunction(target(), { name: 'roundTo', src: '() => "new"' }, deps()))
+      .rejects.toThrow(/nothing was committed and no record was removed/);
+    expect(sky.commits).toEqual([]);
+    expect(sky.count('roundTo')).toBe(3);
+    expect(sky.recs.get('roundTo')).toBe(before);
+  });
+
+  test('the second backup fails: the first is deleted again, nothing is committed', async () => {
+    sky.putDuplicate('roundTo', '() => "old one"', '2025-01-01T00:00:00.000Z');
+    sky.putDuplicate('roundTo', '() => "older one"', '2024-01-01T00:00:00.000Z');
+    const realOpen = fs.promises.open;
+    let opens = 0;
+    const spy = jest.spyOn(fs.promises, 'open').mockImplementation(((file: any, flags: any, mode?: any) => {
+      if (String(file).includes(`${path.sep}removed-`) && ++opens === 2) {
+        return Promise.reject(Object.assign(new Error('disk full'), { code: 'ENOSPC' }));
+      }
+      return realOpen(file, flags, mode);
+    }) as any);
+    try {
+      await expect(commitFunction(target(), { name: 'roundTo', src: '() => "new"' }, deps()))
+        .rejects.toThrow(/disk full.*nothing was committed and no record was removed/);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(opens).toBe(2);
+    expect(removedFiles()).toEqual([]);
+    expect(sky.commits).toEqual([]);
+    expect(sky.count('roundTo')).toBe(3);
+  });
+
+  test('POST: a backup that cannot be written is a 500 with the error; nothing is removed', async () => {
+    sky.putDuplicate('roundTo', '() => "old one"', '2025-01-01T00:00:00.000Z');
+    fs.writeFileSync(path.join(tmp, 'demo', 'site', '.backups'), 'not a folder');
+    const res = await call('POST', fnUrl('demo', 'site', 'roundTo'), { src: '() => "new"', expectedMod: sky.recs.get('roundTo')!.mod.toISOString() });
+    expect(res.status).toBe(500);
+    expect(res.json.error).toMatch(/backup was not written/);
+    expect(sky.commits).toEqual([]);
+    expect(sky.count('roundTo')).toBe(2);
+  });
+
+  test('POST: the reply lists the removed records and their backups', async () => {
+    sky.putDuplicate('roundTo', '() => "old one"', '2025-01-01T00:00:00.000Z');
+    sky.putDuplicate('roundTo', '() => "older one"', '2024-01-01T00:00:00.000Z');
+    const ids = dupIds();
+    const res = await call('POST', fnUrl('demo', 'site', 'roundTo'), { src: '() => "new"', expectedMod: sky.recs.get('roundTo')!.mod.toISOString() });
+    expect(res.status).toBe(200);
+    expect(res.json.removedDuplicates.map((r: any) => r.id)).toEqual(ids);
+    for (const r of res.json.removedDuplicates) {
+      expect(JSON.parse(fs.readFileSync(r.backup, 'utf8')).id).toBe(r.id);
+    }
+    expect(sky.count('roundTo')).toBe(1);
+  });
+
+  test('a duplicate that changes after its backup is not removed, and its backup is dropped', async () => {
+    sky.putDuplicate('roundTo', '() => "old one"', '2025-01-01T00:00:00.000Z');
+    sky.putDuplicate('roundTo', '() => "older one"', '2024-01-01T00:00:00.000Z');
+    const [oldId, olderId] = dupIds();
+    sky.afterRead = () => { sky.dups.get('roundTo')![1].mod = new Date('2026-02-01T00:00:00.000Z'); };
+
+    const res = await commitFunction(target(), { name: 'roundTo', src: '() => "new"' }, deps());
+    if (res.status !== 'ok') throw new Error('not ok');
+    expect(res.removedDuplicates.map(r => r.id)).toEqual([oldId]);
+    expect(res.warning).toContain('1 older func record(s) with the name roundTo are still there');
+    expect(dupIds()).toEqual([olderId]);
+    expect(removedFiles()).toEqual([path.basename(res.removedDuplicates[0].backup)]);
+  });
+
+  test('a stale write with duplicates removes nothing and writes no backup', async () => {
+    sky.putDuplicate('roundTo', '() => "old one"', '2025-01-01T00:00:00.000Z');
+    const res = await commitFunction(target(), { name: 'roundTo', src: '() => 1', expectedMod: '2020-01-01T00:00:00Z' }, deps());
+    expect(res).toMatchObject({ status: 'conflict', exists: true });
+    expect(sky.count('roundTo')).toBe(2);
+    expect(sky.commits[0]).toContain('  ideBacked: []');
+    expect(removedFiles()).toEqual([]);
+  });
+
+  test('the function changes between the read and the commit: a conflict, nothing removed, no backup left', async () => {
+    sky.putDuplicate('roundTo', '() => "old one"', '2025-01-01T00:00:00.000Z');
+    const expectedMod = sky.recs.get('roundTo')!.mod.toISOString();
+    sky.afterRead = () => { sky.recs.get('roundTo')!.mod = new Date('2026-02-02T00:00:00.000Z'); };
+
+    const res = await commitFunction(target(), { name: 'roundTo', src: '() => 1', expectedMod }, deps());
+    expect(res).toMatchObject({ status: 'conflict', exists: true, mod: '2026-02-02T00:00:00.000Z' });
+    // The read saw no conflict, so the duplicate was backed up and offered to the eval.
+    expect(sky.commits[0]).toContain('parseRef(');
+    expect(sky.count('roundTo')).toBe(2);
+    expect(removedFiles()).toEqual([]);
+  });
+
+  test('a commit reply that is not understood keeps the backups of the duplicates', async () => {
+    sky.putDuplicate('roundTo', '() => "old one"', '2025-01-01T00:00:00.000Z');
+    const odd = {
+      evalAxon: async (code: string) => (code.startsWith('readAll(') ? sky.evalAxon(code) : 'ok'),
+    };
+    await expect(commitFunction({ client: odd, instance: 'demo', project: 'site' }, { name: 'roundTo', src: '() => 1' }, deps()))
+      .rejects.toThrow(/may be stored already.*backups of the older records with the same name are kept/);
+    const files = removedFiles();
+    expect(files).toHaveLength(1);
+    expect(JSON.parse(fs.readFileSync(path.join(backupDir(), files[0]), 'utf8')).src).toBe('() => "old one"');
+  });
+
+  test('the backups of removed records are never trimmed', async () => {
+    fs.mkdirSync(backupDir(), { recursive: true });
+    fs.writeFileSync(path.join(backupDir(), 'backup-2020-01-01T00-00-00-000Z.axon'), 'an old backup');
+    for (const n of [1, 2, 3]) sky.putDuplicate('roundTo', `() => "dup ${n}"`, `202${n}-01-01T00:00:00.000Z`);
+
+    const res = await commitFunction(target(), { name: 'roundTo', src: '() => "new"' }, { ...deps(), maxBackups: 2 });
+    if (res.status !== 'ok') throw new Error('not ok');
+    expect(res.removedDuplicates).toHaveLength(3);
+    expect(removedFiles()).toHaveLength(3);
+
+    // Later commits trim the "backup-" files to maxBackups; the "removed-" files stay.
+    for (const n of [1, 2, 3]) {
+      await commitFunction(target(), { name: 'roundTo', src: `() => "newer ${n}"` }, { ...deps(), maxBackups: 2 });
+    }
+    const files = fs.readdirSync(backupDir());
+    expect(files.filter(f => f.startsWith('backup-'))).toHaveLength(2);
+    expect(removedFiles()).toHaveLength(3);
+    const srcs = removedFiles().map(f => JSON.parse(fs.readFileSync(path.join(backupDir(), f), 'utf8')).src).sort();
+    expect(srcs).toEqual(['() => "dup 1"', '() => "dup 2"', '() => "dup 3"']);
+  });
+});
+
+describe('the commitAxonFunction tool reply', () => {
+  const where = { name: 'roundTo', instance: 'demo', project: 'site' };
+  const parse = (reply: { content: Array<{ text: string }> }) => JSON.parse(reply.content[0].text);
+  const target = () => ({ client: sky, instance: 'demo', project: 'site' });
+  const deps = () => ({ baseDir: tmp, store: manager });
+
+  test('tool arguments: doc left out or null keeps the stored doc; tags go to extraTags', async () => {
+    expect(toCommitArgs({ name: 'a', src: 'b' })).toEqual({ name: 'a', src: 'b', extraTags: {} });
+    expect(toCommitArgs({ name: 'a', src: 'b', doc: null })).not.toHaveProperty('doc');
+    expect(toCommitArgs({ name: 'a', src: 'b', doc: '' })).toMatchObject({ doc: '' });
+    expect(toCommitArgs({ name: 'a', src: 'b', expectedMod: null })).toMatchObject({ expectedMod: null });
+    expect(toCommitArgs({ name: 'a', src: 'b', dis: 'D', order: 2, extraTags: { x: 1 } }).extraTags).toEqual({ x: 1, dis: 'D', order: 2 });
+
+    sky.put('calcDailyAvg', '() => "theirs"', 'Their doc', '2026-02-09T08:07:06.005Z');
+    const res = await commitFunction(target(), toCommitArgs({ name: 'calcDailyAvg', src: '() => "mine"' }), deps());
+    expect(sky.recs.get('calcDailyAvg')!.doc).toBe('Their doc');
+    expect(parse(commitToolReply(res, { ...where, name: 'calcDailyAvg' }))).toMatchObject({ success: true, status: 'ok', doc: 'Their doc' });
+  });
+
+  test('ok: the reply has the new mod and hash', async () => {
+    const res = await commitFunction(target(), toCommitArgs({ name: 'roundTo', src: '() => 5', expectedMod: '2026-01-03T00:00:00.000Z' }), deps());
+    const reply = commitToolReply(res, where);
+    expect(reply.isError).toBeUndefined();
+    expect(parse(reply)).toMatchObject({
+      success: true, status: 'ok', operation: 'updated', instance: 'demo', project: 'site',
+      mod: sky.recs.get('roundTo')!.mod.toISOString(), hash: sha256Hex('() => 5'), removedDuplicates: [],
+    });
+  });
+
+  test('ok with duplicates: the reply names each removed record and its backup', async () => {
+    sky.putDuplicate('roundTo', '() => "old one"', '2025-01-01T00:00:00.000Z');
+    sky.putDuplicate('roundTo', '() => "older one"', '2024-01-01T00:00:00.000Z');
+    const ids = sky.dups.get('roundTo')!.map(d => d.id);
+    const res = await commitFunction(target(), toCommitArgs({ name: 'roundTo', src: '() => 7' }), deps());
+    const body = parse(commitToolReply(res, where));
+    expect(body).toMatchObject({ success: true, status: 'ok' });
+    expect(body.removedDuplicates.map((r: any) => [r.id, r.mod])).toEqual([
+      [ids[0], '2025-01-01T00:00:00.000Z'],
+      [ids[1], '2024-01-01T00:00:00.000Z'],
+    ]);
+    for (const r of body.removedDuplicates) {
+      expect(JSON.parse(fs.readFileSync(r.backup, 'utf8')).record.id.val).toBe(r.id);
+    }
+    expect(body.warning).toContain(`@${ids[0]}`);
+  });
+
+  test('conflict: an error reply with the server mod and hash; nothing written', async () => {
+    const before = sky.recs.get('roundTo')!.src;
+    const res = await commitFunction(target(), toCommitArgs({ name: 'roundTo', src: '() => 6', expectedMod: '2020-01-01T00:00:00Z' }), deps());
+    const reply = commitToolReply(res, { ...where, warning: 'no project given' });
+    expect(reply.isError).toBe(true);
+    expect(parse(reply)).toMatchObject({
+      success: false, status: 'conflict', exists: true,
+      mod: '2026-01-03T00:00:00.000Z', hash: sha256Hex(before), warning: 'no project given',
+    });
+    expect(sky.recs.get('roundTo')!.src).toBe(before);
+  });
+
+  test('bad name: refused before any eval', async () => {
+    for (const name of ['../x', 'a b', '1abc', 'x") or read(point']) {
+      await expect(commitFunction(target(), toCommitArgs({ name, src: '() => 1' }), deps())).rejects.toBeInstanceOf(CommitArgError);
+    }
+    expect(sky.evals).toEqual([]);
   });
 });
 

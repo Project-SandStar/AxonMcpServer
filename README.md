@@ -419,10 +419,19 @@ through three routes under `/api/ide`:
 | `GET /api/ide/projects/{instance}/{project}/functions?sync=true\|false` | Export the functions (`src`, `doc`, `mod`, `hash`) |
 | `POST /api/ide/projects/{instance}/{project}/functions/{name}` | Commit one function; `409` when it changed on the server |
 
-Every route needs `Authorization: Bearer <AXON_IDE_TOKEN>`. Set
-`AXON_IDE_TOKEN` (16 characters or more) in the server's environment. When it
-is not set, the routes are off and the server logs one line that says so. The
-token is always required, also when `/mcp` runs without auth.
+Every route needs `Authorization: Bearer <key>`. The key is a **user access
+key**: an admin makes it for one user on the dashboard **Users** page (button
+**Access keys**), the dashboard shows it one time, and the developer pastes it
+in the plugin. The server keeps only a hash. There is no shared token:
+`AXON_IDE_TOKEN` is no longer used.
+
+- The same key works on `/mcp`, so one key serves the IDE and MCP clients.
+- A key stops at once when it is revoked or expired, or when its user is
+  disabled or deleted.
+- A user with the `readonly` role can list and export but cannot commit, and
+  cannot use `executeAxonCode` and the other write tools on `/mcp`.
+- Every call and every commit is recorded with the user (dashboard
+  **Sessions** page, tab **Access keys**).
 
 Full contract: [docs/api/IDE-API.md](docs/api/IDE-API.md).
 

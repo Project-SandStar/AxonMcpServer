@@ -7,8 +7,9 @@
   "scripts": {
     "build": "tsc && cp -r src/generated dist/",
     "dev": "NODE_OPTIONS='--max-old-space-size=8192' tsx src/index.ts",
-    "start": "node --max-old-space-size=8192 dist/index.js",
-    "start:http": "MCP_TRANSPORT=http MCP_PORT=3847 node --max-old-space-size=8192 dist/index.js",
+    "start": "npm run db:migrate && node --max-old-space-size=8192 dist/index.js",
+    "start:http": "npm run db:migrate && MCP_TRANSPORT=http MCP_PORT=3847 node --max-old-space-size=8192 dist/index.js",
+    "db:migrate": "mkdir -p .cache && prisma migrate deploy",
     "stop": "bash scripts/stop-server.sh",
     "status": "bash scripts/status-server.sh",
     "test": "jest",

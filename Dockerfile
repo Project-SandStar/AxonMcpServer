@@ -20,6 +20,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
+# onnxruntime-node downloads its CUDA (GPU) binaries at install time; the server runs on
+# the CPU, and that download can 404. Skip it so the build does not depend on it.
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 RUN npm ci
 COPY tsconfig.json prisma.config.ts ./
 COPY prisma ./prisma

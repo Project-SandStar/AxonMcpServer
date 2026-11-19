@@ -7,7 +7,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getUsageTracker } from '../usage/index.js';
 import { ServerStatus, InstanceInfo, ProjectInfo, CacheInfo, AdminCredentials } from './types.js';
-import { initUserStore, getUserStore, UserStore, User } from './userStore.js';
+import { initUserStore, getUserStore, isUserRole } from './userStore.js';
+import { basicAuthWithUserStore, requireAdmin } from './adminAuth.js';
+import { createUserKeysRouter, createAccessRouter, readonlyGuard } from './userKeys.js';
+import type { UserKeyStore } from '../auth/userKeys.js';
+import type { AccessAudit } from '../auth/accessAudit.js';
 import { AxonOAuthProvider } from '../auth/oauthProvider.js';
 import { BackupManager } from './backupManager.js';
 import { createChangesRouter, loadChangesConfig } from './changesRouter.js';
@@ -27,15 +31,6 @@ import {
   generateMcpToolsetConfig,
   ToolCategory,
 } from '../toolSearch/toolSearchConfig.js';
-
-// Extend Express Request to include user
-declare global {
-  namespace Express {
-    interface Request {
-      user?: User;
-    }
-  }
-}
 
 // Types for injected dependencies
 interface PrimaryProjectContext {
@@ -72,6 +67,9 @@ interface AdminContext {
   getOAuthProvider?: () => AxonOAuthProvider | undefined;
   getBackupManager?: () => BackupManager | undefined;
   getPrisma?: () => import('../generated/prisma/index.js').PrismaClient | null;
+  /** User access keys and the access record (HTTP mode) */
+  getUserKeys?: () => UserKeyStore | undefined;
+  getAccessAudit?: () => AccessAudit | undefined;
   searchDocs?: (query: string, options?: { limit?: number; library?: string }) => Promise<any[]>;
   getDocsForEmbedding?: () => Array<{ id: string; title: string; library: string; fullText: string }>;
   getDocsStats?: () => { totalDocuments: number; totalSections: number; libraries: string[] };
@@ -85,42 +83,6 @@ interface AdminContext {
   reindexDocs?: () => Promise<void>;
   getWorkflowManager?: () => import('../workflows/workflowManager.js').WorkflowManager;
   getWorkflowVectorIndex?: () => import('../workflows/workflowVectorIndex.js').WorkflowVectorIndex | undefined;
-}
-
-/**
- * Basic Auth middleware using UserStore
- */
-function basicAuthWithUserStore(userStore: UserStore) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader || !authHeader.startsWith('Basic ')) {
-      res.setHeader('WWW-Authenticate', 'Basic realm="Axon MCP Admin"');
-      return res.status(401).json({ error: 'Authentication required' });
-    }
-
-    const base64 = authHeader.split(' ')[1];
-    const [username, password] = Buffer.from(base64, 'base64').toString().split(':');
-
-    const user = userStore.authenticate(username, password);
-    if (user) {
-      req.user = user;
-      return next();
-    }
-
-    res.setHeader('WWW-Authenticate', 'Basic realm="Axon MCP Admin"');
-    return res.status(401).json({ error: 'Invalid credentials' });
-  };
-}
-
-/**
- * Require admin role middleware
- */
-function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  if (req.user?.role !== 'admin') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-  return next();
 }
 
 /**
@@ -159,10 +121,23 @@ export function createAdminRouter(context: AdminContext): Router {
   // Apply Basic Auth to all admin routes
   router.use(basicAuthWithUserStore(userStore));
 
+  // A read-only user can only read (own password and own key revoke stay open)
+  router.use(readonlyGuard);
+
   // "Sidecar sync login" per user: receiver accounts kept in step through the receiver admin API
   const receiverAdmin = new ReceiverAdminClient();
   router.use('/sidecar/accounts', createSidecarAccountsRouter({ userStore, requireAdmin, receiver: receiverAdmin }));
   router.use('/users', createUserSyncRouter({ userStore, requireAdmin, receiver: receiverAdmin }));
+
+  // User access keys (for /api/ide and /mcp), the disabled flag and the access record
+  const keyRoutes = {
+    userStore,
+    requireAdmin,
+    getKeys: () => context.getUserKeys?.(),
+    getAudit: () => context.getAccessAudit?.(),
+  };
+  router.use('/users', createUserKeysRouter(keyRoutes));
+  router.use('/access', createAccessRouter(keyRoutes));
   scheduleAutoLink(userStore, receiverAdmin);
 
   // "Sidecar sync" page API: root-to-project links, change queue, receiver status
@@ -265,7 +240,15 @@ export function createAdminRouter(context: AdminContext): Router {
           'POST /admin/users': 'Create a new user (admin only)',
           'PUT /admin/users/:username/password': 'Update user password',
           'PUT /admin/users/:username/role': 'Update user role (admin only)',
-          'DELETE /admin/users/:username': 'Delete a user (admin only)'
+          'DELETE /admin/users/:username': 'Delete a user (admin only)',
+          'POST /admin/users/:username/keys': 'Create an access key for a user; the key is shown once (admin only)',
+          'GET /admin/users/:username/keys': 'List the access keys of a user (prefix, created, last used, expiry; never the key)',
+          'DELETE /admin/users/:username/keys/:id': 'Revoke an access key (admin, or the user for an own key)',
+          'PUT /admin/users/:username/disabled': 'Disable or enable a user {disabled: boolean} (admin only)'
+        },
+        access: {
+          'GET /admin/access/keys': 'List the access keys of all users',
+          'GET /admin/access/audit': 'Read the access record of /api/ide and /mcp calls'
         },
         oauth: {
           'GET /admin/oauth/sessions': 'List all OAuth sessions',
@@ -399,6 +382,10 @@ export function createAdminRouter(context: AdminContext): Router {
         return res.status(400).json({ error: 'Password must be at least 4 characters' });
       }
 
+      if (role !== undefined && role !== null && role !== '' && !isUserRole(role)) {
+        return res.status(400).json({ error: 'Role must be "admin", "user" or "readonly"' });
+      }
+
       if (userStore.userExists(username)) {
         return res.status(409).json({ error: 'User already exists' });
       }
@@ -446,16 +433,13 @@ export function createAdminRouter(context: AdminContext): Router {
       const { username } = req.params;
       const { role } = req.body;
 
-      if (!role || !['admin', 'user'].includes(role)) {
-        return res.status(400).json({ error: 'Role must be "admin" or "user"' });
+      if (!isUserRole(role)) {
+        return res.status(400).json({ error: 'Role must be "admin", "user" or "readonly"' });
       }
 
-      // Prevent demoting self if last admin
-      if (req.user?.username === username && role === 'user') {
-        const admins = userStore.getAllUsers().filter(u => u.role === 'admin');
-        if (admins.length <= 1) {
-          return res.status(400).json({ error: 'Cannot demote the last admin' });
-        }
+      // Never take the admin role from the last admin who is enabled and can log in
+      if (role !== 'admin' && userStore.isLastWorkingAdmin(username)) {
+        return res.status(400).json({ error: 'Cannot demote the last admin' });
       }
 
       const success = userStore.updateRole(username, role);
@@ -493,6 +477,16 @@ export function createAdminRouter(context: AdminContext): Router {
       const success = userStore.deleteUser(username);
       if (!success) {
         return res.status(400).json({ error: 'User not found or cannot delete the last admin' });
+      }
+
+      // The user's keys and logins stop now. (The bearer check also refuses a user that is gone.)
+      if (target) {
+        try {
+          await context.getUserKeys?.()?.revokeAllForUser(target.id, req.user?.username ?? null);
+          await context.getOAuthProvider?.()?.revokeAllForUser(target.id);
+        } catch (err) {
+          console.error(`[keys] Could not revoke the keys and logins of a deleted user: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
 
       res.json({ success: true, message: 'User deleted' });
@@ -801,7 +795,7 @@ export function createAdminRouter(context: AdminContext): Router {
   });
 
   // Clear all usage data (keeps database file)
-  router.post('/usage/clear', async (_req: Request, res: Response) => {
+  router.post('/usage/clear', requireAdmin, async (_req: Request, res: Response) => {
     try {
       await usageTracker.clearData();
       res.json({ success: true, message: 'Usage data cleared' });
@@ -811,7 +805,7 @@ export function createAdminRouter(context: AdminContext): Router {
   });
 
   // Reset database - delete file and reinitialize
-  router.post('/usage/reset', async (_req: Request, res: Response) => {
+  router.post('/usage/reset', requireAdmin, async (_req: Request, res: Response) => {
     try {
       await usageTracker.resetDatabase();
       res.json({ success: true, message: 'Database reset complete' });

@@ -3,9 +3,24 @@
 ## Unreleased
 
 
+### ⚠ BREAKING CHANGES
+
+* **ide:** the shared token `AXON_IDE_TOKEN` is removed. `/api/ide` now needs a user access key. An admin makes one key for each developer on the dashboard Users page. A call with the old token gets `401`.
+* **auth:** a token on `/mcp` is checked on every call, also when OAuth is off. A token whose user is deleted or disabled, and an OAuth token with no user, is refused.
+* **admin:** `POST /admin/usage/clear` and `POST /admin/usage/reset` are admin only.
+* **db:** a migration adds the tables `user_api_keys` and `access_audit_events`. It must run before the server starts. The Docker image runs it; outside Docker `npm start` and `npm run start:http` now run `npm run db:migrate` first. Without it the server logs an error at start and `/api/ide` answers `503`.
+* **mcp:** with `MCP_REQUIRE_AUTH` off (the default) a call with no token is read-only: it can use the read tools but no write tool. Give each client an access key, or set `MCP_ANONYMOUS_ROLE=user` to keep the old behaviour.
+* **usage:** "Reset database" empties the usage tables only. A backup no longer holds `usage.db`, and a restore never writes it.
+
+
 ### Features
 
-* **ide:** IDE API under `/api/ide` (list projects, export functions, commit one function) behind a bearer token of its own, `AXON_IDE_TOKEN`; see docs/api/IDE-API.md
+* **auth:** user access keys (`axk_...`): made by an admin for one user, stored as a sha256 hash, shown one time, with a readable prefix, an optional expiry, a last-used time and revoke. One key works on `/api/ide` and on `/mcp`
+* **auth:** new role `readonly`: no commit on `/api/ide`, no write tools on `/mcp` (`executeAxonCode`, `commitAxonFunction`, `queryHaystack` and others), read only on the dashboard API
+* **auth:** a user can be disabled; a disabled or deleted user loses the dashboard, the keys and the OAuth logins at once
+* **auth:** access record: one row for each `/api/ide` call and each commit, with the user and the key prefix
+* **dashboard:** Users page: access keys per user (create, copy once, list, revoke), Read-only role, Disable and Enable. Sessions page: an Access keys tab with all keys and the recent IDE and commit activity
+* **ide:** IDE API under `/api/ide` (list projects, export functions, commit one function); see docs/api/IDE-API.md
 * **ide:** `commitAxonFunction` takes an optional `expectedMod`; a stale write returns a conflict and commits nothing
 
 
@@ -14,6 +29,7 @@
 * **commit:** a commit without `doc` keeps the stored doc (it was cleared)
 * **commit:** the function name is validated, and `$`, CR and tab in source are escaped in the Axon literal
 * **commit:** the local copy (`func/<name>.axon`, `.trio`, sync metadata) is updated after a good commit
+* **commit:** one func record per name: `commitAxonFunction` and the IDE commit update the newest record in place and remove older records with the same name. Each older record is backed up whole (id, mod, src, doc, all tags) to `.backups/<name>/removed-*.json` before it is removed; if a backup cannot be written, nothing is committed and nothing is removed. The tool and `POST /api/ide` replies list them: `removedDuplicates: [{id, mod, backup}]`
 * **sync:** a first sync records `mod`, and a later sync sees a changed source also when the old copy holds no `mod`
 * **sync:** a func whose name from the server is not a valid function name (for example a path) is skipped and counted as an error; it is never written to disk
 * **ide:** `expectedMod` must carry a time zone; a date-time with no zone is refused (it was read as the local time of the server)

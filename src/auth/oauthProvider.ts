@@ -519,4 +519,26 @@ export class AxonOAuthProvider implements OAuthServerProvider {
 
     return result.count;
   }
+
+  /**
+   * Revoke every OAuth login of one user (the user was deleted): the access
+   * and refresh tokens are revoked and the session rows are deleted.
+   */
+  async revokeAllForUser(userId: string): Promise<number> {
+    const result = await this.prisma.accessToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+
+    await this.prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+
+    await this.prisma.oAuthSession.deleteMany({
+      where: { userId },
+    });
+
+    return result.count;
+  }
 }

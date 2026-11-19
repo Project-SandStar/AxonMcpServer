@@ -286,3 +286,49 @@ model UserProjectScope {
   @@index([userId])
   @@map("user_project_scopes")
 }
+
+// ============================================
+// User access keys (IDE API and /mcp)
+// ============================================
+
+// One access key of a dashboard user. Only the sha256 hash of the key is kept;
+// the key text is shown once, when it is made. `prefix` ("axk_" + 8 hex) is the
+// readable part that tells keys apart. userId is User.id of config/users.json.
+model UserApiKey {
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  name         String
+  prefix       String    @unique
+  tokenHash    String    @unique @map("token_hash")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  createdBy    String?   @map("created_by")
+  expiresAt    DateTime? @map("expires_at")
+  lastUsedAt   DateTime? @map("last_used_at")
+  lastUsedFrom String?   @map("last_used_from") // 'ide' or 'mcp'
+  revokedAt    DateTime? @map("revoked_at")
+  revokedBy    String?   @map("revoked_by")
+
+  @@index([userId])
+  @@map("user_api_keys")
+}
+
+// Who called the IDE API and who committed a function. Not in tool_events:
+// "Clear usage data" empties that table.
+model AccessAuditEvent {
+  id        Int      @id @default(autoincrement())
+  at        DateTime @default(now())
+  source    String   // 'ide' or 'mcp'
+  action    String   // 'projects.list', 'functions.export', 'function.commit', 'write.denied'
+  status    String   // 'ok', 'conflict', 'error', 'denied'
+  userId    String?  @map("user_id")
+  username  String?
+  keyId     String?  @map("key_id")
+  keyPrefix String?  @map("key_prefix")
+  instance  String?
+  project   String?
+  name      String?
+
+  @@index([at])
+  @@index([userId])
+  @@map("access_audit_events")
+}

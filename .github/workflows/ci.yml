@@ -21,6 +21,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+        env:
+          # onnxruntime-node's CUDA download can 404; the server runs on the CPU
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
 
       - name: Generate Prisma client
         run: npx prisma generate
