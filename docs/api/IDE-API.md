@@ -153,13 +153,14 @@ Replies:
 
 | Status | Body | Meaning |
 |---|---|---|
-| 200 | `{"status":"ok","mod":"<new ISO>","hash":"<sha256 of src>"}` | Committed. Use `mod` as the next `expectedMod`. |
+| 200 | `{"status":"ok","mod":"<new ISO>","hash":"<sha256 of src>","removedDuplicates":[]}` | Committed. Use `mod` as the next `expectedMod`. `removedDuplicates` lists the older records with the same name that were backed up and removed: `[{"id","mod","backup"}]`. It is empty in the normal case. |
 | 409 | `{"status":"conflict","mod":"<server mod>","hash":"<sha256 of server src>"}` | The function changed on the server (or exists, with `expectedMod` null). Nothing was committed. `mod` and `hash` are null when the function is gone. |
 | 400 | `{"error":"..."}` | Bad name or body. |
 | 401 | `{"error":"unauthorized"}` | No key, or a key that is wrong, revoked or expired, or its user is disabled or deleted. |
 | 403 | `{"error":"your user is read-only and cannot commit"}` | The user has the `readonly` role. |
 | 404 | `{"error":"unknown project"}` | No such project. |
 | 413 | `{"error":"the body is too large"}` | Body over 2 MB. |
+| 500 | `{"error":"Function ... Their backup was not written ..."}` | Older records with the same name are there, and the server could not back them up. Nothing was committed and no record was removed. |
 | 502 | `{"error":"commit failed: ..."}` | SkySpark refused the commit. |
 | 503 | `{"error":"..."}` | The project is not in the SkySpark config, or the key check is not ready. |
 
@@ -183,10 +184,17 @@ with no sync.
 - A stale write returns a result with `"status": "conflict"` and `isError`.
 - One func record per name. An existing record is updated in place. If older
   records with the same name are there (an old commit added a new record each
-  time), the newest one is updated and the others are removed in the same
-  eval. Their source goes to the backups, and `removedDuplicates` in the tool
-  reply counts them. The POST route removes them too, but its reply stays
-  `{status, mod, hash}`; the server log names the removal.
+  time), the newest one is updated and the others are removed. Each one is
+  **backed up first**: a first eval reads the records, and the whole record
+  (id, `mod`, `src`, `doc` and every other tag, as Hayson) goes to
+  `proj/<instance>/<project>/.backups/<name>/removed-<ts>-<id>.json`. Only then
+  does the commit eval run. It removes only the records that have a backup,
+  and only when their `mod` did not change since the read. The `removed-*`
+  files are never trimmed.
+- If a backup cannot be written, nothing is committed and no record is removed.
+  The tool fails with the error; the POST route answers 500 with it.
+- The reply of the tool and of the POST route has `removedDuplicates`:
+  `[{"id": "<record id>", "mod": "<ISO>", "backup": "<file>"}]`.
 - A user with the `readonly` role cannot call it (see docs/implementation/OAUTH.md,
   "User access keys"). This rule needs a token on the call.
 

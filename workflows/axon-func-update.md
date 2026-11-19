@@ -14,7 +14,7 @@ version: 2.0
 
 - A function that exists is **updated in place** (`commit(diff(existing, changes))`, no `{add}`). The record keeps its id.
 - A new function is added (`{add}`). This is the only case that adds a record.
-- If older records with the same name are already there (an old server build added a new record on every commit), the tool updates the newest one (largest `mod`) and **removes the others in the same eval**. Their `src` goes to the backups, and `removedDuplicates` in the reply counts them.
+- If older records with the same name are already there (an old server build added a new record on every commit), the tool updates the newest one (largest `mod`) and removes the others. It **backs up each one first**: the whole record (id, `mod`, `src`, `doc`, all tags) goes to `.backups/<funcName>/removed-<ts>-<id>.json`, and only then is the record removed. If a backup cannot be written, nothing is committed and no record is removed; the tool returns the error. `removedDuplicates` in the reply lists them: `[{id, mod, backup}]`.
 
 Do **not** delete records before you commit. The tool does the clean-up.
 
@@ -91,8 +91,9 @@ The reply:
 - `"status": "ok"`: `operation` ("added" or "updated"), the new `mod` (use it as the next `expectedMod`), `hash` (sha256 of src), `doc`, `backupPath`, `removedDuplicates`.
 - `"status": "conflict"` (an error reply): the function changed since you read it. Nothing was written. The reply holds the server's `mod` and `hash`. Read the function again, merge, and commit with the new `mod`.
 
-The tool keeps the last **10 backups** of the replaced source (and of each removed duplicate) under
-`proj/<instance>/<project>/.backups/<funcName>/backup-<ts>.axon`.
+The tool keeps the last **10 backups** of the replaced source under
+`proj/<instance>/<project>/.backups/<funcName>/backup-<ts>.axon`. The backups of removed duplicates
+(`removed-<ts>-<id>.json`, the whole record) in the same folder are never trimmed.
 
 ## Step 4 (optional): Verify
 
