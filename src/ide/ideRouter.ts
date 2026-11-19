@@ -18,7 +18,7 @@
  * project is a 404; there is no default and no fallback project.
  */
 import express, { NextFunction, Request, Response, Router } from 'express';
-import { CommitArgError, type CommitArgs, type CommitResult } from './commitFunction.js';
+import { CommitArgError, CommitBackupError, type CommitArgs, type CommitResult } from './commitFunction.js';
 import { isFunctionName, isSafeSegment } from './names.js';
 import type { StoredFunction, StoredProject } from '../sync/functionSyncManagerEnhanced.js';
 
@@ -286,10 +286,16 @@ export function createIdeRouter(opts: IdeRouterOptions): Router {
       }
       if (result.warning) log(`[ide] commit ${ref.instance}/${ref.project}/${name}: ${result.warning}`);
       log(`[ide] commit ${ref.instance}/${ref.project}/${name} by ${whoText(caller)}`);
-      res.json({ status: 'ok', mod: result.mod, hash: result.hash });
+      res.json({ status: 'ok', mod: result.mod, hash: result.hash, removedDuplicates: result.removedDuplicates });
     } catch (error) {
       if (error instanceof CommitArgError) {
         res.status(400).json({ error: error.message });
+        return;
+      }
+      if (error instanceof CommitBackupError) {
+        // A disk problem on this server, not SkySpark: nothing was committed.
+        log(`[ide] commit refused for ${ref.instance}/${ref.project}/${name} by ${whoText(caller)}: ${error.message}`);
+        res.status(500).json({ error: error.message });
         return;
       }
       log(`[ide] commit failed for ${ref.instance}/${ref.project}/${name} by ${whoText(caller)}: ${error instanceof Error ? error.message : error}`);

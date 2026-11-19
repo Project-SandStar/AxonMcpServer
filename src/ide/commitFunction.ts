@@ -13,8 +13,13 @@
  *    `expectedMod: "<ISO>"`: the record's `mod` must be that time.
  *    The check and the commit run in one eval on the server.
  *  - One func record per name. An existing record is updated in place (no
- *    {add}). Older records with the same name are removed in the same eval
- *    and their src goes to the backups.
+ *    {add}). Older records with the same name are removed, but each one is
+ *    backed up first: a first eval reads them, the whole record (id, mod, src,
+ *    doc and every other tag) goes to a file in the function backups, and only
+ *    then the commit eval removes them. When a backup cannot be written,
+ *    nothing is committed and no record is removed (CommitBackupError).
+ *    The commit eval removes only the records it got a backup for, and only
+ *    when their `mod` is still the same.
  *  - After a good commit the local copy (func/<name>.axon, .trio and the
  *    sync metadata) is updated, so an export shows the new source and `mod`.
  */
@@ -82,8 +87,11 @@ export interface CommitOk {
   doc: string | null;
   backedUp: boolean;
   backupPath: string | null;
-  /** Older records with the same name that the commit removed (0 in the normal case). */
-  removedDuplicates: number;
+  /**
+   * Older records with the same name that the commit removed (empty in the
+   * normal case). Each one was backed up before it was removed.
+   */
+  removedDuplicates: RemovedDuplicate[];
   /** files + metadata written, files only (project never synced), none, or failed. */
   localCopy: 'updated' | 'files-only' | 'none' | 'failed';
   warning?: string;
@@ -101,12 +109,40 @@ export interface CommitConflict {
 
 export type CommitResult = CommitOk | CommitConflict;
 
+/** An older func record that a commit backed up and then removed. */
+export interface RemovedDuplicate {
+  /** The record id, without "@". */
+  id: string;
+  /** The record's mod (ISO) when it was backed up. */
+  mod: string | null;
+  /** The backup file that holds the whole record. */
+  backup: string;
+}
+
 /** A bad argument. Callers answer 400 or InvalidParams. */
 export class CommitArgError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'CommitArgError';
   }
+}
+
+/**
+ * The backup of an older record with the same name was not written. Nothing
+ * was committed and no record was removed. Callers answer 500 or an error reply.
+ */
+export class CommitBackupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CommitBackupError';
+  }
+}
+
+/** A record that the commit eval may remove: it has a backup with this mod. */
+export interface BackedUpRecord {
+  id: string;
+  /** The record's mod in milliseconds when it was backed up. */
+  ms: number;
 }
 
 /** Tags copied back from the committed record for the local .trio file. */
@@ -157,17 +193,32 @@ function tagPairs(extraTags: Record<string, unknown> | undefined): string[] {
 }
 
 /**
+ * The Axon of the first eval: every func record with this name, with all
+ * their tags. It writes nothing.
+ */
+export function buildReadRecordsAxon(name: string): string {
+  if (!isFunctionName(name)) throw new CommitArgError('Invalid function name.');
+  return `readAll(func and name==${axonStr(name)})`;
+}
+
+/**
  * The Axon that does the check and the commit in one eval.
  *
  * Folio has a unique id but no unique name on func, so the record is looked
  * up by name and updated in place. When older records with the same name are
- * there (left by an old commit that always added), the newest one is updated
- * and the others are removed in the same eval; their src comes back for a
- * backup. A new function is the only case that adds a record. Axon `if` is an expression; each branch
- * here is a `do ... end` block.
+ * there (left by an old commit that always added), the newest one is updated.
+ * Of the others, the eval removes only those in `backedUp` (they have a
+ * backup) whose mod is still the one that was backed up; the rest stay and
+ * are counted in ideLeft. A new function is the only case that adds a record.
+ * Axon `if` is an expression; each branch here is a `do ... end` block.
  */
-export function buildCommitAxon(args: CommitArgs): string {
+export function buildCommitAxon(args: CommitArgs, backedUp: BackedUpRecord[] = []): string {
   checkArgs(args);
+  for (const b of backedUp) {
+    if (typeof b.id !== 'string' || b.id.length === 0 || !Number.isSafeInteger(b.ms)) {
+      throw new Error('A backed-up record has no id or no mod.');
+    }
+  }
 
   let stale: string;
   if (args.expectedMod === undefined) stale = 'false';
@@ -190,6 +241,9 @@ export function buildCommitAxon(args: CommitArgs): string {
     '  recs: readAll(func and name==ideName).toRecList.sortr((a, b) => a->mod <=> b->mod)',
     '  existing: recs.first',
     '  extras: if (recs.size > 1) recs[1..-1] else []',
+    // Only the records with a backup, and only when they did not change since.
+    `  ideBacked: [${backedUp.map(b => `{id: parseRef(${axonStr(b.id)}), ms: ${b.ms}ms}`).join(', ')}]`,
+    '  gone: extras.findAll(x => ideBacked.any(b => b->id == x->id and b->ms == toJavaMillis(x->mod)))',
     '  curMs: if (existing == null) null else toJavaMillis(existing->mod)',
     `  stale: ${stale}`,
     `  changes: {${changes.join(', ')}}`,
@@ -198,8 +252,8 @@ export function buildCommitAxon(args: CommitArgs): string {
     '    if (existing == null) {ideStatus: "conflict"} else {ideStatus: "conflict", mod: existing->mod, ideCurSrc: existing["src"]}',
     '  end else do',
     '    rec: if (existing == null) commit(diff(null, merge({func, name: ideName}, changes), {add})) else commit(diff(existing, changes))',
-    '    extras.each(x => commit(diff(x, null, {remove})))',
-    '    merge(rec.findAll((v, n) => keep.contains(n)), {ideStatus: "ok", ideOp: if (existing == null) "added" else "updated", idePrevSrc: if (existing == null) null else existing["src"], ideDupSrcs: extras.map(x => x["src"])})',
+    '    gone.each(x => commit(diff(x, null, {remove})))',
+    '    merge(rec.findAll((v, n) => keep.contains(n)), {ideStatus: "ok", ideOp: if (existing == null) "added" else "updated", idePrevSrc: if (existing == null) null else existing["src"], ideRemoved: gone.map(x => x->id), ideLeft: extras.size - gone.size})',
     '  end',
     'end',
   );
@@ -232,15 +286,132 @@ function present(dict: FuncRecord, tag: string): boolean {
   return value !== null && value !== undefined;
 }
 
-/** A list of strings in the dict (an HList of HStr, or a plain array). */
-function strList(dict: FuncRecord, tag: string): string[] {
+/** A ref or a ref string as an id without "@", or null. */
+function refId(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const any = value as any;
+  const text = typeof any === 'string' ? any : typeof any.value === 'string' ? any.value : null;
+  if (!text) return null;
+  return text.startsWith('@') ? text.slice(1) : text;
+}
+
+/** The ids in a list of refs in the dict (an HList of HRef, or a plain array). */
+function refList(dict: FuncRecord, tag: string): string[] {
   if (!present(dict, tag)) return [];
   const value = dict.get(tag) as any;
   const items: unknown[] = Array.isArray(value) ? value
     : typeof value?.toArray === 'function' ? value.toArray() : [];
-  return items
-    .filter(v => v !== null && v !== undefined)
-    .map((v: any) => (typeof v.value === 'string' ? v.value : String(v)));
+  return items.map(refId).filter((id): id is string => id !== null);
+}
+
+function num(dict: FuncRecord, tag: string): number {
+  if (!present(dict, tag)) return 0;
+  const value = dict.get(tag) as any;
+  const n = typeof value === 'number' ? value : Number(value?.value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** The rows of a grid reply, or null when the reply is not a grid. */
+function gridRows(result: unknown): FuncRecord[] | null {
+  const any = result as any;
+  if (!(result instanceof HGrid) && !(any && typeof any.get === 'function' && typeof any.length === 'number')) {
+    return null;
+  }
+  const rows: FuncRecord[] = [];
+  for (let i = 0; i < any.length; i++) {
+    const row = any.get(i);
+    if (!row || typeof row.has !== 'function' || typeof row.get !== 'function') return null;
+    rows.push(row as FuncRecord);
+  }
+  return rows;
+}
+
+/** One func record from the first eval. */
+interface ReadRecord {
+  id: string;
+  modIso: string | null;
+  ms: number | null;
+  row: FuncRecord;
+}
+
+/** The whole record as Hayson (JSON), with every tag. */
+function recordJson(row: FuncRecord): unknown {
+  const any = row as any;
+  if (typeof any.toJSON === 'function') return any.toJSON();
+  if (typeof any.keys === 'object' && Array.isArray(any.keys)) {
+    const out: Record<string, unknown> = {};
+    for (const k of any.keys) {
+      const v = row.get(k) as any;
+      out[k] = v && typeof v.toJSON === 'function' ? v.toJSON() : v;
+    }
+    return out;
+  }
+  throw new Error('a func record from SkySpark cannot be written as JSON');
+}
+
+/** Writes a file and flushes it to disk. Fails when the file is there. */
+async function writeSynced(file: string, text: string): Promise<void> {
+  const handle = await fs.open(file, 'wx');
+  try {
+    await handle.writeFile(text, 'utf8');
+    await handle.sync();
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    await fs.unlink(file).catch(() => undefined);
+    throw error;
+  }
+  await handle.close();
+}
+
+/**
+ * Writes the whole record of each older duplicate, before the commit removes
+ * it. The files start with "removed-", so the trim of old "backup-" files
+ * never deletes them: a file may be the only copy of a removed record.
+ * All or nothing: when one write fails, the files written so far are deleted
+ * again and CommitBackupError is thrown.
+ */
+async function writeDuplicateBackups(
+  baseDir: string, target: CommitTarget, name: string, dups: ReadRecord[]
+): Promise<Map<string, string>> {
+  const files = new Map<string, string>();
+  const dir = path.join(baseDir, target.instance, target.project, '.backups', name);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  try {
+    await fs.mkdir(dir, { recursive: true });
+    for (const dup of dups) {
+      const body = JSON.stringify({
+        backupOf: 'an older func record with the same name, backed up before a commit removes it',
+        instance: target.instance,
+        project: target.project,
+        name,
+        id: dup.id,
+        mod: dup.modIso,
+        backedUpAt: new Date().toISOString(),
+        src: str(dup.row, 'src'),
+        doc: str(dup.row, 'doc'),
+        record: recordJson(dup.row),
+      }, null, 2) + '\n';
+      const safeId = dup.id.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 120);
+      for (let n = 0; ; n++) {
+        const file = path.join(dir, `removed-${stamp}-${safeId}${n === 0 ? '' : `-${n}`}.json`);
+        try {
+          await writeSynced(file, body);
+          files.set(dup.id, file);
+          break;
+        } catch (error: any) {
+          if (error?.code !== 'EEXIST') throw error;
+        }
+      }
+    }
+  } catch (error: any) {
+    for (const file of files.values()) await fs.unlink(file).catch(() => undefined);
+    throw new CommitBackupError(
+      `Function ${name} has ${dups.length} older func record(s) with the same name. ` +
+      `Their backup was not written (${error?.message ?? error}), so nothing was committed and no record was removed. ` +
+      'Fix the backup folder of the server and retry.'
+    );
+  }
+  return files;
 }
 
 function str(dict: FuncRecord, tag: string): string | null {
@@ -263,9 +434,10 @@ async function writeNewFile(dir: string, stamp: string, src: string): Promise<st
 }
 
 /**
- * Writes one backup per src. files[i] is the file of srcs[i], or null when it
- * was not written. Old backups are trimmed to `keep`, but the files of this
- * commit are never trimmed: they may hold the only copy of a removed record.
+ * Writes one backup per src (the src that a commit replaced). files[i] is the
+ * file of srcs[i], or null when it was not written. Old "backup-" files are
+ * trimmed to `keep`; the files of this commit are never trimmed. The
+ * "removed-" files of removed duplicates are never trimmed.
  */
 async function writeBackups(
   baseDir: string, target: CommitTarget, name: string, srcs: string[], keep: number
@@ -297,9 +469,30 @@ async function writeBackups(
   return { files, errors };
 }
 
+/** The func records with this name, newest first. Nothing is written. */
+async function readRecords(target: CommitTarget, name: string): Promise<ReadRecord[]> {
+  const rows = gridRows(await target.client.evalAxon(buildReadRecordsAxon(name)));
+  const recs: ReadRecord[] = [];
+  for (const row of rows ?? []) {
+    const id = refId(present(row, 'id') ? row.get('id') : null);
+    if (!id) { recs.length = 0; break; }
+    const modIso = modToIso(present(row, 'mod') ? row.get('mod') : null);
+    recs.push({ id, modIso, ms: modIso === null ? null : Date.parse(modIso), row });
+  }
+  if (!rows || recs.length !== rows.length) {
+    throw new Error(
+      `SkySpark sent a reply to the read of the func records named ${name} that is not understood. ` +
+      'Nothing was committed.'
+    );
+  }
+  return recs.sort((a, b) => (b.ms ?? -Infinity) - (a.ms ?? -Infinity));
+}
+
 /**
- * Commits one function. Throws CommitArgError for a bad argument and a plain
- * Error when SkySpark refuses the eval; a stale write is a normal result.
+ * Commits one function. Throws CommitArgError for a bad argument,
+ * CommitBackupError when an older duplicate cannot be backed up (nothing is
+ * committed then), and a plain Error when SkySpark refuses an eval; a stale
+ * write is a normal result.
  */
 export async function commitFunction(
   target: CommitTarget, args: CommitArgs, deps: CommitDeps = {}
@@ -307,17 +500,40 @@ export async function commitFunction(
   if (!isSafeSegment(target.instance) || !isSafeSegment(target.project)) {
     throw new CommitArgError('Invalid instance or project name.');
   }
-  const code = buildCommitAxon(args);
-  const dict = resultDict(await target.client.evalAxon(code));
+  buildCommitAxon(args); // checks the arguments before anything is sent
+  const baseDir = deps.baseDir ?? 'proj';
+
+  // 1. Read the records with this name. 2. Back up each older one, whole.
+  // A stale write gets no backups: the commit eval refuses it anyway.
+  const recs = await readRecords(target, args.name);
+  const newest = recs[0];
+  const staleHere = args.expectedMod === undefined ? false
+    : args.expectedMod === null ? newest !== undefined
+    : !newest || newest.ms !== modToMillis(args.expectedMod);
+  // A record with no mod cannot be checked again in the commit eval; it stays.
+  const dups = staleHere ? [] : recs.slice(1).filter(r => r.ms !== null);
+  const dupFiles = dups.length ? await writeDuplicateBackups(baseDir, target, args.name, dups) : new Map<string, string>();
+  const backedUp: BackedUpRecord[] = dups.map(d => ({ id: d.id, ms: d.ms! }));
+  const dropBackups = async (ids: string[]) => {
+    for (const id of ids) {
+      const file = dupFiles.get(id);
+      if (file) await fs.unlink(file).catch(() => undefined);
+    }
+  };
+
+  // 3. The commit eval. It removes only the records backed up above.
+  const dict = resultDict(await target.client.evalAxon(buildCommitAxon(args, backedUp)));
   const status = dict ? str(dict, 'ideStatus') : null;
   if (!dict || (status !== 'ok' && status !== 'conflict')) {
     throw new Error(
       'SkySpark sent a reply to the commit that is not understood. ' +
-      'The commit may be stored already: read the function again before you retry.'
+      'The commit may be stored already: read the function again before you retry.' +
+      (dupFiles.size ? ` The backups of the older records with the same name are kept in ${path.dirname([...dupFiles.values()][0])}.` : '')
     );
   }
 
   if (status === 'conflict') {
+    await dropBackups(backedUp.map(b => b.id)); // nothing was removed
     const exists = present(dict, 'mod') || present(dict, 'ideCurSrc');
     const curSrc = str(dict, 'ideCurSrc');
     return {
@@ -331,27 +547,47 @@ export async function commitFunction(
   const operation = str(dict, 'ideOp') === 'added' ? 'added' : 'updated';
   const mod = modToIso(present(dict, 'mod') ? dict.get('mod') : null);
   const doc = str(dict, 'doc');
-  const baseDir = deps.baseDir ?? 'proj';
   const warnings: string[] = [];
 
-  // Backups of the source that the commit replaced and of each removed
-  // duplicate (oldest last). Both came back in the same eval.
+  // The duplicates the eval removed. Each one was backed up before the eval;
+  // a backup of a record the eval did not remove is deleted again.
+  const removedIds = new Set(refList(dict, 'ideRemoved'));
+  const removedDuplicates: RemovedDuplicate[] = dups
+    .filter(d => removedIds.has(d.id) && dupFiles.has(d.id))
+    .map(d => ({ id: d.id, mod: d.modIso, backup: dupFiles.get(d.id)! }));
+  if (present(dict, 'ideRemoved')) {
+    await dropBackups(dups.filter(d => !removedIds.has(d.id)).map(d => d.id));
+  } else if (dupFiles.size) {
+    // The reply does not say what was removed: keep every backup.
+    warnings.push(
+      `SkySpark did not say which older func records with the name ${args.name} it removed. ` +
+      `Their backups are kept in ${path.dirname([...dupFiles.values()][0])}.`
+    );
+  }
+  if (removedDuplicates.length) {
+    warnings.push(
+      `Removed ${removedDuplicates.length} older func record(s) with the name ${args.name}: ` +
+      `${removedDuplicates.map(r => '@' + r.id).join(', ')}. Each whole record was backed up first (removedDuplicates).`
+    );
+  }
+  const left = num(dict, 'ideLeft');
+  if (left > 0) {
+    warnings.push(
+      `${left} older func record(s) with the name ${args.name} are still there: they had no backup ` +
+      'or changed during the commit. Commit again to back them up and remove them.'
+    );
+  }
+
+  // The backup of the source that the commit replaced. The commit is done,
+  // so a failure here is a warning only.
   const prevSrc = str(dict, 'idePrevSrc');
-  const dupSrcs = strList(dict, 'ideDupSrcs');
-  const saves = [...(prevSrc ? [prevSrc] : []), ...dupSrcs];
   let backupPath: string | null = null;
-  if (saves.length) {
-    const { files, errors } = await writeBackups(baseDir, target, args.name, saves, deps.maxBackups ?? 10);
-    backupPath = files.find(f => f !== null) ?? null;
-    if (dupSrcs.length) {
-      const missing = files.slice(saves.length - dupSrcs.length).filter(f => f === null).length;
-      warnings.push(
-        `Removed ${dupSrcs.length} older func record(s) with the name ${args.name}.` +
-        (missing === 0 ? ' Their src is in the backups.' : ` ${missing} of them have no backup.`)
-      );
-    }
+  if (prevSrc) {
+    const { files, errors } = await writeBackups(baseDir, target, args.name, [prevSrc], deps.maxBackups ?? 10);
+    backupPath = files[0] ?? null;
     if (errors.length) warnings.push(`A backup was not written: ${errors.join('; ')}`);
   }
+  if (backupPath === null && removedDuplicates.length) backupPath = removedDuplicates[0].backup;
 
   // Local copy: the commit is done, so a failure here is a warning only.
   let localCopy: CommitOk['localCopy'] = 'none';
@@ -375,7 +611,7 @@ export async function commitFunction(
     doc,
     backedUp: backupPath !== null,
     backupPath,
-    removedDuplicates: dupSrcs.length,
+    removedDuplicates,
     localCopy,
     ...(warnings.length ? { warning: warnings.join(' ') } : {}),
   };
