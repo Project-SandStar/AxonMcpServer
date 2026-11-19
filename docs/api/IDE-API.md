@@ -184,8 +184,9 @@ with no sync.
 - One func record per name. An existing record is updated in place. If older
   records with the same name are there (an old commit added a new record each
   time), the newest one is updated and the others are removed in the same
-  eval. Their source goes to the backups, and `removedDuplicates` in the reply
-  counts them. This holds for this POST route too.
+  eval. Their source goes to the backups, and `removedDuplicates` in the tool
+  reply counts them. The POST route removes them too, but its reply stays
+  `{status, mod, hash}`; the server log names the removal.
 - A user with the `readonly` role cannot call it (see docs/implementation/OAUTH.md,
   "User access keys"). This rule needs a token on the call.
 
