@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { READ_TOOLS, WRITE_TOOLS, parseAnonymousRole, toolDenied } from '../auth/toolAccess.js';
+import { ADMIN_TOOLS, READ_TOOLS, WRITE_TOOLS, parseAnonymousRole, toolDenied } from '../auth/toolAccess.js';
 import { UserStore, isUserRole } from '../admin/userStore.js';
 
 const indexSource = fs.readFileSync(path.join(__dirname, '..', 'index.ts'), 'utf8');
@@ -71,9 +71,9 @@ describe('toolDenied', () => {
     expect(toolDenied('', 'readonly')).not.toBeNull();
   });
 
-  test('user and admin have no rule here', () => {
+  test('user and admin have no rule here (except the admin tools for a user)', () => {
     for (const role of ['user', 'admin'] as const) {
-      for (const tool of [...WRITE_TOOLS, ...READ_TOOLS, 'someNewTool']) expect(toolDenied(tool, role)).toBeNull();
+      for (const tool of [...WRITE_TOOLS, ...READ_TOOLS, 'someNewTool'].filter(t => role === 'admin' || !ADMIN_TOOLS.includes(t))) expect(toolDenied(tool, role)).toBeNull();
     }
   });
 
@@ -230,5 +230,29 @@ describe('user store: roles and the disabled flag', () => {
     expect(loaded.getAllUsers().map(u => [u.username, u.role, u.disabled])).toEqual([['admin', 'admin', false], ['alice', 'user', false]]);
     expect(loaded.getUserById('id-2')?.username).toBe('alice');
     expect(fs.readFileSync(file(), 'utf8')).toBe(text);
+  });
+});
+
+describe('admin-only tools', () => {
+  test('discover and cache clear need an admin when the call has a key', () => {
+    expect([...ADMIN_TOOLS].sort()).toEqual(['clearProjectCache', 'discoverInstanceProjects']);
+    for (const tool of ADMIN_TOOLS) {
+      expect(WRITE_TOOLS).toContain(tool);
+      expect(toolDenied(tool, 'admin')).toBeNull();
+      expect(toolDenied(tool, 'user')).toContain('needs an admin');
+      expect(toolDenied(tool, 'readonly')).not.toBeNull();
+    }
+  });
+
+  test('set primary project, reauth and sync stay open to a user', () => {
+    for (const tool of ['setPrimaryProject', 'reauthenticateSkySparkProject', 'executeAxonCode', 'commitAxonFunction'])
+      expect(toolDenied(tool, 'user')).toBeNull();
+  });
+
+  test('a call with no token follows MCP_ANONYMOUS_ROLE for the admin tools, as before', () => {
+    for (const tool of ADMIN_TOOLS) {
+      expect(toolDenied(tool, undefined, 'user')).toBeNull();
+      expect(toolDenied(tool, undefined, 'readonly')).not.toBeNull();
+    }
   });
 });

@@ -163,6 +163,9 @@ const ADMIN_ONLY: Array<[string, string, unknown?]> = [
   ['DELETE', '/config/demo-conn.json'],
   ['POST', '/config/reload'],
   ['PUT', '/settings', { server: { port: 1 } }],
+  ['POST', '/projects/demo/discover'],
+  ['POST', '/projects/demo/discover-stream'],
+  ['POST', '/cache/clear', {}],
 ];
 
 describe('guard order', () => {

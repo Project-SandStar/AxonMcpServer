@@ -47,7 +47,14 @@ export const READ_TOOLS: readonly string[] = [
   'getGraphStats', 'semanticCodeSearch', 'findSimilarCode',
 ];
 
+/**
+ * Write tools that change the whole server (the project list, the shared caches). Only an
+ * admin may call them with a key; a call with no token follows MCP_ANONYMOUS_ROLE as before.
+ */
+export const ADMIN_TOOLS: readonly string[] = ['discoverInstanceProjects', 'clearProjectCache'];
+
 const READ = new Set(READ_TOOLS);
+const ADMIN = new Set(ADMIN_TOOLS);
 
 /** The role a call with no token gets (only possible when MCP_REQUIRE_AUTH is off). */
 export type AnonymousRole = 'readonly' | 'user';
@@ -77,6 +84,9 @@ export function toolDenied(
   role: UserRole | undefined | null,
   anonymousRole: AnonymousRole = 'readonly'
 ): string | null {
+  if (role === 'user' && ADMIN.has(tool)) {
+    return `${tool} changes the whole server and needs an admin. Ask an admin to run it.`;
+  }
   const effective = role ?? anonymousRole;
   if (effective !== 'readonly') return null;
   if (READ.has(tool)) return null;

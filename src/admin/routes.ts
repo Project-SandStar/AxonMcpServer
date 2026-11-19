@@ -636,7 +636,7 @@ export function createAdminRouter(context: AdminContext): Router {
     }
   });
 
-  router.post('/projects/:instance/discover', async (req: Request, res: Response) => {
+  router.post('/projects/:instance/discover', requireAdmin, async (req: Request, res: Response) => {
     try {
       const result = await context.triggerDiscover(req.params.instance);
       res.json(result);
@@ -647,7 +647,7 @@ export function createAdminRouter(context: AdminContext): Router {
 
   // NDJSON-streamed discovery — emits one JSON entry per line so the dashboard
   // can show a live connect/auth/discover log instead of a generic 500.
-  router.post('/projects/:instance/discover-stream', async (req: Request, res: Response) => {
+  router.post('/projects/:instance/discover-stream', requireAdmin, async (req: Request, res: Response) => {
     res.status(200);
     res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache');
@@ -691,7 +691,7 @@ export function createAdminRouter(context: AdminContext): Router {
     }
   });
 
-  router.post('/cache/clear', async (req: Request, res: Response) => {
+  router.post('/cache/clear', requireAdmin, async (req: Request, res: Response) => {
     try {
       const { name } = req.body || {};
       await context.clearCache(name);
