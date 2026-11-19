@@ -84,6 +84,8 @@ function timeAgo(iso?: string): string {
 
 export default function ConnectionsPage() {
   const queryClient = useQueryClient();
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe, retry: false });
+  const isAdmin = me?.role === 'admin';
   const [selectedConnection, setSelectedConnection] = useState<string | null>(null);
   const [editingConnection, setEditingConnection] = useState<Connection | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -634,7 +636,8 @@ export default function ConnectionsPage() {
                   <div className="flex gap-2">
                     <button
                       onClick={handleConnect}
-                      disabled={isDiscovering}
+                      disabled={isDiscovering || !isAdmin}
+                      title={isAdmin ? undefined : 'Only an admin can discover projects'}
                       className="flex items-center gap-2 rounded-lg bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
                     >
                       {isDiscovering ? (

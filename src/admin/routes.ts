@@ -7,7 +7,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getUsageTracker } from '../usage/index.js';
 import { ServerStatus, InstanceInfo, ProjectInfo, CacheInfo, AdminCredentials } from './types.js';
-import { initUserStore, getUserStore, UserStore, User } from './userStore.js';
+import { initUserStore, getUserStore, isUserRole } from './userStore.js';
+import { basicAuthWithUserStore, requireAdmin } from './adminAuth.js';
+import { createUserKeysRouter, createAccessRouter, readonlyGuard } from './userKeys.js';
+import type { UserKeyStore } from '../auth/userKeys.js';
+import type { AccessAudit } from '../auth/accessAudit.js';
 import { AxonOAuthProvider } from '../auth/oauthProvider.js';
 import { BackupManager } from './backupManager.js';
 import { createChangesRouter, loadChangesConfig } from './changesRouter.js';
@@ -27,15 +31,6 @@ import {
   generateMcpToolsetConfig,
   ToolCategory,
 } from '../toolSearch/toolSearchConfig.js';
-
-// Extend Express Request to include user
-declare global {
-  namespace Express {
-    interface Request {
-      user?: User;
-    }
-  }
-}
 
 // Types for injected dependencies
 interface PrimaryProjectContext {
@@ -72,6 +67,9 @@ interface AdminContext {
   getOAuthProvider?: () => AxonOAuthProvider | undefined;
   getBackupManager?: () => BackupManager | undefined;
   getPrisma?: () => import('../generated/prisma/index.js').PrismaClient | null;
+  /** User access keys and the access record (HTTP mode) */
+  getUserKeys?: () => UserKeyStore | undefined;
+  getAccessAudit?: () => AccessAudit | undefined;
   searchDocs?: (query: string, options?: { limit?: number; library?: string }) => Promise<any[]>;
   getDocsForEmbedding?: () => Array<{ id: string; title: string; library: string; fullText: string }>;
   getDocsStats?: () => { totalDocuments: number; totalSections: number; libraries: string[] };
@@ -87,40 +85,19 @@ interface AdminContext {
   getWorkflowVectorIndex?: () => import('../workflows/workflowVectorIndex.js').WorkflowVectorIndex | undefined;
 }
 
-/**
- * Basic Auth middleware using UserStore
- */
-function basicAuthWithUserStore(userStore: UserStore) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader || !authHeader.startsWith('Basic ')) {
-      res.setHeader('WWW-Authenticate', 'Basic realm="Axon MCP Admin"');
-      return res.status(401).json({ error: 'Authentication required' });
-    }
-
-    const base64 = authHeader.split(' ')[1];
-    const [username, password] = Buffer.from(base64, 'base64').toString().split(':');
-
-    const user = userStore.authenticate(username, password);
-    if (user) {
-      req.user = user;
-      return next();
-    }
-
-    res.setHeader('WWW-Authenticate', 'Basic realm="Axon MCP Admin"');
-    return res.status(401).json({ error: 'Invalid credentials' });
-  };
-}
+/** A key whose text value is a secret: password, passphrase, secret, token, API key, credential. */
+const SECRET_KEY = /pass(word|wd|phrase)?$|^pwd$|secret|token|api[-_]?key|credential/i;
 
 /**
- * Require admin role middleware
+ * A copy of `value` with every text below a secret key replaced by "********",
+ * also inside a list or an object under that key. Numbers stay (accessTokenTtl).
  */
-function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  if (req.user?.role !== 'admin') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-  return next();
+export function maskSecrets(value: unknown, secret = false): unknown {
+  if (typeof value === 'string') return secret ? '********' : value;
+  if (Array.isArray(value)) return value.map(v => maskSecrets(v, secret));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([k, v]) =>
+    [k, maskSecrets(v, secret || SECRET_KEY.test(k))]));
 }
 
 /**
@@ -159,10 +136,23 @@ export function createAdminRouter(context: AdminContext): Router {
   // Apply Basic Auth to all admin routes
   router.use(basicAuthWithUserStore(userStore));
 
+  // A read-only user can only read (own password and own key revoke stay open)
+  router.use(readonlyGuard);
+
   // "Sidecar sync login" per user: receiver accounts kept in step through the receiver admin API
   const receiverAdmin = new ReceiverAdminClient();
   router.use('/sidecar/accounts', createSidecarAccountsRouter({ userStore, requireAdmin, receiver: receiverAdmin }));
   router.use('/users', createUserSyncRouter({ userStore, requireAdmin, receiver: receiverAdmin }));
+
+  // User access keys (for /api/ide and /mcp), the disabled flag and the access record
+  const keyRoutes = {
+    userStore,
+    requireAdmin,
+    getKeys: () => context.getUserKeys?.(),
+    getAudit: () => context.getAccessAudit?.(),
+  };
+  router.use('/users', createUserKeysRouter(keyRoutes));
+  router.use('/access', createAccessRouter(keyRoutes));
   scheduleAutoLink(userStore, receiverAdmin);
 
   // "Sidecar sync" page API: root-to-project links, change queue, receiver status
@@ -265,7 +255,15 @@ export function createAdminRouter(context: AdminContext): Router {
           'POST /admin/users': 'Create a new user (admin only)',
           'PUT /admin/users/:username/password': 'Update user password',
           'PUT /admin/users/:username/role': 'Update user role (admin only)',
-          'DELETE /admin/users/:username': 'Delete a user (admin only)'
+          'DELETE /admin/users/:username': 'Delete a user (admin only)',
+          'POST /admin/users/:username/keys': 'Create an access key for a user; the key is shown once (admin only)',
+          'GET /admin/users/:username/keys': 'List the access keys of a user (prefix, created, last used, expiry; never the key)',
+          'DELETE /admin/users/:username/keys/:id': 'Revoke an access key (admin, or the user for an own key)',
+          'PUT /admin/users/:username/disabled': 'Disable or enable a user {disabled: boolean} (admin only)'
+        },
+        access: {
+          'GET /admin/access/keys': 'List the access keys of all users',
+          'GET /admin/access/audit': 'Read the access record of /api/ide and /mcp calls'
         },
         oauth: {
           'GET /admin/oauth/sessions': 'List all OAuth sessions',
@@ -399,6 +397,10 @@ export function createAdminRouter(context: AdminContext): Router {
         return res.status(400).json({ error: 'Password must be at least 4 characters' });
       }
 
+      if (role !== undefined && role !== null && role !== '' && !isUserRole(role)) {
+        return res.status(400).json({ error: 'Role must be "admin", "user" or "readonly"' });
+      }
+
       if (userStore.userExists(username)) {
         return res.status(409).json({ error: 'User already exists' });
       }
@@ -446,16 +448,13 @@ export function createAdminRouter(context: AdminContext): Router {
       const { username } = req.params;
       const { role } = req.body;
 
-      if (!role || !['admin', 'user'].includes(role)) {
-        return res.status(400).json({ error: 'Role must be "admin" or "user"' });
+      if (!isUserRole(role)) {
+        return res.status(400).json({ error: 'Role must be "admin", "user" or "readonly"' });
       }
 
-      // Prevent demoting self if last admin
-      if (req.user?.username === username && role === 'user') {
-        const admins = userStore.getAllUsers().filter(u => u.role === 'admin');
-        if (admins.length <= 1) {
-          return res.status(400).json({ error: 'Cannot demote the last admin' });
-        }
+      // Never take the admin role from the last admin who is enabled and can log in
+      if (role !== 'admin' && userStore.isLastWorkingAdmin(username)) {
+        return res.status(400).json({ error: 'Cannot demote the last admin' });
       }
 
       const success = userStore.updateRole(username, role);
@@ -493,6 +492,16 @@ export function createAdminRouter(context: AdminContext): Router {
       const success = userStore.deleteUser(username);
       if (!success) {
         return res.status(400).json({ error: 'User not found or cannot delete the last admin' });
+      }
+
+      // The user's keys and logins stop now. (The bearer check also refuses a user that is gone.)
+      if (target) {
+        try {
+          await context.getUserKeys?.()?.revokeAllForUser(target.id, req.user?.username ?? null);
+          await context.getOAuthProvider?.()?.revokeAllForUser(target.id);
+        } catch (err) {
+          console.error(`[keys] Could not revoke the keys and logins of a deleted user: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
 
       res.json({ success: true, message: 'User deleted' });
@@ -627,7 +636,7 @@ export function createAdminRouter(context: AdminContext): Router {
     }
   });
 
-  router.post('/projects/:instance/discover', async (req: Request, res: Response) => {
+  router.post('/projects/:instance/discover', requireAdmin, async (req: Request, res: Response) => {
     try {
       const result = await context.triggerDiscover(req.params.instance);
       res.json(result);
@@ -638,7 +647,7 @@ export function createAdminRouter(context: AdminContext): Router {
 
   // NDJSON-streamed discovery — emits one JSON entry per line so the dashboard
   // can show a live connect/auth/discover log instead of a generic 500.
-  router.post('/projects/:instance/discover-stream', async (req: Request, res: Response) => {
+  router.post('/projects/:instance/discover-stream', requireAdmin, async (req: Request, res: Response) => {
     res.status(200);
     res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache');
@@ -682,7 +691,7 @@ export function createAdminRouter(context: AdminContext): Router {
     }
   });
 
-  router.post('/cache/clear', async (req: Request, res: Response) => {
+  router.post('/cache/clear', requireAdmin, async (req: Request, res: Response) => {
     try {
       const { name } = req.body || {};
       await context.clearCache(name);
@@ -801,7 +810,7 @@ export function createAdminRouter(context: AdminContext): Router {
   });
 
   // Clear all usage data (keeps database file)
-  router.post('/usage/clear', async (_req: Request, res: Response) => {
+  router.post('/usage/clear', requireAdmin, async (_req: Request, res: Response) => {
     try {
       await usageTracker.clearData();
       res.json({ success: true, message: 'Usage data cleared' });
@@ -811,7 +820,7 @@ export function createAdminRouter(context: AdminContext): Router {
   });
 
   // Reset database - delete file and reinitialize
-  router.post('/usage/reset', async (_req: Request, res: Response) => {
+  router.post('/usage/reset', requireAdmin, async (_req: Request, res: Response) => {
     try {
       await usageTracker.resetDatabase();
       res.json({ success: true, message: 'Database reset complete' });
@@ -826,11 +835,26 @@ export function createAdminRouter(context: AdminContext): Router {
 
   // Files that are not SkySpark connection configs (handled by /admin/settings)
   const excludedConfigFiles = ['axonMcpServer-config.json', 'admin.json'];
+  // Never read, written or deleted through /config: the users and their password hashes.
+  const protectedConfigFiles = ['users.json'];
+
+  /**
+   * The path of a config file named in the URL, or null. Only a plain file name
+   * in configDir is allowed: no "/", "\", leading dot or NUL (the name arrives
+   * URL-decoded, so "..%2Fx.json" would else leave the folder), and not users.json.
+   */
+  const configFilePath = (name: string): string | null => {
+    if (typeof name !== 'string' || !name.endsWith('.json') || name.startsWith('.')) return null;
+    if (/[\\/\0]/.test(name) || protectedConfigFiles.includes(name.toLowerCase())) return null;
+    const dir = path.resolve(context.configDir);
+    const filePath = path.resolve(dir, name);
+    return path.dirname(filePath) === dir ? filePath : null;
+  };
 
   router.get('/config', (_req: Request, res: Response) => {
     try {
       const configFiles = fs.readdirSync(context.configDir)
-        .filter(f => f.endsWith('.json') && !excludedConfigFiles.includes(f))
+        .filter(f => f.endsWith('.json') && !excludedConfigFiles.includes(f) && !protectedConfigFiles.includes(f.toLowerCase()))
         .map(f => ({
           name: f,
           path: path.join(context.configDir, f),
@@ -841,10 +865,11 @@ export function createAdminRouter(context: AdminContext): Router {
     }
   });
 
-  router.get('/config/:name', (req: Request, res: Response) => {
+  // A connection file holds the SkySpark user and password: admin only.
+  router.get('/config/:name', requireAdmin, (req: Request, res: Response) => {
     try {
-      const filePath = path.join(context.configDir, req.params.name);
-      if (!fs.existsSync(filePath) || !req.params.name.endsWith('.json')) {
+      const filePath = configFilePath(req.params.name);
+      if (!filePath || !fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'Config file not found' });
       }
       const content = fs.readFileSync(filePath, 'utf-8');
@@ -854,10 +879,10 @@ export function createAdminRouter(context: AdminContext): Router {
     }
   });
 
-  router.put('/config/:name', (req: Request, res: Response) => {
+  router.put('/config/:name', requireAdmin, (req: Request, res: Response) => {
     try {
-      const filePath = path.join(context.configDir, req.params.name);
-      if (!req.params.name.endsWith('.json')) {
+      const filePath = configFilePath(req.params.name);
+      if (!filePath) {
         return res.status(400).json({ error: 'Invalid config file name' });
       }
 
@@ -880,10 +905,10 @@ export function createAdminRouter(context: AdminContext): Router {
     }
   });
 
-  router.delete('/config/:name', (req: Request, res: Response) => {
+  router.delete('/config/:name', requireAdmin, (req: Request, res: Response) => {
     try {
-      const filePath = path.join(context.configDir, req.params.name);
-      if (!req.params.name.endsWith('.json')) {
+      const filePath = configFilePath(req.params.name);
+      if (!filePath) {
         return res.status(400).json({ error: 'Invalid config file name' });
       }
       if (!fs.existsSync(filePath)) {
@@ -907,7 +932,7 @@ export function createAdminRouter(context: AdminContext): Router {
 
   // Manual reload endpoint — used by the dashboard's Refresh buttons and as a
   // safety net for cases where config files are edited on disk directly.
-  router.post('/config/reload', (_req: Request, res: Response) => {
+  router.post('/config/reload', requireAdmin, (_req: Request, res: Response) => {
     try {
       if (!context.reloadConfig) {
         return res.status(501).json({ error: 'reloadConfig not wired in this server' });
@@ -925,19 +950,21 @@ export function createAdminRouter(context: AdminContext): Router {
 
   const settingsFile = path.join(context.configDir, 'axonMcpServer-config.json');
 
-  router.get('/settings', (_req: Request, res: Response) => {
+  // The file can hold a password (skyspark.fallback.password): a user that is
+  // not an admin gets the settings with every secret masked.
+  router.get('/settings', (req: Request, res: Response) => {
     try {
       if (!fs.existsSync(settingsFile)) {
         return res.status(404).json({ error: 'Settings file not found' });
       }
-      const content = fs.readFileSync(settingsFile, 'utf-8');
-      res.json(JSON.parse(content));
+      const content = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
+      res.json(req.user?.role === 'admin' ? content : maskSecrets(content));
     } catch (error) {
       res.status(500).json({ error: 'Failed to read settings' });
     }
   });
 
-  router.put('/settings', (req: Request, res: Response) => {
+  router.put('/settings', requireAdmin, (req: Request, res: Response) => {
     try {
       // Backup existing file
       if (fs.existsSync(settingsFile)) {

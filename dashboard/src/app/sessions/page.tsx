@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { Key, Trash2, RefreshCw, AlertCircle, CheckCircle, Monitor, Globe, Clock, User, Shield } from 'lucide-react';
-import { getApiBase } from '@/lib/api';
+import { api, getApiBase, type AccessKey, type AccessAuditEvent } from '@/lib/api';
+import { KeyStatusBadge, formatWhen } from '@/components/UserAccessKeys';
 
 const API_BASE = getApiBase();
 
@@ -79,7 +80,11 @@ export default function SessionsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'sessions' | 'clients'>('sessions');
+  const [activeTab, setActiveTab] = useState<'sessions' | 'clients' | 'keys'>('sessions');
+  // User access keys (IDE API and /mcp), the access record and user names by id
+  const [accessKeys, setAccessKeys] = useState<AccessKey[]>([]);
+  const [auditEvents, setAuditEvents] = useState<AccessAuditEvent[]>([]);
+  const [userNames, setUserNames] = useState<Record<string, string>>({});
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -103,6 +108,21 @@ export default function SessionsPage() {
       if (clientsRes.ok) {
         const clientsData = await clientsRes.json();
         setClients(Array.isArray(clientsData) ? clientsData : []);
+      }
+
+      // Access keys, the access record and user names. Admin only: a failure leaves them empty.
+      const [keysData, auditData, usersRes] = await Promise.all([
+        api.listAllKeys().catch(() => [] as AccessKey[]),
+        api.listAccessAudit(100).catch(() => [] as AccessAuditEvent[]),
+        fetch(`${API_BASE}/admin/users`, { headers: { 'Authorization': getAuthHeader() } }).catch(() => null),
+      ]);
+      setAccessKeys(keysData);
+      setAuditEvents(auditData);
+      if (usersRes && usersRes.ok) {
+        const list = await usersRes.json();
+        if (Array.isArray(list)) {
+          setUserNames(Object.fromEntries(list.map((u: { id: string; username: string }) => [u.id, u.username])));
+        }
       }
     } catch (err) {
       setError('Failed to connect to server');
@@ -141,6 +161,24 @@ export default function SessionsPage() {
       }
     } catch (err) {
       setError('Failed to revoke session');
+    }
+  };
+
+  const handleRevokeKey = async (key: AccessKey) => {
+    if (!key.username) {
+      setError('The user of this key was deleted. The key no longer works.');
+      return;
+    }
+    if (!confirm(`Revoke the key "${key.name}" (${key.prefix}) of ${key.username}? Clients that use it lose access at once.`)) {
+      return;
+    }
+    try {
+      await api.revokeUserKey(key.username, key.id);
+      setSuccessMessage('Key revoked');
+      fetchData();
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to revoke the key');
     }
   };
 
@@ -268,6 +306,16 @@ export default function SessionsPage() {
           >
             Registered Clients ({clients.length})
           </button>
+          <button
+            onClick={() => setActiveTab('keys')}
+            className={`py-4 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'keys'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Access keys ({accessKeys.filter(k => k.status === 'active').length})
+          </button>
         </nav>
       </div>
 
@@ -318,7 +366,9 @@ export default function SessionsPage() {
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center gap-2">
                             <User className="h-4 w-4 text-gray-400" />
-                            <span className="text-sm text-gray-900">{session.userId || 'Unknown'}</span>
+                            <span className="text-sm text-gray-900" title={session.userId || undefined}>
+                              {session.userId ? (userNames[session.userId] ?? session.userId) : 'Unknown'}
+                            </span>
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
@@ -460,6 +510,110 @@ export default function SessionsPage() {
         </div>
       )}
 
+      {activeTab === 'keys' && (
+        <div className="space-y-6">
+          <div className="rounded-xl bg-white shadow-sm">
+            {accessKeys.length === 0 ? (
+              <div className="p-8 text-center">
+                <Key className="mx-auto h-12 w-12 text-gray-400" />
+                <h3 className="mt-2 text-sm font-semibold text-gray-900">No access keys</h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  An admin makes a key for a user on the Users page. One key works for the IDE API and for /mcp.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      {['User', 'Name', 'Prefix', 'State', 'Last used', 'Used from', 'Expires'].map((h) => (
+                        <th key={h} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{h}</th>
+                      ))}
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {accessKeys.map((key) => (
+                      <tr key={key.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <div className="flex items-center gap-2">
+                            <User className="h-4 w-4 text-gray-400" />
+                            {key.username ?? <span className="text-gray-400">(deleted user)</span>}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{key.name}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-700">{key.prefix}</td>
+                        <td className="px-6 py-4 whitespace-nowrap"><KeyStatusBadge status={key.status} /></td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatWhen(key.lastUsedAt)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {key.lastUsedFrom === 'ide' ? 'IDE' : key.lastUsedFrom === 'mcp' ? 'MCP' : '-'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatWhen(key.expiresAt)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right">
+                          {key.status !== 'revoked' && key.username && (
+                            <button
+                              onClick={() => handleRevokeKey(key)}
+                              className="rounded border border-red-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50"
+                            >
+                              Revoke
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl bg-white shadow-sm">
+            <div className="flex items-center gap-2 px-6 py-4 border-b border-gray-200">
+              <Clock className="h-4 w-4 text-gray-500" />
+              <h2 className="text-sm font-semibold text-gray-900">Recent IDE and commit activity</h2>
+              <span className="ml-auto text-xs text-gray-500">newest first, last {auditEvents.length}</span>
+            </div>
+            {auditEvents.length === 0 ? (
+              <p className="p-6 text-sm text-gray-500">No activity yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      {['Time', 'User', 'Key', 'From', 'Action', 'Result', 'Project', 'Function'].map((h) => (
+                        <th key={h} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {auditEvents.map((ev) => (
+                      <tr key={ev.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500" title={new Date(ev.at).toLocaleString()}>
+                          {formatRelativeTime(ev.at)}
+                        </td>
+                        <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900">{ev.username ?? '-'}</td>
+                        <td className="px-6 py-3 whitespace-nowrap text-sm font-mono text-gray-700">{ev.keyPrefix ?? '-'}</td>
+                        <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500">{ev.source === 'ide' ? 'IDE' : 'MCP'}</td>
+                        <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900">{ev.action}</td>
+                        <td className="px-6 py-3 whitespace-nowrap text-sm">
+                          <span className={ev.status === 'ok' ? 'text-green-700' : ev.status === 'conflict' ? 'text-yellow-700' : 'text-red-700'}>
+                            {ev.status}
+                          </span>
+                        </td>
+                        <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500">
+                          {ev.instance && ev.project ? `${ev.instance}/${ev.project}` : '-'}
+                        </td>
+                        <td className="px-6 py-3 whitespace-nowrap text-sm font-mono text-gray-700">{ev.name ?? '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Info box */}
       <div className="rounded-lg bg-blue-50 border border-blue-200 p-4">
         <h3 className="text-sm font-medium text-blue-800 mb-2">About OAuth Sessions</h3>
@@ -467,6 +621,10 @@ export default function SessionsPage() {
           OAuth 2.1 sessions are created when clients (like Claude Code) authenticate with your MCP server.
           Each session represents an active connection with granted permissions. Revoking a session will
           require the client to re-authenticate.
+        </p>
+        <p className="mt-2 text-sm text-blue-700">
+          Access keys belong to a user. An admin makes them on the Users page. One key works for the IDE API
+          (the IntelliJ plugin) and for /mcp. A revoked key, or a key of a disabled user, stops at once.
         </p>
       </div>
     </div>

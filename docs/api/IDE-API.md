@@ -7,23 +7,71 @@ function back with a stale-write check.
 The routes exist only in HTTP mode (`MCP_TRANSPORT=http`). They live under
 `/api/ide` on the same port as `/mcp`.
 
-## Token
+## Access key
 
-Every route needs `Authorization: Bearer <token>`. The token is the value of
-the `AXON_IDE_TOKEN` environment variable of the server.
+Every route needs `Authorization: Bearer <key>`. The key is a **user access
+key**. It belongs to one dashboard user. There is no shared token.
 
-- The token is always required. It does not depend on `mcpRequireAuth`, and
-  an OAuth token for `/mcp` is not accepted here.
-- The token must be 16 characters or more. Make one with:
-  `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
-- When `AXON_IDE_TOKEN` is not set (or is too short), the server does **not**
-  mount the routes. It logs one line at start:
-  `IDE API is OFF: AXON_IDE_TOKEN is not set. ...`
-- A missing or wrong token gets `401 {"error":"unauthorized"}`. The token is
-  checked before the body is read and before any project name is looked at.
+How a developer gets a key:
 
-The token gives write access to every project in the SkySpark config of the
-server. Keep it in `.env` (git-ignored) and send it over HTTPS only.
+1. An admin opens the dashboard, page **Users**.
+2. The admin makes the user (button **Add User**), or finds the user in the
+   list.
+3. The admin clicks the **Access keys** button of that user, gives the key a
+   name, picks an expiry and clicks **Create key**.
+4. The dashboard shows the key **one time**, with a **Copy** button. The
+   server keeps only a sha256 hash of it. A lost key cannot be shown again:
+   revoke it and make a new one.
+5. The developer pastes the key in the plugin as the token.
+
+A key looks like `axk_1a2b3c4d_<43 characters>`. The first part,
+`axk_1a2b3c4d`, is the prefix. The dashboard and the logs show the prefix to
+tell keys apart. They never show the rest.
+
+Rules:
+
+- A key is always required. It does not depend on `mcpRequireAuth`.
+- The same key also works on `/mcp`, so one key serves the IDE and MCP
+  clients. An OAuth login token of a user is accepted here too.
+- A key never works on `/admin` (the dashboard API uses the user's password).
+- The server checks the user on every call. A revoked key, an expired key, a
+  key of a disabled user and a key of a deleted user all get
+  `401 {"error":"unauthorized"}` from the next call on. The reply does not
+  say which of these it was; the server log does.
+- The key is checked before the body is read and before any project name is
+  looked at.
+- When the key check cannot run (the database is not ready), the reply is
+  `503`.
+- Send the key over HTTPS only.
+
+### Roles
+
+The role of the user decides what the key can do. The role is read on every
+call, so a role change works at once.
+
+| Role | List and export | `sync=true` | Commit |
+|---|---|---|---|
+| `admin`, `user` | yes | yes | yes |
+| `readonly` | yes | yes | no: `403 {"error":"your user is read-only and cannot commit"}` |
+
+A read-only user can use `sync=true`: it reads SkySpark and writes only the
+server's local copy.
+
+### The access record
+
+Every call that passes the key check gives one row in the access record:
+time, user, key prefix, action (`projects.list`, `functions.export`,
+`function.commit`, `write.denied`), result, project and function name. A
+commit made with the `commitAxonFunction` MCP tool gives a row too. An admin
+sees the rows on the dashboard, page **Sessions**, tab **Access keys**. Rows
+are kept for 365 days. A row never holds a key or Axon source.
+
+### AXON_IDE_TOKEN is gone
+
+Older versions used one shared token from the `AXON_IDE_TOKEN` environment
+variable. It is no longer read. A call with the old token gets `401`. When
+the variable is still set, the server logs one warning at start (it never
+prints the value). Remove the variable and give each developer a key.
 
 ## Projects
 
@@ -108,11 +156,12 @@ Replies:
 | 200 | `{"status":"ok","mod":"<new ISO>","hash":"<sha256 of src>"}` | Committed. Use `mod` as the next `expectedMod`. |
 | 409 | `{"status":"conflict","mod":"<server mod>","hash":"<sha256 of server src>"}` | The function changed on the server (or exists, with `expectedMod` null). Nothing was committed. `mod` and `hash` are null when the function is gone. |
 | 400 | `{"error":"..."}` | Bad name or body. |
-| 401 | `{"error":"unauthorized"}` | Missing or wrong token. |
+| 401 | `{"error":"unauthorized"}` | No key, or a key that is wrong, revoked or expired, or its user is disabled or deleted. |
+| 403 | `{"error":"your user is read-only and cannot commit"}` | The user has the `readonly` role. |
 | 404 | `{"error":"unknown project"}` | No such project. |
 | 413 | `{"error":"the body is too large"}` | Body over 2 MB. |
 | 502 | `{"error":"commit failed: ..."}` | SkySpark refused the commit. |
-| 503 | `{"error":"..."}` | The project is not in the SkySpark config. |
+| 503 | `{"error":"..."}` | The project is not in the SkySpark config, or the key check is not ready. |
 
 The `mod` check and the commit run in one Axon eval on SkySpark, so there is
 no gap between the check and the write on the server side of this API.
@@ -132,11 +181,13 @@ with no sync.
 - `doc` not given: the stored doc is kept (before, it was cleared).
 - The function name is validated.
 - A stale write returns a result with `"status": "conflict"` and `isError`.
+- A user with the `readonly` role cannot call it (see docs/implementation/OAUTH.md,
+  "User access keys"). This rule needs a token on the call.
 
 ## Example
 
 ```bash
-TOKEN=...   # the value of AXON_IDE_TOKEN
+TOKEN=axk_1a2b3c4d_...   # the access key of the user (made-up here)
 BASE=http://localhost:3847/api/ide
 
 curl -s -H "Authorization: Bearer $TOKEN" $BASE/projects

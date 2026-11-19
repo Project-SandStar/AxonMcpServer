@@ -23,6 +23,8 @@ function formatAge(ms: number): string {
 
 export default function CachePage() {
   const queryClient = useQueryClient();
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe, retry: false });
+  const isAdmin = me?.role === 'admin';
 
   const { data: caches, isLoading, refetch } = useQuery({
     queryKey: ['caches'],
@@ -61,14 +63,14 @@ export default function CachePage() {
             <RefreshCw className="h-4 w-4" />
             Refresh
           </button>
-          <button
+          {isAdmin && <button
             onClick={() => clearMutation.mutate(undefined)}
             disabled={clearMutation.isPending}
             className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
           >
             <Trash2 className="h-4 w-4" />
             Clear All
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -107,14 +109,14 @@ export default function CachePage() {
                 <td className="px-6 py-4 text-sm text-gray-500">{formatBytes(cache.size)}</td>
                 <td className="px-6 py-4 text-sm text-gray-500">{formatAge(cache.age)}</td>
                 <td className="px-6 py-4">
-                  <button
+                  {isAdmin && <button
                     onClick={() => clearMutation.mutate(cache.name)}
                     disabled={clearMutation.isPending}
                     className="flex items-center gap-1 text-sm text-red-600 hover:text-red-800 disabled:opacity-50"
                   >
                     <Trash2 className="h-4 w-4" />
                     Delete
-                  </button>
+                  </button>}
                 </td>
               </tr>
             ))}

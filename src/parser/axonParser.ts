@@ -1,6 +1,9 @@
 import { AxonFunction, AxonCategory } from '../types/index.js';
 import * as crypto from 'crypto';
 
+/** Doc comment fields that are not parameters. */
+const DOC_FIELDS = new Set(['description', 'function', 'author', 'version', 'site specific']);
+
 export class AxonParser {
   /**
    * Parse Axon code and extract function definitions
@@ -103,8 +106,9 @@ export class AxonParser {
     // Extract function name from file path or documentation
     const fileName = filePath.split('/').pop()?.replace('.axon', '') || 'unknown';
     
-    // Extract parameters
-    const paramMatch = code.match(/^\s*\(([^)]*)\)\s*=>/);
+    // Extract parameters: the head "(a, b) =>" comes after the doc comment
+    const head = docComment && code.startsWith(docComment) ? code.slice(docComment.length) : code;
+    const paramMatch = head.match(/^\s*\(([^)]*)\)\s*=>/);
     const parameters = paramMatch 
       ? paramMatch[1].split(',').map(p => p.trim()).filter(p => p)
       : [];
@@ -294,10 +298,13 @@ export class AxonParser {
         continue;
       }
       
-      // Parse parameters
+      // Parse parameters; a field such as "Returns:" or "Author:" ends the section
       if (inParametersSection && trimmed.includes(':')) {
         const [paramName, paramDesc] = trimmed.split(':', 2);
-        if (paramName && !paramName.toLowerCase().includes('return')) {
+        const key = paramName.toLowerCase().trim();
+        if (key.includes('return') || DOC_FIELDS.has(key)) {
+          inParametersSection = false;
+        } else if (paramName) {
           result.parameters.push({
             name: paramName.trim(),
             description: paramDesc.trim()

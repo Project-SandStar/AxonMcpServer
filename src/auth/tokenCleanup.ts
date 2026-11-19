@@ -7,17 +7,29 @@ import { PrismaClient } from '../generated/prisma/client.js';
 
 export interface TokenCleanupConfig {
   intervalMs?: number; // How often to run cleanup (default: 1 hour)
+  /** User access keys: keys revoked or expired more than 90 days ago are deleted. */
+  keys?: { purge(before: Date): Promise<number> };
+  /** Access record: rows older than 365 days are deleted. */
+  audit?: { purge(before: Date): Promise<number> };
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+export const KEY_KEEP_DAYS = 90;
+export const AUDIT_KEEP_DAYS = 365;
 
 export class TokenCleanupJob {
   private prisma: PrismaClient;
   private intervalMs: number;
   private intervalId: NodeJS.Timeout | null = null;
   private isRunning = false;
+  private readonly keys?: TokenCleanupConfig['keys'];
+  private readonly audit?: TokenCleanupConfig['audit'];
 
   constructor(prisma: PrismaClient, config: TokenCleanupConfig = {}) {
     this.prisma = prisma;
     this.intervalMs = config.intervalMs || 60 * 60 * 1000; // 1 hour default
+    this.keys = config.keys;
+    this.audit = config.audit;
   }
 
   /**
@@ -105,6 +117,24 @@ export class TokenCleanupJob {
           ],
         },
       });
+
+      // Old user access keys and old access records. Each purge runs on its own:
+      // a failure in one must not stop the other or the rest of the cleanup.
+      let keysDeleted = 0;
+      let auditDeleted = 0;
+      try {
+        keysDeleted = this.keys ? await this.keys.purge(new Date(now.getTime() - KEY_KEEP_DAYS * DAY_MS)) : 0;
+      } catch (error: any) {
+        console.error(`[TokenCleanup] Could not clean access keys: ${error?.message ?? error}`);
+      }
+      try {
+        auditDeleted = this.audit ? await this.audit.purge(new Date(now.getTime() - AUDIT_KEEP_DAYS * DAY_MS)) : 0;
+      } catch (error: any) {
+        console.error(`[TokenCleanup] Could not clean access records: ${error?.message ?? error}`);
+      }
+      if (keysDeleted > 0 || auditDeleted > 0) {
+        console.error(`[TokenCleanup] Deleted ${keysDeleted} old access keys and ${auditDeleted} old access records`);
+      }
 
       // Delete orphaned sessions (where the access token no longer exists or is revoked)
       // First, get all session IDs

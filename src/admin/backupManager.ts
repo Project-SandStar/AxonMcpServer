@@ -44,6 +44,19 @@ export interface BackupData {
   settings: any;
 }
 
+/**
+ * Cache files that a backup never holds and a restore never writes. usage.db holds
+ * the user access keys (hashes) and the access record, and the server keeps it open
+ * through several Prisma clients. Copying an old copy over it would bring back
+ * revoked keys, and could break the open file. Its OAuth rows are backed up and
+ * restored row by row through oauth.json instead.
+ */
+const LIVE_ONLY_CACHE_FILES = new Set(['usage.db', 'usage.db-journal', 'usage.db-wal', 'usage.db-shm']);
+
+export function isLiveOnlyCacheFile(name: string): boolean {
+  return LIVE_ONLY_CACHE_FILES.has(name);
+}
+
 export class BackupManager {
   private backupDir: string;
   private configDir: string;
@@ -200,6 +213,7 @@ export class BackupManager {
       if (fs.existsSync(this.cacheDir)) {
         const cacheFiles = fs.readdirSync(this.cacheDir);
         for (const file of cacheFiles) {
+          if (isLiveOnlyCacheFile(file)) continue;
           const filePath = path.join(this.cacheDir, file);
           const stat = fs.statSync(filePath);
           if (stat.isFile() && (file.endsWith('.json') || file.endsWith('.db'))) {
@@ -281,6 +295,8 @@ export class BackupManager {
       if (backupData.cacheBinaryFiles && backupData._extractDir) {
         const extractCacheDir = path.join(backupData._extractDir, 'cache');
         for (const file of backupData.cacheBinaryFiles) {
+          // An older backup can hold usage.db: never write it over the live file.
+          if (isLiveOnlyCacheFile(file)) continue;
           const srcPath = path.join(extractCacheDir, file);
           const destPath = path.join(this.cacheDir, file);
           if (fs.existsSync(srcPath)) {
