@@ -150,6 +150,10 @@ class FakeSkySpark {
     expect(lines).toContain('  existing: recs.first');
     expect(lines).toContain('    gone.each(x => commit(diff(x, null, {remove})))');
     expect(lines.some(l => l.includes('extras.each('))).toBe(false);
+    // The fake does this filter in JS below, so the Axon line must be the one
+    // it copies: a record goes only when its id and its mod match a backup.
+    expect(lines).toContain('  gone: extras.findAll(x => ideBacked.any(b => b->id == x->id and b->ms == toJavaMillis(x->mod)))');
+    expect(lines.find(l => l.includes('ideRemoved: '))).toContain('ideRemoved: gone.map(x => x->id), ideLeft: extras.size - gone.size}');
     // The records that have a backup: their id and their mod when backed up.
     const backedLine = lines.find(l => l.startsWith('  ideBacked: '))!;
     expect(backedLine).toBeDefined();
@@ -1003,6 +1007,29 @@ describe('one func record per name', () => {
     expect(sky.recs.get('roundTo')).toBe(before);
   });
 
+  test('the second backup fails: the first is deleted again, nothing is committed', async () => {
+    sky.putDuplicate('roundTo', '() => "old one"', '2025-01-01T00:00:00.000Z');
+    sky.putDuplicate('roundTo', '() => "older one"', '2024-01-01T00:00:00.000Z');
+    const realOpen = fs.promises.open;
+    let opens = 0;
+    const spy = jest.spyOn(fs.promises, 'open').mockImplementation(((file: any, flags: any, mode?: any) => {
+      if (String(file).includes(`${path.sep}removed-`) && ++opens === 2) {
+        return Promise.reject(Object.assign(new Error('disk full'), { code: 'ENOSPC' }));
+      }
+      return realOpen(file, flags, mode);
+    }) as any);
+    try {
+      await expect(commitFunction(target(), { name: 'roundTo', src: '() => "new"' }, deps()))
+        .rejects.toThrow(/disk full.*nothing was committed and no record was removed/);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(opens).toBe(2);
+    expect(removedFiles()).toEqual([]);
+    expect(sky.commits).toEqual([]);
+    expect(sky.count('roundTo')).toBe(3);
+  });
+
   test('POST: a backup that cannot be written is a 500 with the error; nothing is removed', async () => {
     sky.putDuplicate('roundTo', '() => "old one"', '2025-01-01T00:00:00.000Z');
     fs.writeFileSync(path.join(tmp, 'demo', 'site', '.backups'), 'not a folder');
@@ -1047,6 +1074,31 @@ describe('one func record per name', () => {
     expect(sky.count('roundTo')).toBe(2);
     expect(sky.commits[0]).toContain('  ideBacked: []');
     expect(removedFiles()).toEqual([]);
+  });
+
+  test('the function changes between the read and the commit: a conflict, nothing removed, no backup left', async () => {
+    sky.putDuplicate('roundTo', '() => "old one"', '2025-01-01T00:00:00.000Z');
+    const expectedMod = sky.recs.get('roundTo')!.mod.toISOString();
+    sky.afterRead = () => { sky.recs.get('roundTo')!.mod = new Date('2026-02-02T00:00:00.000Z'); };
+
+    const res = await commitFunction(target(), { name: 'roundTo', src: '() => 1', expectedMod }, deps());
+    expect(res).toMatchObject({ status: 'conflict', exists: true, mod: '2026-02-02T00:00:00.000Z' });
+    // The read saw no conflict, so the duplicate was backed up and offered to the eval.
+    expect(sky.commits[0]).toContain('parseRef(');
+    expect(sky.count('roundTo')).toBe(2);
+    expect(removedFiles()).toEqual([]);
+  });
+
+  test('a commit reply that is not understood keeps the backups of the duplicates', async () => {
+    sky.putDuplicate('roundTo', '() => "old one"', '2025-01-01T00:00:00.000Z');
+    const odd = {
+      evalAxon: async (code: string) => (code.startsWith('readAll(') ? sky.evalAxon(code) : 'ok'),
+    };
+    await expect(commitFunction({ client: odd, instance: 'demo', project: 'site' }, { name: 'roundTo', src: '() => 1' }, deps()))
+      .rejects.toThrow(/may be stored already.*backups of the older records with the same name are kept/);
+    const files = removedFiles();
+    expect(files).toHaveLength(1);
+    expect(JSON.parse(fs.readFileSync(path.join(backupDir(), files[0]), 'utf8')).src).toBe('() => "old one"');
   });
 
   test('the backups of removed records are never trimmed', async () => {
